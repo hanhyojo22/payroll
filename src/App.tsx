@@ -379,7 +379,7 @@ function Workspace({ session }: { session: Session }) {
               <PayrollView employees={employees} onChange={loadData} payrollRuns={payrollRuns} setNotice={setNotice} userId={session.user.id} />
             )}
             {view === "payroll-history" && (
-              <PayrollHistoryView payrollRuns={payrollRuns} />
+              <PayrollHistoryView employees={employees} payrollRuns={payrollRuns} />
             )}
             {view === "payments" && (
               <PaymentsView onChange={loadData} payments={payments} setNotice={setNotice} userId={session.user.id} />
@@ -1005,42 +1005,64 @@ function MoneyInput({
   );
 }
 
-function PayrollHistoryView({ payrollRuns }: { payrollRuns: PayrollRunWithItems[] }) {
-  const rows = payrollRuns.map((run) => {
-    const totals = run.items.reduce(
-      (sum, item) => ({
-        gross: sum.gross + toNumber(item.gross_pay),
-        allowances: sum.allowances + toNumber(item.allowances),
-        deductions: sum.deductions + toNumber(item.deductions),
-        net: sum.net + toNumber(item.net_pay),
-        paid: sum.paid + (item.status === "paid" ? 1 : 0),
-      }),
-      { gross: 0, allowances: 0, deductions: 0, net: 0, paid: 0 },
-    );
-
-    return [
-      `${monthNames[run.period_month - 1]} ${run.period_year}`,
-      payPeriodLabel(run.pay_period),
-      run.generated_date,
-      String(run.items.length),
-      `${totals.paid}/${run.items.length}`,
-      currency.format(totals.gross),
-      currency.format(totals.deductions),
-      currency.format(totals.net),
-    ];
-  });
+function PayrollHistoryView({
+  employees,
+  payrollRuns,
+}: {
+  employees: Employee[];
+  payrollRuns: PayrollRunWithItems[];
+}) {
+  const [query, setQuery] = useState("");
+  const employeeById = new Map(employees.map((employee) => [employee.id, employee]));
+  const rows = payrollRuns.flatMap((run) =>
+    run.items.filter((item) => item.status === "paid").map((item, itemIndex) => {
+      const employee = item.employee_id ? employeeById.get(item.employee_id) : undefined;
+      const payrollNo = `${run.period_year}-${String(run.period_month).padStart(2, "0")}-${run.pay_period === "first_half" ? "1" : "2"}-${String(itemIndex + 1).padStart(3, "0")}`;
+      const payPeriod = `${monthNames[run.period_month - 1]} ${run.period_year} - ${payPeriodLabel(run.pay_period)}`;
+      const department = employee?.department || "Unassigned";
+      const processedDate = item.paid_date || run.generated_date;
+      return {
+        cells: [
+          payrollNo,
+          payPeriod,
+          item.employee_name,
+          department,
+          currency.format(toNumber(item.gross_pay)),
+          currency.format(toNumber(item.deductions)),
+          currency.format(toNumber(item.net_pay)),
+          <StatusPill key="status" status={item.status} />,
+          processedDate,
+        ],
+        searchText: `${payrollNo} ${payPeriod} ${item.employee_name} ${department} ${item.status} ${processedDate}`.toLowerCase(),
+      };
+    }),
+  );
+  const filteredRows = rows
+    .filter((row) => row.searchText.includes(query.toLowerCase()))
+    .map((row) => row.cells);
 
   return (
     <div className="page-stack">
       <PageHeader
         eyebrow="Payroll records"
         title="Payroll History"
-        text="Review generated payroll runs and their totals."
+        text="Review every employee payroll record by pay period."
       />
+      <Toolbar query={query} setQuery={setQuery} />
       <DataTable
-        empty="No payroll history yet."
-        headers={["Period", "Pay period", "Generated", "Employees", "Paid", "Gross", "Deductions", "Net"]}
-        rows={rows}
+        empty="No paid payroll history yet."
+        headers={[
+          "Payroll No.",
+          "Pay Period",
+          "Employee",
+          "Department",
+          "Gross Pay",
+          "Deductions",
+          "Net Pay",
+          "Status",
+          "Date Processed",
+        ]}
+        rows={filteredRows}
       />
     </div>
   );
