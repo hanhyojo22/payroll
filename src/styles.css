@@ -1,6 +1,6 @@
 :root {
-  color: #17202a;
-  background: #f5f7fb;
+  color: #111827;
+  background: #f6f8fb;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
@@ -75,7 +75,7 @@ button {
 
 .brand-mark {
   align-items: center;
-  background: #0d5d65;
+  background: #2563eb;
   border-radius: 8px;
   color: #ffffff;
   display: inline-flex;
@@ -140,8 +140,9 @@ textarea {
 }
 
 .primary-button {
-  background: #0d5d65;
-  border: 1px solid #0d5d65;
+  background: #2563eb;
+  border: 1px solid #1d63e8;
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.16);
   color: #ffffff;
   font-weight: 800;
 }
@@ -224,35 +225,94 @@ textarea {
 
 .sidebar {
   background: #ffffff;
-  border-right: 1px solid #dce4ee;
+  border-right: 1px solid #e5eaf2;
+  box-shadow: none;
   display: flex;
   flex-direction: column;
-  gap: 26px;
-  padding: 22px;
+  gap: 30px;
+  padding: 26px 12px 24px;
 }
 
 .sidebar-brand h1 {
   font-size: 1.1rem;
+  font-weight: 850;
+}
+
+.sidebar-brand {
+  padding: 0 16px;
+}
+
+.sidebar-brand .brand-mark {
+  height: 26px;
+  width: 26px;
 }
 
 .nav-list {
   display: grid;
-  gap: 8px;
+  gap: 4px;
 }
 
 .nav-button {
   background: transparent;
   border: 1px solid transparent;
-  color: #405069;
+  color: #374151;
+  font-weight: 650;
   justify-content: flex-start;
+  min-height: 46px;
+  padding: 0 16px;
   width: 100%;
+}
+
+.nav-group {
+  display: grid;
+  gap: 4px;
+}
+
+.nav-group .nav-button {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+}
+
+.nav-chevron {
+  justify-self: end;
+  transition: transform 160ms ease;
+}
+
+.nav-chevron.open {
+  transform: rotate(180deg);
+}
+
+.nav-submenu {
+  background: #f8fafc;
+  border-radius: 0 0 8px 8px;
+  display: grid;
+  gap: 2px;
+  margin: -2px 0 6px;
+  padding: 8px 10px 10px 50px;
+}
+
+.nav-submenu button {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: #374151;
+  font: inherit;
+  min-height: 34px;
+  padding: 0;
+  text-align: left;
+}
+
+.nav-submenu button.active,
+.nav-submenu button:hover {
+  color: #0f6fff;
 }
 
 .nav-button.active,
 .nav-button:hover {
-  background: #eaf3f4;
-  border-color: #c7dddd;
-  color: #0d5d65;
+  background: #eff6ff;
+  border-color: #dbeafe;
+  box-shadow: none;
+  color: #0f6fff;
 }
 
 .sidebar-footer {
@@ -261,6 +321,113 @@ textarea {
   gap: 10px;
   margin-top: auto;
   padding-top: 18px;
+}
+
+.help-card {
+  align-items: center;
+  background: #eff6ff;
+  border: 1px solid #dbe8ff;
+  border-radius: 8px;
+  color: #1d4ed8;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  margin: auto 6px 0;
+  padding: 16px 12px;
+}
+
+.help-card strong,
+.help-card p {
+  margin: 0;
+}
+
+.help-card p {
+  color: #5b6473;
+  font-size: 0.78rem;
+  margin-top: 2px;
+}
+
+.main-area {
+  display: grid;
+  grid-template-rows: 68px minmax(0, 1fr);
+  min-width: 0;
+}
+
+.topbar {
+  align-items: center;
+  background: #ffffff;
+  border-bottom: 1px solid #e5eaf2;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: auto minmax(280px, 420px) auto auto;
+  justify-content: end;
+  padding: 0 28px;
+}
+
+.topbar-icon {
+  align-items: center;
+  background: #ffffff;
+  border: 0;
+  border-radius: 8px;
+  color: #1f2937;
+  display: inline-flex;
+  height: 40px;
+  justify-content: center;
+  position: relative;
+  width: 40px;
+}
+
+.topbar-search {
+  align-items: center;
+  border: 1px solid #d8dee8;
+  border-radius: 7px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 40px;
+  padding: 0 12px;
+}
+
+.topbar-search input {
+  border: 0;
+  min-height: auto;
+  outline: 0;
+  padding: 0;
+}
+
+.notification-button span {
+  align-items: center;
+  background: #ef4444;
+  border: 2px solid #ffffff;
+  border-radius: 999px;
+  color: #ffffff;
+  display: inline-flex;
+  font-size: 0.62rem;
+  font-weight: 800;
+  height: 18px;
+  justify-content: center;
+  position: absolute;
+  right: 4px;
+  top: 4px;
+  width: 18px;
+}
+
+.admin-chip {
+  align-items: center;
+  display: inline-flex;
+  gap: 10px;
+  white-space: nowrap;
+}
+
+.avatar {
+  align-items: center;
+  background: #1f2937;
+  border-radius: 999px;
+  color: #ffffff;
+  display: inline-flex;
+  font-weight: 800;
+  height: 38px;
+  justify-content: center;
+  width: 38px;
 }
 
 .sidebar-footer p {
@@ -292,6 +459,603 @@ textarea {
   margin: 4px 0 0;
 }
 
+.employee-form-heading {
+  display: grid;
+  gap: 8px;
+}
+
+.employee-form-heading .text-button {
+  color: #0f6fff;
+  justify-self: start;
+  margin: 0;
+}
+
+.employee-form-heading h1 {
+  font-size: 1.65rem;
+  margin: 0;
+}
+
+.employee-form-heading p {
+  align-items: center;
+  color: #687385;
+  display: flex;
+  gap: 8px;
+  margin: 0;
+}
+
+.employee-form-heading p span:first-child {
+  color: #0f6fff;
+}
+
+.employee-entry-layout {
+  align-items: start;
+  display: grid;
+  gap: 24px;
+  grid-template-columns: minmax(0, 1fr) 352px;
+}
+
+.compensation-page {
+  align-items: start;
+  display: grid;
+  gap: 24px;
+  grid-template-columns: minmax(0, 1fr) 340px;
+}
+
+.compensation-main {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+
+.page-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.compensation-toolbar,
+.employee-info-card,
+.comp-card,
+.payroll-summary-panel {
+  background: #ffffff;
+  border: 1px solid #e1e8f2;
+  border-radius: 8px;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.04);
+}
+
+.compensation-toolbar {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 18px;
+}
+
+.employee-info-card {
+  align-items: center;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: auto repeat(4, minmax(0, 1fr));
+  padding: 20px;
+}
+
+.employee-info-card strong {
+  color: #111827;
+  display: block;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.employee-photo {
+  align-items: center;
+  background: linear-gradient(135deg, #dbeafe, #eff6ff);
+  border: 1px solid #bfdbfe;
+  border-radius: 18px;
+  color: #1d4ed8;
+  display: inline-flex;
+  font-size: 1.25rem;
+  font-weight: 900;
+  height: 74px;
+  justify-content: center;
+  width: 74px;
+}
+
+.comp-card {
+  display: grid;
+  gap: 18px;
+  padding: 22px;
+}
+
+.section-heading {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.section-heading h2 {
+  font-size: 1.12rem;
+  margin: 0;
+}
+
+.rate-table {
+  border: 1px solid #e5eaf2;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.rate-table div {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  padding: 16px 18px;
+}
+
+.rate-table div + div {
+  border-top: 1px solid #e5eaf2;
+}
+
+.rate-table strong,
+.earning-value {
+  color: #15803d;
+}
+
+.ticket-chip {
+  align-items: center;
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 0.82rem;
+  font-weight: 800;
+  gap: 6px;
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+
+.ticket-chip.repair {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.ticket-chip.installation {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.period-pill {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  color: #475569;
+  display: inline-flex;
+  font-weight: 750;
+  gap: 8px;
+  padding: 8px 12px;
+}
+
+.earnings-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.earnings-card {
+  border: 1px solid #e5eaf2;
+  border-radius: 12px;
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+}
+
+.earnings-card.repair {
+  background: #f0fdf4;
+}
+
+.earnings-card.installation {
+  background: #eff6ff;
+}
+
+.earnings-card dl {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+
+.earnings-card dl div,
+.payroll-total-row,
+.summary-stat {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.earnings-card dt,
+.summary-stat span {
+  color: #64748b;
+  font-weight: 700;
+}
+
+.earnings-card dd {
+  color: #111827;
+  font-weight: 850;
+  margin: 0;
+}
+
+.payroll-total-row {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 12px;
+  color: #14532d;
+  padding: 18px;
+}
+
+.payroll-total-row span {
+  font-weight: 800;
+}
+
+.payroll-total-row strong {
+  font-size: 1.65rem;
+}
+
+.payroll-summary-panel {
+  display: grid;
+  gap: 22px;
+  padding: 22px;
+  position: sticky;
+  top: 92px;
+}
+
+.payroll-summary-panel h2 {
+  color: #15803d;
+  font-size: 2.2rem;
+  margin: 4px 0;
+}
+
+.payroll-summary-panel > div > span {
+  color: #64748b;
+  line-height: 1.45;
+}
+
+.summary-stat-list {
+  display: grid;
+  gap: 12px;
+}
+
+.summary-stat {
+  background: #f8fafc;
+  border: 1px solid #e5eaf2;
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.summary-stat strong {
+  color: #111827;
+  text-align: right;
+}
+
+.daily-ticket-page {
+  display: grid;
+  gap: 18px;
+}
+
+.daily-ticket-filters,
+.daily-ticket-card,
+.daily-summary-panel .daily-ticket-card {
+  background: #ffffff;
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  box-shadow: 0 8px 18px rgba(31, 45, 61, 0.04);
+}
+
+.daily-ticket-filters {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: 1.1fr 1fr 1fr;
+  padding: 18px;
+}
+
+.field-with-icon {
+  position: relative;
+}
+
+.field-with-icon input {
+  padding-right: 40px;
+}
+
+.field-with-icon svg {
+  color: #52627a;
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.daily-ticket-layout {
+  align-items: start;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(0, 2.75fr) minmax(290px, 0.85fr);
+}
+
+.daily-ticket-card {
+  padding: 18px;
+}
+
+.daily-ticket-card h2 {
+  color: #111827;
+  font-size: 1.05rem;
+  margin: 0 0 14px;
+}
+
+.daily-ticket-card > p {
+  color: #475569;
+  margin: -4px 0 16px;
+}
+
+.daily-ticket-entry-card {
+  min-width: 0;
+}
+
+.daily-ticket-table {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.daily-ticket-row {
+  align-items: center;
+  border-bottom: 1px solid #e2e8f0;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(210px, 1.35fr) minmax(120px, 0.8fr) minmax(130px, 0.85fr) minmax(110px, 0.65fr) minmax(120px, 0.8fr) minmax(82px, 0.45fr) 44px;
+  padding: 12px 14px;
+}
+
+.daily-ticket-row:last-child {
+  border-bottom: 0;
+}
+
+.daily-ticket-head {
+  background: #f8fafc;
+  color: #111827;
+  font-size: 0.84rem;
+  font-weight: 900;
+}
+
+.daily-ticket-head span {
+  display: grid;
+  gap: 3px;
+}
+
+.daily-ticket-head span:not(:first-child) {
+  justify-items: center;
+  text-align: center;
+}
+
+.daily-ticket-head svg {
+  color: #2563eb;
+  justify-self: center;
+}
+
+.daily-ticket-head small {
+  color: #64748b;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.daily-ticket-employee {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  min-width: 0;
+}
+
+.daily-ticket-avatar {
+  align-items: center;
+  background: #dbeafe;
+  border-radius: 999px;
+  color: #1d4ed8;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 0.78rem;
+  font-weight: 900;
+  height: 38px;
+  justify-content: center;
+  overflow: hidden;
+  width: 38px;
+}
+
+.daily-ticket-avatar img {
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
+.daily-ticket-employee strong {
+  color: #111827;
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.daily-ticket-employee span {
+  color: #475569;
+  display: block;
+  font-size: 0.85rem;
+}
+
+.daily-ticket-row input {
+  text-align: center;
+}
+
+.daily-ticket-row input:disabled {
+  background: #f8fafc;
+  color: #64748b;
+  cursor: not-allowed;
+}
+
+.daily-ticket-row > strong {
+  color: #111827;
+  text-align: center;
+}
+
+.daily-ticket-row > .status {
+  justify-self: center;
+}
+
+.daily-ticket-more {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  color: #334155;
+  display: inline-flex;
+  height: 34px;
+  justify-content: center;
+  justify-self: center;
+  padding: 0;
+  width: 34px;
+}
+
+.daily-ticket-more:hover {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #2563eb;
+}
+
+.daily-ticket-money {
+  color: #16a34a !important;
+  font-size: 1.05rem;
+}
+
+.daily-ticket-total {
+  background: #fbfdff;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.daily-ticket-total strong:first-child {
+  text-align: left;
+}
+
+.daily-ticket-note {
+  align-items: center;
+  color: #334155;
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.daily-ticket-note svg {
+  color: #2563eb;
+}
+
+.daily-summary-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.daily-summary-metric {
+  align-items: flex-start;
+  border-radius: 8px;
+  display: flex;
+  gap: 14px;
+  margin-top: 12px;
+  padding: 18px;
+}
+
+.daily-summary-metric.repair {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+}
+
+.daily-summary-metric.installation {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+}
+
+.daily-summary-metric svg {
+  color: #2563eb;
+  flex: 0 0 auto;
+  margin-top: 5px;
+}
+
+.daily-summary-metric span {
+  color: #475569;
+  display: block;
+  font-size: 0.86rem;
+}
+
+.daily-summary-metric strong {
+  color: #111827;
+  display: block;
+  font-size: 1.75rem;
+  line-height: 1.05;
+}
+
+.daily-summary-metric p {
+  color: #475569;
+  font-size: 0.86rem;
+  margin: 4px 0 0;
+}
+
+.daily-summary-metric b {
+  color: #16a34a;
+}
+
+.daily-total-card {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  display: grid;
+  gap: 5px;
+  margin-top: 14px;
+  padding: 16px;
+}
+
+.daily-total-card span {
+  color: #475569;
+  font-size: 0.86rem;
+}
+
+.daily-total-card strong {
+  color: #111827;
+  font-size: 1.35rem;
+}
+
+.daily-total-card strong:last-child {
+  color: #f97316;
+  font-size: 1.65rem;
+}
+
+.daily-help-card {
+  align-items: flex-start;
+  background: #eff6ff;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  color: #1d4ed8;
+  display: flex;
+  gap: 12px;
+  padding: 16px;
+}
+
+.daily-help-card strong {
+  color: #1e3a8a;
+}
+
+.daily-help-card p {
+  color: #1e3a8a;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin: 5px 0 0;
+}
+
+.daily-ticket-footer {
+  display: flex;
+  justify-content: center;
+  margin-top: 14px;
+}
+
 .metric-grid {
   display: grid;
   gap: 14px;
@@ -303,11 +1067,150 @@ textarea {
 .summary-band,
 .action-band,
 .table-wrap,
+.employee-form-card,
+.position-panel,
 .modal {
   background: #ffffff;
   border: 1px solid #dbe4ef;
   border-radius: 8px;
-  box-shadow: 0 12px 30px rgba(31, 45, 61, 0.06);
+  box-shadow: 0 8px 18px rgba(31, 45, 61, 0.04);
+}
+
+.employee-form-card,
+.position-panel {
+  padding: 20px;
+}
+
+.employee-form-grid {
+  gap: 22px 20px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.employee-form-grid .profile-upload {
+  align-content: start;
+  grid-row: span 2;
+}
+
+.profile-upload > div {
+  align-items: center;
+  border: 1.5px dashed #6aa0ff;
+  border-radius: 8px;
+  color: #0f6fff;
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  min-height: 172px;
+  padding: 20px;
+  text-align: center;
+}
+
+.profile-upload input {
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+  width: 1px;
+}
+
+.profile-upload img {
+  border-radius: 7px;
+  height: 100%;
+  max-height: 170px;
+  object-fit: cover;
+  width: 100%;
+}
+
+.profile-upload.has-photo > div {
+  border-style: solid;
+  padding: 0;
+}
+
+.profile-upload strong,
+.profile-upload p {
+  margin: 0;
+}
+
+.profile-upload p {
+  color: #7b8494;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.profile-upload small {
+  color: #b91c1c;
+  font-weight: 700;
+}
+
+.form-tabs {
+  border-bottom: 1px solid #d8dee8;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.form-tabs button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: #4b5563;
+  display: inline-flex;
+  gap: 10px;
+  justify-content: center;
+  min-height: 42px;
+  padding: 0 8px 12px;
+}
+
+.form-tabs button.active {
+  border-bottom-color: #0f6fff;
+  color: #0f6fff;
+}
+
+.position-panel {
+  display: grid;
+  gap: 22px;
+}
+
+.position-panel h2,
+.position-panel h3 {
+  color: #0f6fff;
+  font-size: 1rem;
+  margin: 0 0 14px;
+}
+
+.position-panel label span {
+  color: #ef4444;
+}
+
+.position-description {
+  background: #f0fdf4;
+  border: 1px solid #86efac;
+  border-radius: 7px;
+  color: #14532d;
+  padding: 14px;
+}
+
+.position-description p {
+  color: #374151;
+  line-height: 1.45;
+  margin: 10px 0;
+}
+
+.position-description span,
+.other-positions p {
+  color: #111827;
+}
+
+.other-positions {
+  display: grid;
+  gap: 10px;
+}
+
+.other-positions p {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  margin: 0;
 }
 
 .metric {
@@ -319,9 +1222,9 @@ textarea {
 
 .metric-icon {
   align-items: center;
-  background: #eef6f6;
+  background: #eff6ff;
   border-radius: 8px;
-  color: #0d5d65;
+  color: #2563eb;
   display: inline-flex;
   height: 40px;
   justify-content: center;
@@ -495,6 +1398,24 @@ th {
   font-size: 0.85rem;
 }
 
+.clickable-row {
+  cursor: pointer;
+}
+
+.clickable-row:hover {
+  background: #f8fafc;
+}
+
+.clickable-row:hover .record-title strong {
+  color: #2563eb;
+  text-decoration: underline;
+}
+
+.clickable-row:focus {
+  outline: 2px solid #2563eb;
+  outline-offset: -2px;
+}
+
 .status {
   background: #e2e8f0;
   border-radius: 999px;
@@ -507,6 +1428,11 @@ th {
 }
 
 .status.paid {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.status.collected {
   background: #dcfce7;
   color: #166534;
 }
@@ -527,8 +1453,28 @@ th {
 }
 
 .status.inactive {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.status.completed {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.status.archived {
   background: #e2e8f0;
   color: #475569;
+}
+
+.status.saved {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.status.pending {
+  background: #fef3c7;
+  color: #92400e;
 }
 
 .table-input {
@@ -592,6 +1538,433 @@ th {
   width: 34px;
 }
 
+.salary-bond-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.salary-bond-form {
+  align-items: end;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(180px, 1.1fr) minmax(180px, 1.2fr) repeat(4, minmax(120px, 0.75fr)) auto;
+}
+
+.salary-bond-actions {
+  display: flex;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.salary-bond-actions button {
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  color: #334155;
+  font-size: 0.78rem;
+  font-weight: 800;
+  min-height: 32px;
+  padding: 0 9px;
+}
+
+.salary-bond-actions button:hover {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #2563eb;
+}
+
+.employee-details {
+  background: #f8fafc;
+  display: grid;
+  gap: 14px;
+}
+
+.employee-detail-hero,
+.employee-detail-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.05);
+}
+
+.employee-detail-hero {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+}
+
+.employee-detail-profile {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+  min-width: 0;
+}
+
+.employee-detail-avatar {
+  align-items: center;
+  background: #e0f2fe;
+  border-radius: 999px;
+  color: #075985;
+  display: flex;
+  flex: 0 0 auto;
+  font-weight: 900;
+  height: 58px;
+  justify-content: center;
+  overflow: hidden;
+  width: 58px;
+}
+
+.employee-detail-avatar img {
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
+.employee-detail-name {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+}
+
+.employee-detail-name h2 {
+  color: #111827;
+  font-size: 1.15rem;
+  margin: 0;
+}
+
+.employee-detail-profile p {
+  align-items: center;
+  color: #475569;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 7px 0 0;
+}
+
+.employee-detail-profile p span {
+  background: #cbd5e1;
+  height: 14px;
+  width: 1px;
+}
+
+.employee-detail-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 10px;
+}
+
+.employee-detail-tabs {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-bottom: 1px solid #e2e8f0;
+  border-radius: 8px;
+  display: flex;
+  gap: 16px;
+  overflow-x: auto;
+  padding: 0 18px;
+}
+
+.employee-detail-tabs button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  color: #334155;
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 800;
+  min-height: 48px;
+  padding: 0 2px;
+}
+
+.employee-detail-tabs button:hover {
+  color: #2563eb;
+}
+
+.employee-detail-tabs button.active {
+  border-bottom-color: #2563eb;
+  color: #2563eb;
+}
+
+.employee-detail-card {
+  padding: 18px;
+}
+
+.employee-detail-card h3,
+.ticket-section-heading h3,
+.recent-ticket-table h3,
+.side-card-heading h3 {
+  color: #111827;
+  font-size: 1rem;
+  margin: 0;
+}
+
+.ticket-wages-layout {
+  align-items: start;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 2.1fr) minmax(280px, 0.9fr);
+}
+
+.ticket-wages-main {
+  display: grid;
+  gap: 16px;
+}
+
+.ticket-section-heading,
+.side-card-heading {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ticket-section-heading p {
+  color: #64748b;
+  margin: 4px 0 0;
+}
+
+.ticket-rate-list {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.ticket-rate-header,
+.ticket-rate-row {
+  align-items: center;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 1.05fr 1.7fr 1.35fr 0.75fr 0.75fr;
+  padding: 12px;
+}
+
+.ticket-rate-header {
+  background: #f8fafc;
+  color: #475569;
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.ticket-rate-row + .ticket-rate-row {
+  border-top: 1px solid #e2e8f0;
+}
+
+.ticket-rate-title {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.ticket-rate-row p {
+  color: #334155;
+  font-size: 0.83rem;
+  margin: 0;
+  white-space: normal;
+}
+
+.ticket-rate-icon {
+  align-items: center;
+  border-radius: 999px;
+  display: inline-flex;
+  height: 34px;
+  justify-content: center;
+  width: 34px;
+}
+
+.ticket-rate-icon.green {
+  background: #dcfce7;
+  color: #16a34a;
+}
+
+.ticket-rate-icon.blue {
+  background: #dbeafe;
+  color: #2563eb;
+}
+
+.ticket-rate-input {
+  align-items: center;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  display: flex;
+  justify-content: space-between;
+  min-height: 38px;
+  padding: 0 10px;
+}
+
+.ticket-rate-input span {
+  color: #475569;
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.ticket-rate-input strong {
+  color: #111827;
+}
+
+.ticket-rate-input input {
+  border: 0;
+  color: #111827;
+  font-weight: 850;
+  min-height: 30px;
+  padding: 0;
+  text-align: right;
+}
+
+.ticket-rate-actions {
+  display: flex;
+  gap: 7px;
+}
+
+.ticket-rate-actions button {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  color: #334155;
+  display: inline-flex;
+  height: 32px;
+  justify-content: center;
+  width: 32px;
+}
+
+.ticket-rate-actions button:last-child {
+  color: #dc2626;
+}
+
+.detail-note {
+  align-items: flex-start;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  color: #1d4ed8;
+  display: flex;
+  gap: 10px;
+  padding: 12px;
+}
+
+.detail-note p {
+  color: #1e3a8a;
+  font-size: 0.83rem;
+  margin: 0;
+}
+
+.detail-note strong {
+  display: block;
+  margin-bottom: 2px;
+}
+
+.recent-ticket-table {
+  display: grid;
+  gap: 10px;
+}
+
+.ticket-type {
+  border-radius: 5px;
+  display: inline-flex;
+  font-size: 0.75rem;
+  font-weight: 800;
+  padding: 4px 7px;
+}
+
+.ticket-type.repair {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.ticket-type.installation {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.ticket-wages-side {
+  display: grid;
+  gap: 16px;
+}
+
+.earnings-list,
+.summary-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.earnings-list div,
+.summary-list div {
+  align-items: center;
+  border-bottom: 1px solid #edf2f7;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr auto auto;
+  padding-bottom: 10px;
+}
+
+.earnings-list div:last-child {
+  border-bottom: 0;
+  grid-template-columns: 1fr auto;
+  padding-top: 8px;
+}
+
+.earnings-list span,
+.summary-list span {
+  color: #475569;
+  font-size: 0.84rem;
+}
+
+.earnings-list strong:last-child {
+  color: #16a34a;
+  font-size: 1.15rem;
+}
+
+.summary-list div {
+  grid-template-columns: 1fr auto;
+}
+
+.summary-list strong {
+  color: #111827;
+  font-size: 0.86rem;
+  text-align: right;
+}
+
+.compact-note {
+  margin-top: 16px;
+}
+
+.details-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.detail-item {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+}
+
+.detail-item span {
+  color: #64748b;
+  font-size: 0.74rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.detail-item strong {
+  color: #17202a;
+  font-size: 0.92rem;
+  overflow-wrap: anywhere;
+}
+
 .modal-backdrop {
   align-items: center;
   background: rgba(15, 23, 42, 0.45);
@@ -643,6 +2016,49 @@ th {
     grid-template-columns: 1fr;
   }
 
+  .main-area {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .topbar {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    padding: 12px 18px;
+  }
+
+  .admin-chip {
+    display: none;
+  }
+
+  .employee-entry-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .compensation-page {
+    grid-template-columns: 1fr;
+  }
+
+  .payroll-summary-panel {
+    position: static;
+  }
+
+  .daily-ticket-layout,
+  .daily-ticket-filters {
+    grid-template-columns: 1fr;
+  }
+
+  .daily-ticket-row {
+    grid-template-columns: minmax(190px, 1.35fr) minmax(110px, 0.8fr) minmax(120px, 0.85fr) minmax(110px, 0.65fr) minmax(120px, 0.8fr) minmax(82px, 0.45fr) 44px;
+    overflow-x: auto;
+  }
+
+  .employee-info-card {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .employee-form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .sidebar {
     border-bottom: 1px solid #dce4ee;
     border-right: 0;
@@ -688,6 +2104,15 @@ th {
 
   .content {
     padding: 22px;
+  }
+
+  .ticket-wages-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .ticket-rate-header,
+  .ticket-rate-row {
+    grid-template-columns: 1fr 1.3fr 1fr auto auto;
   }
 }
 
@@ -745,8 +2170,22 @@ th {
   .nav-list,
   .metric-grid,
   .two-column,
+  .compensation-toolbar,
+  .earnings-grid,
+  .employee-info-card,
+  .employee-form-grid,
+  .form-tabs,
   .form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .topbar {
+    gap: 10px;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .employee-form-grid .profile-upload {
+    grid-row: auto;
   }
 
   .nav-list {
@@ -785,9 +2224,106 @@ th {
     font-size: 1.55rem;
   }
 
+  .daily-ticket-table {
+    overflow-x: auto;
+  }
+
+  .daily-ticket-row {
+    min-width: 900px;
+  }
+
+  .daily-ticket-page .table-wrap {
+    background: #ffffff;
+    border: 1px solid #dbe4ef;
+    box-shadow: none;
+    overflow-x: auto;
+  }
+
+  .daily-ticket-page table,
+  .daily-ticket-page thead,
+  .daily-ticket-page tbody,
+  .daily-ticket-page tr,
+  .daily-ticket-page td {
+    display: revert;
+    width: auto;
+  }
+
+  .daily-ticket-page thead {
+    display: table-header-group;
+  }
+
+  .daily-ticket-page tbody {
+    display: table-row-group;
+  }
+
+  .daily-ticket-page tr {
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 0;
+  }
+
+  .daily-ticket-page td {
+    border-bottom: 1px solid #edf2f7;
+    display: table-cell;
+    padding: 14px 16px;
+    white-space: nowrap;
+  }
+
+  .daily-ticket-page td::before {
+    content: none;
+  }
+
   .summary-band h2 {
     font-size: 1.65rem;
     overflow-wrap: anywhere;
+  }
+
+  .employee-detail-hero,
+  .ticket-section-heading,
+  .side-card-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .employee-detail-profile {
+    align-items: flex-start;
+  }
+
+  .employee-detail-actions {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .employee-detail-actions button,
+  .ticket-section-heading button,
+  .side-card-heading button {
+    width: 100%;
+  }
+
+  .employee-detail-tabs {
+    gap: 12px;
+    padding: 0 12px;
+  }
+
+  .ticket-rate-header {
+    display: none;
+  }
+
+  .ticket-rate-row {
+    align-items: stretch;
+    display: grid;
+    gap: 10px;
+    grid-template-columns: 1fr;
+  }
+
+  .ticket-rate-actions {
+    justify-content: flex-end;
+  }
+
+  .details-grid {
+    grid-template-columns: 1fr;
   }
 
   .toolbar > select {
