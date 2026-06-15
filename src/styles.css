@@ -1477,12 +1477,6 @@ th {
   color: #92400e;
 }
 
-.table-input {
-  min-height: 36px;
-  min-width: 112px;
-  padding: 7px 9px;
-}
-
 .totals-grid {
   align-items: center;
   display: grid;
@@ -1571,6 +1565,207 @@ th {
   background: #eff6ff;
   border-color: #bfdbfe;
   color: #2563eb;
+}
+
+.salary-bond-create-page {
+  display: grid;
+  gap: 16px;
+}
+
+.salary-bond-breadcrumb {
+  align-items: center;
+  color: #64748b;
+  display: flex;
+  font-size: 0.82rem;
+  font-weight: 800;
+  gap: 8px;
+}
+
+.salary-bond-breadcrumb span {
+  color: #2563eb;
+}
+
+.salary-bond-create-layout {
+  align-items: start;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(0, 1.65fr) minmax(320px, 0.85fr);
+}
+
+.salary-bond-create-card,
+.salary-bond-summary-card {
+  background: #ffffff;
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.06);
+  padding: 22px;
+}
+
+.salary-bond-create-form {
+  display: grid;
+  gap: 18px 20px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.salary-bond-create-form label {
+  display: grid;
+  gap: 8px;
+}
+
+.salary-bond-create-form label span {
+  color: #dc2626;
+}
+
+.salary-bond-create-form small {
+  color: #64748b;
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.salary-bond-form-wide,
+.salary-bond-selected-employee,
+.salary-bond-form-actions {
+  grid-column: 1 / -1;
+}
+
+.salary-bond-selected-employee {
+  align-items: center;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  padding: 12px;
+}
+
+.salary-bond-selected-employee strong,
+.salary-bond-selected-employee span {
+  display: block;
+}
+
+.salary-bond-selected-employee span {
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 700;
+  margin-top: 4px;
+}
+
+.salary-bond-selected-employee button {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: #64748b;
+  display: inline-flex;
+  height: 30px;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0;
+  width: 30px;
+}
+
+.salary-bond-selected-employee button:hover {
+  background: #f1f5f9;
+  border-color: #e2e8f0;
+  color: #0f172a;
+}
+
+.salary-bond-form-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  padding-top: 8px;
+}
+
+.salary-bond-summary-card {
+  display: grid;
+  gap: 16px;
+  position: sticky;
+  top: 92px;
+}
+
+.salary-bond-summary-card h2 {
+  color: #0f172a;
+  font-size: 1.05rem;
+  margin: 0;
+}
+
+.salary-bond-active-banner {
+  align-items: center;
+  background: #ecfdf5;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  color: #166534;
+  display: grid;
+  font-size: 0.82rem;
+  font-weight: 800;
+  gap: 12px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  padding: 12px;
+}
+
+.salary-bond-summary-list,
+.salary-bond-estimate-card {
+  display: grid;
+  gap: 12px;
+}
+
+.salary-bond-summary-list {
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 16px;
+}
+
+.salary-bond-summary-list div,
+.salary-bond-estimate-card div {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.salary-bond-summary-list span,
+.salary-bond-estimate-card span {
+  color: #64748b;
+  font-size: 0.84rem;
+}
+
+.salary-bond-summary-list strong,
+.salary-bond-estimate-card b {
+  color: #111827;
+  font-size: 0.86rem;
+  text-align: right;
+}
+
+.salary-bond-summary-list div:nth-child(4) strong,
+.salary-bond-summary-list div:nth-child(5) strong {
+  color: #2563eb;
+}
+
+.salary-bond-estimate-card {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.salary-bond-estimate-card > strong {
+  color: #2563eb;
+  font-size: 0.88rem;
+}
+
+.salary-bond-estimate-card div:last-child b {
+  color: #16a34a;
+}
+
+.salary-bond-warning {
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  color: #9a3412;
+  font-size: 0.83rem;
+  font-weight: 700;
+  line-height: 1.45;
+  padding: 14px;
 }
 
 .employee-details {
@@ -2037,6 +2232,14 @@ th {
     grid-template-columns: 1fr;
   }
 
+  .salary-bond-create-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .salary-bond-summary-card {
+    position: static;
+  }
+
   .payroll-summary-panel {
     position: static;
   }
@@ -2170,6 +2373,7 @@ th {
   .nav-list,
   .metric-grid,
   .two-column,
+  .salary-bond-create-form,
   .compensation-toolbar,
   .earnings-grid,
   .employee-info-card,
@@ -2186,6 +2390,14 @@ th {
 
   .employee-form-grid .profile-upload {
     grid-row: auto;
+  }
+
+  .salary-bond-form-actions {
+    flex-direction: column-reverse;
+  }
+
+  .salary-bond-form-actions button {
+    width: 100%;
   }
 
   .nav-list {

@@ -39,6 +39,9 @@ export type SalaryBond = {
   employee_id: string | null;
   employee_name: string;
   bond_id: string;
+  bond_type: string;
+  date_granted: string;
+  start_deduction: string;
   purpose: string;
   amount: number;
   balance: number;
@@ -145,7 +148,10 @@ export type CollectionFormValues = {
 
 export type SalaryBondFormValues = {
   employee_id: string;
-  bond_id: string;
+  bond_type: string;
+  date_granted: string;
+  start_deduction: string;
+  purpose: string;
   amount: string;
   balance: string;
   deduction_per_payroll: string;

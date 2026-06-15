@@ -116,12 +116,12 @@ const viewPaths: Record<View, string> = {
 
 const viewResources: Record<View, ResourceKey[]> = {
   dashboard: ["employees", "payrollRuns", "payments", "collections"],
-  employees: ["employees", "payrollRuns"],
-  "employee-add": ["employees", "payrollRuns"],
+  employees: ["employees", "payrollRuns", "salaryBonds"],
+  "employee-add": ["employees", "payrollRuns", "salaryBonds"],
   compensation: [],
   "daily-tickets": ["employees", "dailyTicketEntries"],
   "salary-bonds": ["employees", "salaryBonds"],
-  payroll: ["employees", "dailyTicketEntries", "payrollRuns"],
+  payroll: ["employees", "dailyTicketEntries", "payrollRuns", "salaryBonds"],
   "payroll-history": ["employees", "payrollRuns"],
   payments: ["payments"],
   "payment-history": ["payments"],
@@ -242,7 +242,10 @@ const emptyCollection: CollectionFormValues = {
 
 const emptySalaryBond: SalaryBondFormValues = {
   employee_id: "",
-  bond_id: "",
+  bond_type: "Salary Advance",
+  date_granted: todayKey(),
+  start_deduction: todayKey(),
+  purpose: "",
   amount: "",
   balance: "",
   deduction_per_payroll: "",
@@ -498,7 +501,7 @@ function Workspace({ session }: { session: Session }) {
   }
 
   async function refreshEmployeesPage() {
-    await Promise.all([loadResource("employees", true), loadResource("payrollRuns", true)]);
+    await Promise.all([loadResource("employees", true), loadResource("payrollRuns", true), loadResource("salaryBonds", true)]);
   }
 
   async function refreshDailyTicketsPage() {
@@ -506,7 +509,7 @@ function Workspace({ session }: { session: Session }) {
   }
 
   async function refreshPayrollPage() {
-    await loadResource("payrollRuns", true);
+    await Promise.all([loadResource("payrollRuns", true), loadResource("salaryBonds", true)]);
   }
 
   async function refreshPaymentsPage() {
@@ -652,6 +655,7 @@ function Workspace({ session }: { session: Session }) {
                   employees={employees}
                   onChange={refreshEmployeesPage}
                   payrollRuns={payrollRuns}
+                  salaryBonds={salaryBonds}
                   setNotice={setNotice}
                   userId={session.user.id}
                 />
@@ -663,6 +667,7 @@ function Workspace({ session }: { session: Session }) {
                 onChange={refreshEmployeesPage}
                 onExitForm={() => navigate("employees")}
                 payrollRuns={payrollRuns}
+                salaryBonds={salaryBonds}
                 setNotice={setNotice}
                 userId={session.user.id}
               />
@@ -683,7 +688,6 @@ function Workspace({ session }: { session: Session }) {
                 <SalaryBondsView
                   employees={employees}
                   onChange={refreshSalaryBonds}
-                  salaryBonds={salaryBonds}
                   setNotice={setNotice}
                   userId={session.user.id}
                 />
@@ -694,6 +698,7 @@ function Workspace({ session }: { session: Session }) {
                   employees={employees}
                   onChange={refreshPayrollPage}
                   payrollRuns={payrollRuns}
+                  salaryBonds={salaryBonds}
                   setNotice={setNotice}
                   userId={session.user.id}
                 />
@@ -897,47 +902,59 @@ function DueList({
 function SalaryBondsView({
   employees,
   onChange,
-  salaryBonds,
   setNotice,
   userId,
 }: {
   employees: Employee[];
   onChange: () => Promise<void>;
-  salaryBonds: SalaryBond[];
   setNotice: (notice: Notice) => void;
   userId: string;
 }) {
   const [bondForm, setBondForm] = useState<SalaryBondFormValues>(emptySalaryBond);
-  const [editingBond, setEditingBond] = useState<SalaryBond | null>(null);
-  const activeSalaryBonds = salaryBonds.filter((bond) => bond.status !== "archived");
-  const salaryBondBalance = activeSalaryBonds.reduce((sum, bond) => sum + toNumber(bond.balance), 0);
+  const selectedEmployee = employees.find((item) => item.id === bondForm.employee_id);
+  const amount = toNumber(bondForm.amount);
+  const deductionPerPayroll = toNumber(bondForm.deduction_per_payroll);
+  const estimatedDeductions = deductionPerPayroll > 0 ? Math.ceil(amount / deductionPerPayroll) : 0;
+  const remainingAfterPayoff = Math.max(0, amount - estimatedDeductions * deductionPerPayroll);
+  const estimatedPayoffDate = (() => {
+    if (!bondForm.start_deduction || estimatedDeductions === 0) return "Not available";
+    const date = new Date(`${bondForm.start_deduction}T00:00:00`);
+    date.setDate(date.getDate() + Math.max(0, estimatedDeductions - 1) * 15);
+    return date.toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" });
+  })();
+  const displayDateGranted = bondForm.date_granted
+    ? new Date(`${bondForm.date_granted}T00:00:00`).toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" })
+    : "Not set";
+  const displayStartDeduction = bondForm.start_deduction
+    ? new Date(`${bondForm.start_deduction}T00:00:00`).toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" })
+    : "Not set";
 
   async function saveSalaryBond(event: FormEvent) {
     event.preventDefault();
     if (!supabase) return;
-    const employee = employees.find((item) => item.id === bondForm.employee_id);
-    if (!employee) {
+    if (!selectedEmployee) {
       setNotice({ type: "error", text: "Select an employee for the salary bond." });
       return;
     }
 
-    const amount = toNumber(bondForm.amount);
     const balance = bondForm.balance ? toNumber(bondForm.balance) : amount;
+    const generatedBondId = `SB-${Date.now().toString(36).toUpperCase()}`;
     const payload = {
       user_id: userId,
-      employee_id: employee.id,
-      employee_name: employee.full_name,
-      bond_id: bondForm.bond_id.trim(),
-      purpose: bondForm.bond_id.trim(),
+      employee_id: selectedEmployee.id,
+      employee_name: selectedEmployee.full_name,
+      bond_id: generatedBondId,
+      bond_type: bondForm.bond_type,
+      date_granted: bondForm.date_granted,
+      start_deduction: bondForm.start_deduction,
+      purpose: bondForm.purpose.trim(),
       amount,
       balance,
-      deduction_per_payroll: toNumber(bondForm.deduction_per_payroll),
+      deduction_per_payroll: deductionPerPayroll,
       status: bondForm.status,
       notes: bondForm.notes.trim(),
     };
-    const result = editingBond
-      ? await supabase.from("salary_bonds").update(payload).eq("id", editingBond.id)
-      : await supabase.from("salary_bonds").insert(payload);
+    const result = await supabase.from("salary_bonds").insert(payload);
 
     if (result.error) {
       setNotice({ type: "error", text: friendlyError(result.error) });
@@ -945,124 +962,128 @@ function SalaryBondsView({
     }
 
     setBondForm(emptySalaryBond);
-    setEditingBond(null);
     setNotice({ type: "success", text: "Salary bond saved." });
     await onChange();
   }
 
-  async function updateSalaryBondStatus(bond: SalaryBond, status: SalaryBond["status"]) {
-    if (!supabase) return;
-    const payload = status === "completed" ? { status, balance: 0 } : { status };
-    const { error } = await supabase.from("salary_bonds").update(payload).eq("id", bond.id);
-    if (error) {
-      setNotice({ type: "error", text: friendlyError(error) });
-      return;
-    }
-
-    setNotice({ type: "success", text: `${bond.bond_id} updated.` });
-    await onChange();
-  }
-
-  function editSalaryBond(bond: SalaryBond) {
-    setEditingBond(bond);
-    setBondForm({
-      amount: String(bond.amount),
-      balance: String(bond.balance),
-      deduction_per_payroll: String(bond.deduction_per_payroll),
-      employee_id: bond.employee_id ?? "",
-      notes: bond.notes,
-      bond_id: bond.bond_id,
-      status: bond.status,
-    });
-  }
-
   return (
-    <div className="page-stack">
+    <div className="salary-bond-create-page">
+      <div className="salary-bond-breadcrumb">
+        <span>Salary Bonds</span>
+        <ChevronDown size={14} />
+        <strong>New Salary Bond</strong>
+      </div>
       <PageHeader
-        eyebrow="Employee salary bond"
-        title="Salary Bond"
-        text="Create, monitor, and update employee salary bond deductions."
+        eyebrow=""
+        title="Add Salary Bond"
+        text="Create a salary bond or advance for an employee."
       />
-      <section className="metric-grid">
-        <Metric icon={<CreditCard />} label="Active bonds" value={activeSalaryBonds.length} />
-        <Metric icon={<BadgeDollarSign />} label="Open balance" value={currency.format(salaryBondBalance)} />
-      </section>
-      <section className="panel salary-bond-panel">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Bond Details</p>
-            <h2>{editingBond ? "Edit Salary Bond" : "New Salary Bond"}</h2>
-          </div>
-          {editingBond && (
-            <button className="secondary-button compact" onClick={() => { setEditingBond(null); setBondForm(emptySalaryBond); }} type="button">
-              Cancel Edit
-            </button>
-          )}
-        </div>
-        <form className="salary-bond-form" onSubmit={saveSalaryBond}>
-          <label>
-            Employee
-            <select
-              required
-              value={bondForm.employee_id}
-              onChange={(event) => setBondForm({ ...bondForm, employee_id: event.target.value })}
-            >
-              <option value="">Select employee</option>
-              {employees.map((employee) => (
-                <option key={employee.id} value={employee.id}>{employee.full_name}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Bond ID
-            <input required value={bondForm.bond_id} onChange={(event) => setBondForm({ ...bondForm, bond_id: event.target.value })} />
-          </label>
-          <label>
-            Amount
-            <input min="0" required type="number" value={bondForm.amount} onChange={(event) => setBondForm({ ...bondForm, amount: event.target.value })} />
-          </label>
-          <label>
-            Balance
-            <input min="0" type="number" value={bondForm.balance} onChange={(event) => setBondForm({ ...bondForm, balance: event.target.value })} />
-          </label>
-          <label>
-            Deduction/Payroll
-            <input min="0" required type="number" value={bondForm.deduction_per_payroll} onChange={(event) => setBondForm({ ...bondForm, deduction_per_payroll: event.target.value })} />
-          </label>
-          <label>
-            Status
-            <select value={bondForm.status} onChange={(event) => setBondForm({ ...bondForm, status: event.target.value as SalaryBond["status"] })}>
-              <option value="active">Active</option>
-              <option value="completed">Completed</option>
-              <option value="archived">Archived</option>
-            </select>
-          </label>
-          <button className="primary-button compact" type="submit">
-            <Save size={16} />
-            {editingBond ? "Save Bond" : "Add Bond"}
-          </button>
-        </form>
-        <DataTable
-          empty="No salary bonds yet."
-          headers={["Employee", "Bond ID", "Amount", "Balance", "Deduction/Payroll", "Status", "Action"]}
-          rows={activeSalaryBonds.map((bond) => [
-            bond.employee_name,
-            bond.bond_id,
-            currency.format(toNumber(bond.amount)),
-            currency.format(toNumber(bond.balance)),
-            currency.format(toNumber(bond.deduction_per_payroll)),
-            <StatusPill key="status" status={bond.status} />,
-            <div className="salary-bond-actions" key="actions">
-              <button onClick={() => setNotice({ type: "success", text: `${bond.bond_id}: ${bond.notes || bond.purpose}` })} type="button">
-                View Details
+
+      <div className="salary-bond-create-layout">
+        <section className="salary-bond-create-card">
+          <form className="salary-bond-create-form" onSubmit={saveSalaryBond}>
+            <label>
+              Employee <span>*</span>
+              <select
+                required
+                value={bondForm.employee_id}
+                onChange={(event) => setBondForm({ ...bondForm, employee_id: event.target.value })}
+              >
+                <option value="">Search Employee</option>
+                {employees.map((employee) => (
+                  <option key={employee.id} value={employee.id}>{employee.full_name}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Bond Type <span>*</span>
+              <select value={bondForm.bond_type} onChange={(event) => setBondForm({ ...bondForm, bond_type: event.target.value })}>
+                <option value="Salary Advance">Salary Advance</option>
+                <option value="Emergency Loan">Emergency Loan</option>
+                <option value="Equipment Bond">Equipment Bond</option>
+                <option value="Other">Other</option>
+              </select>
+            </label>
+
+            {selectedEmployee && (
+              <div className="salary-bond-selected-employee">
+                <div className="avatar">{selectedEmployee.full_name.slice(0, 1).toUpperCase()}</div>
+                <div>
+                  <strong>{selectedEmployee.full_name}</strong>
+                  <span>EMP-{selectedEmployee.created_at?.slice(0, 4) || "2024"}-0001 - {selectedEmployee.role || "Employee"}</span>
+                </div>
+                <button aria-label="Clear employee" onClick={() => setBondForm({ ...bondForm, employee_id: "" })} type="button">
+                  <X size={15} />
+                </button>
+              </div>
+            )}
+
+            <label>
+              Date Granted <span>*</span>
+              <input required type="date" value={bondForm.date_granted} onChange={(event) => setBondForm({ ...bondForm, date_granted: event.target.value })} />
+            </label>
+            <label>
+              Amount <span>*</span>
+              <input min="0" required type="number" value={bondForm.amount} onChange={(event) => setBondForm({ ...bondForm, amount: event.target.value, balance: event.target.value })} />
+            </label>
+            <label>
+              Deduction Per Payroll <span>*</span>
+              <input min="0" required type="number" value={bondForm.deduction_per_payroll} onChange={(event) => setBondForm({ ...bondForm, deduction_per_payroll: event.target.value })} />
+              <small>This amount will be deducted in every payroll run.</small>
+            </label>
+            <label>
+              Start Deduction <span>*</span>
+              <input required type="date" value={bondForm.start_deduction} onChange={(event) => setBondForm({ ...bondForm, start_deduction: event.target.value })} />
+              <small>The deduction will start on this date.</small>
+            </label>
+            <label className="salary-bond-form-wide">
+              Purpose
+              <input value={bondForm.purpose} onChange={(event) => setBondForm({ ...bondForm, purpose: event.target.value })} />
+            </label>
+            <label className="salary-bond-form-wide">
+              Notes <small>(Optional)</small>
+              <textarea placeholder="Enter any additional notes..." value={bondForm.notes} onChange={(event) => setBondForm({ ...bondForm, notes: event.target.value })} />
+              <small>Optional notes about this bond.</small>
+            </label>
+            <div className="salary-bond-form-actions">
+              <button className="secondary-button compact" onClick={() => setBondForm(emptySalaryBond)} type="button">
+                Cancel
               </button>
-              <button onClick={() => editSalaryBond(bond)} type="button">Edit</button>
-              <button onClick={() => updateSalaryBondStatus(bond, "completed")} type="button">Mark Completed</button>
-              <button onClick={() => updateSalaryBondStatus(bond, "archived")} type="button">Archive</button>
-            </div>,
-          ])}
-        />
-      </section>
+              <button className="primary-button compact" type="submit">
+                <Save size={16} />
+                Save Bond
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <aside className="salary-bond-summary-card">
+          <h2>Bond Summary</h2>
+          <div className="salary-bond-active-banner">
+            <CreditCard size={22} />
+            <span>This bond will be active once saved.</span>
+            <StatusPill status="active" />
+          </div>
+          <div className="salary-bond-summary-list">
+            <div><span>Employee</span><strong>{selectedEmployee?.full_name || "Not selected"}</strong></div>
+            <div><span>Bond Type</span><strong>{bondForm.bond_type}</strong></div>
+            <div><span>Date Granted</span><strong>{displayDateGranted}</strong></div>
+            <div><span>Amount Granted</span><strong>{currency.format(amount)}</strong></div>
+            <div><span>Deduction Per Payroll</span><strong>{currency.format(deductionPerPayroll)}</strong></div>
+            <div><span>Start Deduction</span><strong>{displayStartDeduction}</strong></div>
+          </div>
+          <div className="salary-bond-estimate-card">
+            <strong>Estimated Summary</strong>
+            <div><span>Estimated Number of Deductions</span><b>{estimatedDeductions} payroll(s)</b></div>
+            <div><span>Estimated Payoff Date</span><b>{estimatedPayoffDate}</b></div>
+            <div><span>Total Deduction</span><b>{currency.format(estimatedDeductions * deductionPerPayroll)}</b></div>
+            <div><span>Remaining Balance After Payoff</span><b>{currency.format(remainingAfterPayoff)}</b></div>
+          </div>
+          <div className="salary-bond-warning">
+            The actual payoff date may vary depending on the payroll schedule and any additional payments.
+          </div>
+        </aside>
+      </div>
     </div>
   );
 }
@@ -1744,6 +1765,7 @@ export function EmployeesView({
   onChange,
   onExitForm,
   payrollRuns,
+  salaryBonds,
   setNotice,
   userId,
 }: {
@@ -1752,6 +1774,7 @@ export function EmployeesView({
   onChange: () => Promise<void>;
   onExitForm?: () => void;
   payrollRuns: PayrollRunWithItems[];
+  salaryBonds: SalaryBond[];
   setNotice: (notice: Notice) => void;
   userId: string;
 }) {
@@ -1790,6 +1813,7 @@ export function EmployeesView({
         onBack={() => setDetailsEmployee(null)}
         onEmployeeUpdate={setDetailsEmployee}
         payrollRuns={payrollRuns}
+        salaryBonds={salaryBonds}
         setNotice={setNotice}
       />
     );
@@ -1906,6 +1930,7 @@ export function EmployeeDetailsView({
   onBack,
   onEmployeeUpdate,
   payrollRuns,
+  salaryBonds,
   setNotice,
 }: {
   employee: Employee;
@@ -1913,6 +1938,7 @@ export function EmployeeDetailsView({
   onBack: () => void;
   onEmployeeUpdate: (employee: Employee) => void;
   payrollRuns: PayrollRunWithItems[];
+  salaryBonds: SalaryBond[];
   setNotice: (notice: Notice) => void;
 }) {
   const [activeTab, setActiveTab] = useState<"information" | "payroll" | "tickets" | "salary-bond" | "payments" | "documents">("tickets");
@@ -1992,22 +2018,9 @@ export function EmployeeDetailsView({
   const installationEarnings = ticketTotals.installation * installationRate;
   const totalTicketEarnings = repairEarnings + installationEarnings;
   const closedTickets = ticketTotals.repair + ticketTotals.installation;
-  const salaryBonds = history
-    .filter(({ item }) => toNumber(item.deductions) > 0)
-    .map(({ item, run }, index) => {
-      const period = `${monthNames[run.period_month - 1]} ${run.period_year} - ${payPeriodLabel(run.pay_period)}`;
-      const amount = toNumber(item.deductions);
-      const status = item.status === "paid" ? "completed" : "active";
-
-      return {
-        amount,
-        balance: status === "completed" ? 0 : amount,
-        bondId: `SB-${run.period_year}-${String(run.period_month).padStart(2, "0")}-${String(index + 1).padStart(3, "0")}`,
-        deductionPayroll: `${currency.format(amount)} / ${period}`,
-        purpose: item.notes || "Salary bond",
-        status,
-      };
-    });
+  const employeeSalaryBonds = salaryBonds
+    .filter((bond) => bond.employee_id === currentEmployee.id)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
   const tabs = [
     { id: "information", icon: <Users size={16} />, label: "Information" },
     { id: "payroll", icon: <Briefcase size={16} />, label: "Payroll" },
@@ -2255,36 +2268,35 @@ export function EmployeeDetailsView({
             </div>
             <DataTable
               empty="No salary bonds for this employee yet."
-              headers={["Employee", "Bond ID", "Purpose", "Amount", "Balance", "Deduction/Payroll", "Status", "Action"]}
-              rows={salaryBonds.map((bond) => [
+              headers={["Employee", "Purpose", "Amount", "Balance", "Deduction/Payroll", "Status", "Action"]}
+              rows={employeeSalaryBonds.map((bond) => [
                 currentEmployee.full_name,
-                bond.bondId,
-                bond.purpose,
-                currency.format(bond.amount),
-                currency.format(bond.balance),
-                bond.deductionPayroll,
+                bond.purpose || bond.bond_type || bond.bond_id,
+                currency.format(toNumber(bond.amount)),
+                currency.format(toNumber(bond.balance)),
+                currency.format(toNumber(bond.deduction_per_payroll)),
                 <StatusPill key="status" status={bond.status} />,
                 <div className="salary-bond-actions" key="actions">
                   <button
-                    onClick={() => setNotice({ type: "success", text: `${bond.bondId} details selected.` })}
+                    onClick={() => setNotice({ type: "success", text: `${bond.bond_id} details selected.` })}
                     type="button"
                   >
                     View Details
                   </button>
                   <button
-                    onClick={() => setNotice({ type: "success", text: `${bond.bondId} is ready to edit.` })}
+                    onClick={() => setNotice({ type: "success", text: `${bond.bond_id} is ready to edit.` })}
                     type="button"
                   >
                     Edit
                   </button>
                   <button
-                    onClick={() => setNotice({ type: "success", text: `${bond.bondId} marked completed.` })}
+                    onClick={() => setNotice({ type: "success", text: `${bond.bond_id} marked completed.` })}
                     type="button"
                   >
                     Mark Completed
                   </button>
                   <button
-                    onClick={() => setNotice({ type: "success", text: `${bond.bondId} archived.` })}
+                    onClick={() => setNotice({ type: "success", text: `${bond.bond_id} archived.` })}
                     type="button"
                   >
                     Archive
@@ -2411,11 +2423,85 @@ function DetailItem({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
+type SalaryBondPayrollDeduction = {
+  amount: number;
+  bond: SalaryBond;
+};
+
+function salaryBondDeductionsForEmployee(
+  salaryBonds: SalaryBond[],
+  employee: Employee,
+  payrollDate: string,
+) {
+  return salaryBonds
+    .filter((bond) =>
+      bond.status === "active" &&
+      bond.employee_id === employee.id &&
+      toNumber(bond.balance) > 0 &&
+      toNumber(bond.deduction_per_payroll) > 0 &&
+      (!bond.start_deduction || bond.start_deduction <= payrollDate)
+    )
+    .map((bond) => ({
+      amount: Math.min(toNumber(bond.balance), toNumber(bond.deduction_per_payroll)),
+      bond,
+    }))
+    .filter((deduction) => deduction.amount > 0);
+}
+
+function payrollItemPayloadForEmployeeWithSalaryBonds(
+  employee: Employee,
+  payrollRunId: string,
+  userId: string,
+  dailyTicketEntries: DailyTicketEntry[],
+  salaryBonds: SalaryBond[],
+  payrollDate: string,
+) {
+  const payload = payrollItemPayloadForEmployee(employee, payrollRunId, userId, dailyTicketEntries);
+  const bondDeductions = salaryBondDeductionsForEmployee(salaryBonds, employee, payrollDate);
+  const salaryBondDeduction = bondDeductions.reduce((sum, deduction) => sum + deduction.amount, 0);
+
+  if (salaryBondDeduction === 0) {
+    return { bondDeductions, payload };
+  }
+
+  const deductions = toNumber(payload.deductions) + salaryBondDeduction;
+  const note = `Salary bond deduction: ${currency.format(salaryBondDeduction)}`;
+
+  return {
+    bondDeductions,
+    payload: {
+      ...payload,
+      deductions,
+      net_pay: netPay(toNumber(payload.gross_pay), toNumber(payload.allowances), deductions),
+      notes: [payload.notes, note].filter(Boolean).join(" | "),
+    },
+  };
+}
+
+async function applySalaryBondPayrollDeductions(deductions: SalaryBondPayrollDeduction[]) {
+  if (!supabase || deductions.length === 0) return null;
+  const client = supabase;
+
+  const updates = deductions.map(({ amount, bond }) => {
+    const balance = Math.max(0, toNumber(bond.balance) - amount);
+    return client
+      .from("salary_bonds")
+      .update({
+        balance,
+        status: balance === 0 ? "completed" : bond.status,
+      })
+      .eq("id", bond.id);
+  });
+  const results = await Promise.all(updates);
+  return results.find((result) => result.error)?.error ?? null;
+}
+
 export function PayrollView({
   dailyTicketEntries,
   employees,
   onChange,
   payrollRuns,
+  salaryBonds,
   setNotice,
   userId,
 }: {
@@ -2423,6 +2509,7 @@ export function PayrollView({
   employees: Employee[];
   onChange: () => Promise<void>;
   payrollRuns: PayrollRunWithItems[];
+  salaryBonds: SalaryBond[];
   setNotice: (notice: Notice) => void;
   userId: string;
 }) {
@@ -2487,14 +2574,30 @@ export function PayrollView({
       newRun.period_year,
       newRun.pay_period,
     );
-    const itemPayloads = activeEmployees.map((employee) =>
-      payrollItemPayloadForEmployee(employee, newRun.id, userId, periodDailyEntries)
+    const employeePayrollItems = activeEmployees.map((employee) =>
+      payrollItemPayloadForEmployeeWithSalaryBonds(
+        employee,
+        newRun.id,
+        userId,
+        periodDailyEntries,
+        salaryBonds,
+        newRun.generated_date,
+      )
     );
+    const itemPayloads = employeePayrollItems.map((item) => item.payload);
     const itemResult = await supabase.from("payroll_run_items").insert(itemPayloads);
     if (itemResult.error) {
       setNotice({ type: "error", text: friendlyError(itemResult.error) });
       return;
     }
+
+    const bondDeductions = employeePayrollItems.flatMap((item) => item.bondDeductions);
+    const bondError = await applySalaryBondPayrollDeductions(bondDeductions);
+    if (bondError) {
+      setNotice({ type: "error", text: friendlyError(bondError) });
+      return;
+    }
+
     setNotice({ type: "success", text: "Payroll run generated." });
     setFormOpen(false);
     setSelectedRunId(newRun.id);
@@ -2533,12 +2636,27 @@ export function PayrollView({
       selectedRun.period_year,
       selectedRun.pay_period,
     );
-    const itemPayloads = missingEmployees.map((employee) =>
-      payrollItemPayloadForEmployee(employee, selectedRun.id, userId, periodDailyEntries)
+    const employeePayrollItems = missingEmployees.map((employee) =>
+      payrollItemPayloadForEmployeeWithSalaryBonds(
+        employee,
+        selectedRun.id,
+        userId,
+        periodDailyEntries,
+        salaryBonds,
+        selectedRun.generated_date,
+      )
     );
+    const itemPayloads = employeePayrollItems.map((item) => item.payload);
     const { error } = await supabase.from("payroll_run_items").insert(itemPayloads);
     if (error) {
       setNotice({ type: "error", text: friendlyError(error) });
+      return;
+    }
+
+    const bondDeductions = employeePayrollItems.flatMap((item) => item.bondDeductions);
+    const bondError = await applySalaryBondPayrollDeductions(bondDeductions);
+    if (bondError) {
+      setNotice({ type: "error", text: friendlyError(bondError) });
       return;
     }
 
@@ -2549,7 +2667,8 @@ export function PayrollView({
     await onChange();
   }
 
-  const totals = selectedRun?.items.reduce(
+  const pendingPayrollItems = selectedRun?.items.filter((item) => item.status !== "paid") ?? [];
+  const totals = pendingPayrollItems.reduce(
     (sum, item) => ({
       gross: sum.gross + toNumber(item.gross_pay),
       allowances: sum.allowances + toNumber(item.allowances),
@@ -2557,7 +2676,7 @@ export function PayrollView({
       net: sum.net + toNumber(item.net_pay),
     }),
     { gross: 0, allowances: 0, deductions: 0, net: 0 },
-  ) ?? { gross: 0, allowances: 0, deductions: 0, net: 0 };
+  );
 
   return (
     <div className="page-stack">
@@ -2605,7 +2724,7 @@ export function PayrollView({
         </section>
       )}
       {selectedRun ? (
-        <PayrollItemsTable items={selectedRun.items} onUpdate={updateItem} />
+        <PayrollItemsTable items={pendingPayrollItems} onUpdate={updateItem} />
       ) : (
         <div className="panel">
           <p className="muted">No payroll has been generated yet.</p>
@@ -2627,7 +2746,7 @@ function PayrollItemsTable({
 }) {
   return (
     <DataTable
-      empty="No payroll items in this run."
+      empty="No pending payroll items in this run."
       headers={["Employee", "Install tickets", "Repair tickets", "Gross", "Allowance", "Deduction", "Net", "Status", "Actions"]}
       rows={items.map((item) => [
         <RecordTitle
@@ -2635,11 +2754,11 @@ function PayrollItemsTable({
           title={item.employee_name}
           notes={`Install ${currency.format(toNumber(item.installation_rate))} | Repair ${currency.format(toNumber(item.repair_rate))}${item.notes ? ` | ${item.notes}` : ""}`}
         />,
-        <MoneyInput key="installation_tickets" step="1" value={item.installation_tickets} onSave={(value) => onUpdate(item, { installation_tickets: value })} />,
-        <MoneyInput key="repair_tickets" step="1" value={item.repair_tickets} onSave={(value) => onUpdate(item, { repair_tickets: value })} />,
+        normalizeTicketCount(item.installation_tickets),
+        normalizeTicketCount(item.repair_tickets),
         currency.format(toNumber(item.gross_pay)),
-        <MoneyInput key="allowances" value={item.allowances} onSave={(value) => onUpdate(item, { allowances: value })} />,
-        <MoneyInput key="deductions" value={item.deductions} onSave={(value) => onUpdate(item, { deductions: value })} />,
+        currency.format(toNumber(item.allowances)),
+        currency.format(toNumber(item.deductions)),
         currency.format(toNumber(item.net_pay)),
         <StatusPill key="status" status={item.status} />,
         <div className="row-actions" key="actions">
@@ -2664,35 +2783,6 @@ function PayrollItemsTable({
           )}
         </div>,
       ])}
-    />
-  );
-}
-
-function MoneyInput({
-  onSave,
-  step = "0.01",
-  value,
-}: {
-  onSave: (value: number) => Promise<void>;
-  step?: string;
-  value: number;
-}) {
-  const [draft, setDraft] = useState(String(value));
-  useEffect(() => setDraft(String(value)), [value]);
-
-  return (
-    <input
-      className="table-input"
-      min="0"
-      onBlur={() => {
-        if (toNumber(draft) !== toNumber(value)) {
-          onSave(toNumber(draft));
-        }
-      }}
-      onChange={(event) => setDraft(event.target.value)}
-      step={step}
-      type="number"
-      value={draft}
     />
   );
 }
