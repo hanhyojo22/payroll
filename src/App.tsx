@@ -51,6 +51,8 @@ import {
 } from "./domain/tickets";
 import {
   loadAttendanceEntries,
+  loadBillingRecords,
+  loadBillingSettings,
   loadDashboardSummary,
   loadCollections,
   loadDailyTicketEntries,
@@ -65,10 +67,13 @@ import {
 } from "./lib/supabaseData";
 import { queueMutation, readCachedResource, writeCachedResource, type PendingMutation } from "./lib/offlineDb";
 import { flushPendingMutations, isOfflineLikeError } from "./lib/offlineSync";
+import { CollectionHistoryFeature, CollectionsFeature } from "./features/collections/CollectionsFeature";
+import { normalizeReceivable } from "./features/collections/collectionRepository";
 import type {
   AttendanceEntry,
   AttendanceStatus,
-  CollectionFormValues,
+  BillingRecord,
+  BillingSettings,
   CollectionReminder,
   DashboardSummary,
   DailyTicketEntry,
@@ -110,6 +115,8 @@ type QueueOfflineMutation = (mutation: Omit<PendingMutation, "id" | "createdAt" 
 
 const initialResourceStatuses: Record<ResourceKey, ResourceStatus> = {
   attendanceEntries: "idle",
+  billingRecords: "idle",
+  billingSettings: "idle",
   collections: "idle",
   dashboardSummary: "idle",
   dailyTicketEntries: "idle",
@@ -123,6 +130,8 @@ const initialResourceStatuses: Record<ResourceKey, ResourceStatus> = {
 
 const initialResourceHydration: Record<ResourceKey, boolean> = {
   attendanceEntries: false,
+  billingRecords: false,
+  billingSettings: false,
   collections: false,
   dashboardSummary: false,
   dailyTicketEntries: false,
@@ -173,6 +182,9 @@ const emptyDashboardSummary: DashboardSummary = {
   paidPayroll: 0,
   pendingCollections: 0,
   collectedTotal: 0,
+  overdueCollectionBalance: 0,
+  collectedThisMonth: 0,
+  collectionAging: { current: 0, days1To30: 0, days31To60: 0, days61To90: 0, daysOver90: 0 },
   latestRun: null,
   dueTodayPayments: [],
   overduePayments: [],
@@ -221,7 +233,7 @@ const friendlyError = (error: AppError | null | undefined, fallback = "Something
   if (message.includes("payment_reminders") && message.includes("schema cache")) {
     return "Payment tables are not ready yet. Run the latest Supabase SQL setup, then refresh the app.";
   }
-  if (message.includes("collection_reminders") && message.includes("schema cache")) {
+  if ((message.includes("collection_reminders") || message.includes("collection_payments")) && message.includes("schema cache")) {
     return "Collection tables are not ready yet. Run the latest Supabase SQL setup, then refresh the app.";
   }
   if (message.includes("daily_ticket_entries") && message.includes("schema cache")) {
@@ -279,15 +291,6 @@ const friendlyError = (error: AppError | null | undefined, fallback = "Something
 const emptyPayment: PaymentFormValues = {
   title: "",
   type: "loan",
-  amount: "",
-  due_date: todayKey(),
-  status: "pending",
-  notes: "",
-};
-
-const emptyCollection: CollectionFormValues = {
-  title: "",
-  client_name: "",
   amount: "",
   due_date: todayKey(),
   status: "pending",
@@ -488,6 +491,8 @@ function Workspace({ session }: { session: Session }) {
   const [positions, setPositions] = useState<Position[]>([]);
   const [payrollHistoryRows, setPayrollHistoryRows] = useState<PayrollHistoryRow[]>([]);
   const [salaryBonds, setSalaryBonds] = useState<SalaryBond[]>([]);
+  const [billingRecords, setBillingRecords] = useState<BillingRecord[]>([]);
+  const [billingSettings, setBillingSettings] = useState<BillingSettings | null>(null);
   const [resourceStatuses, setResourceStatuses] = useState(initialResourceStatuses);
   const [resourceHydration, setResourceHydration] = useState(initialResourceHydration);
   const [notice, setNotice] = useState<Notice>(null);
@@ -530,11 +535,21 @@ function Workspace({ session }: { session: Session }) {
         case "attendanceEntries":
           setAttendanceEntries(cached as AttendanceEntry[]);
           break;
+        case "billingRecords":
+          setBillingRecords(cached as BillingRecord[]);
+          break;
+        case "billingSettings":
+          setBillingSettings(cached as BillingSettings);
+          break;
         case "collections":
-          setCollections(cached as CollectionReminder[]);
+          setCollections((cached as CollectionReminder[]).map(normalizeReceivable));
           break;
         case "dashboardSummary":
-          setDashboardSummary(cached as DashboardSummary);
+          setDashboardSummary({
+            ...emptyDashboardSummary,
+            ...(cached as DashboardSummary),
+            collectionAging: { ...emptyDashboardSummary.collectionAging, ...(cached as DashboardSummary).collectionAging },
+          });
           break;
         case "dailyTicketEntries":
           setDailyTicketEntries(cached as DailyTicketEntry[]);
@@ -568,6 +583,10 @@ function Workspace({ session }: { session: Session }) {
         switch (resource) {
           case "attendanceEntries":
             return loadAttendanceEntries(supabase);
+          case "billingRecords":
+            return loadBillingRecords(supabase);
+          case "billingSettings":
+            return loadBillingSettings(supabase);
           case "collections":
             return loadCollections(supabase);
           case "dashboardSummary":
@@ -597,6 +616,12 @@ function Workspace({ session }: { session: Session }) {
       switch (resource) {
         case "attendanceEntries":
           setAttendanceEntries(result.data as AttendanceEntry[]);
+          break;
+        case "billingRecords":
+          setBillingRecords(result.data as BillingRecord[]);
+          break;
+        case "billingSettings":
+          setBillingSettings(result.data as BillingSettings);
           break;
         case "collections":
           setCollections(result.data as CollectionReminder[]);
@@ -707,6 +732,14 @@ function Workspace({ session }: { session: Session }) {
     await Promise.all([
       loadResource("collections", true),
       loadResource("dashboardSummary", true),
+    ]);
+  }
+
+  async function refreshBillingPage() {
+    await Promise.all([
+      loadResource("billingRecords", true),
+      loadResource("billingSettings", true),
+      loadResource("collections", true),
     ]);
   }
 
@@ -972,7 +1005,7 @@ function Workspace({ session }: { session: Session }) {
                 <PaymentHistoryView payments={payments} />
               )}
               {view === "collections" && (
-                <CollectionsView
+                <CollectionsFeature
                   collections={collections}
                   onChange={refreshCollectionsPage}
                   onLocalCollectionsChange={setCollections}
@@ -982,7 +1015,14 @@ function Workspace({ session }: { session: Session }) {
                 />
               )}
               {view === "collection-history" && (
-                <CollectionHistoryView collections={collections} />
+                <CollectionHistoryFeature
+                  collections={collections}
+                  onChange={refreshCollectionsPage}
+                  onLocalCollectionsChange={setCollections}
+                  onQueueOfflineMutation={queueOfflineMutation}
+                  setNotice={setNotice}
+                  userId={session.user.id}
+                />
               )}
           </>
           )}
@@ -1093,8 +1133,16 @@ function Dashboard({ summary }: { summary: DashboardSummary }) {
         <Metric icon={<CalendarClock />} label="Current payroll" value={summary.currentPayrollItemCount} />
         <Metric icon={<BadgeDollarSign />} label="Pending payroll" value={currency.format(summary.pendingPayroll)} />
         <Metric icon={<CheckCircle2 />} label="Paid payroll" value={currency.format(summary.paidPayroll)} tone="success" />
-        <Metric icon={<BadgeDollarSign />} label="Pending collections" value={currency.format(summary.pendingCollections)} />
-        <Metric icon={<CheckCircle2 />} label="Collected total" value={currency.format(summary.collectedTotal)} tone="success" />
+        <Metric icon={<BadgeDollarSign />} label="Outstanding collections" value={currency.format(summary.pendingCollections)} />
+        <Metric icon={<CalendarClock />} label="Overdue collections" value={currency.format(summary.overdueCollectionBalance)} tone="danger" />
+        <Metric icon={<CheckCircle2 />} label="Collected this month" value={currency.format(summary.collectedThisMonth)} tone="success" />
+      </section>
+      <section className="collection-aging dashboard-aging">
+        <div><span>Current</span><strong>{currency.format(summary.collectionAging.current)}</strong></div>
+        <div><span>1–30 days</span><strong>{currency.format(summary.collectionAging.days1To30)}</strong></div>
+        <div><span>31–60 days</span><strong>{currency.format(summary.collectionAging.days31To60)}</strong></div>
+        <div><span>61–90 days</span><strong>{currency.format(summary.collectionAging.days61To90)}</strong></div>
+        <div><span>90+ days</span><strong>{currency.format(summary.collectionAging.daysOver90)}</strong></div>
       </section>
       <section className="summary-band">
         <div>
@@ -1159,7 +1207,7 @@ function DueList({
                 <strong>{row.title}</strong>
                 <p>{row.due_date}</p>
               </div>
-              <span>{currency.format(toNumber(row.amount))}</span>
+              <span>{currency.format(toNumber("outstanding_balance" in row ? row.outstanding_balance : row.amount))}</span>
             </div>
           ))}
         </div>
@@ -4492,253 +4540,6 @@ function computedPaymentStatus(payment: PaymentReminder) {
   return "pending";
 }
 
-function CollectionHistoryView({ collections }: { collections: CollectionReminder[] }) {
-  const rows = collections
-    .filter((collection) => collection.status === "collected")
-    .sort((a, b) => b.due_date.localeCompare(a.due_date))
-    .map((collection) => [
-      <RecordTitle key="title" title={collection.title} notes={collection.client_name} />,
-      currency.format(toNumber(collection.amount)),
-      collection.due_date,
-      <StatusPill key="status" status={collection.status} />,
-    ]);
-  const collectedTotal = collections
-    .filter((collection) => collection.status === "collected")
-    .reduce((sum, collection) => sum + toNumber(collection.amount), 0);
-
-  return (
-    <div className="page-stack">
-      <PageHeader
-        eyebrow="Completed receivables"
-        title="Collection History"
-        text="Review customer receivables that were marked collected."
-      />
-      <section className="summary-band">
-        <div>
-          <p className="eyebrow">Collected total</p>
-          <h2>{currency.format(collectedTotal)}</h2>
-        </div>
-        <p>Only receivables marked collected appear here. Pending and overdue receivables stay in Collections.</p>
-      </section>
-      <DataTable
-        empty="No collected receivables yet."
-        headers={["Title", "Amount", "Due date", "Status"]}
-        rows={rows}
-      />
-    </div>
-  );
-}
-
-function CollectionsView({
-  collections,
-  onChange,
-  onLocalCollectionsChange,
-  onQueueOfflineMutation,
-  setNotice,
-  userId,
-}: {
-  collections: CollectionReminder[];
-  onChange: () => Promise<void>;
-  onLocalCollectionsChange: (collections: CollectionReminder[]) => void;
-  onQueueOfflineMutation: QueueOfflineMutation;
-  setNotice: (notice: Notice) => void;
-  userId: string;
-}) {
-  const [query, setQuery] = useState("");
-  const [editing, setEditing] = useState<CollectionReminder | null>(null);
-  const [formOpen, setFormOpen] = useState(false);
-
-  const rows = useMemo(() => {
-    return collections.filter((collection) => {
-      const matchesQuery = `${collection.title} ${collection.client_name} ${collection.notes}`
-        .toLowerCase()
-        .includes(query.toLowerCase());
-      return collection.status !== "collected" && matchesQuery;
-    });
-  }, [collections, query]);
-
-  async function saveCollection(values: CollectionFormValues) {
-    if (!supabase) return;
-    const payload = {
-      ...(editing ? {} : { id: crypto.randomUUID() }),
-      title: values.title.trim(),
-      client_name: values.client_name.trim(),
-      amount: toNumber(values.amount),
-      due_date: values.due_date,
-      status: values.status,
-      notes: values.notes.trim(),
-      user_id: userId,
-    };
-    const optimisticCollection = {
-      ...(editing ?? {}),
-      ...payload,
-      id: editing?.id ?? payload.id,
-      created_at: editing?.created_at ?? new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    } as CollectionReminder;
-
-    if (!navigator.onLine) {
-      onLocalCollectionsChange(
-        editing
-          ? collections.map((collection) => collection.id === editing.id ? optimisticCollection : collection)
-          : [optimisticCollection, ...collections],
-      );
-      await onQueueOfflineMutation({
-        resource: "collections",
-        affectedResources: ["collections", "dashboardSummary"],
-        operation: editing ? "update" : "insert",
-        table: "collection_reminders",
-        recordId: editing?.id,
-        payload,
-      });
-      setEditing(null);
-      setFormOpen(false);
-      return;
-    }
-
-    const result = editing
-      ? await supabase.from("collection_reminders").update(payload).eq("id", editing.id)
-      : await supabase.from("collection_reminders").insert(payload);
-
-    if (result.error) {
-      if (isOfflineLikeError(result.error)) {
-        onLocalCollectionsChange(
-          editing
-            ? collections.map((collection) => collection.id === editing.id ? optimisticCollection : collection)
-            : [optimisticCollection, ...collections],
-        );
-        await onQueueOfflineMutation({
-          resource: "collections",
-          affectedResources: ["collections", "dashboardSummary"],
-          operation: editing ? "update" : "insert",
-          table: "collection_reminders",
-          recordId: editing?.id,
-          payload,
-        });
-        setEditing(null);
-        setFormOpen(false);
-        return;
-      }
-      setNotice({ type: "error", text: friendlyError(result.error) });
-      return;
-    }
-    setNotice({ type: "success", text: "Collection reminder saved." });
-    setEditing(null);
-    setFormOpen(false);
-    await onChange();
-  }
-
-  async function markCollected(id: string) {
-    if (!supabase) return;
-    if (!navigator.onLine) {
-      onLocalCollectionsChange(collections.map((collection) => collection.id === id ? { ...collection, status: "collected" } : collection));
-      await onQueueOfflineMutation({
-        resource: "collections",
-        affectedResources: ["collections", "dashboardSummary"],
-        operation: "update",
-        table: "collection_reminders",
-        recordId: id,
-        payload: { status: "collected" },
-      });
-      return;
-    }
-    const { error } = await supabase.from("collection_reminders").update({ status: "collected" }).eq("id", id);
-    if (error && isOfflineLikeError(error)) {
-      onLocalCollectionsChange(collections.map((collection) => collection.id === id ? { ...collection, status: "collected" } : collection));
-      await onQueueOfflineMutation({
-        resource: "collections",
-        affectedResources: ["collections", "dashboardSummary"],
-        operation: "update",
-        table: "collection_reminders",
-        recordId: id,
-        payload: { status: "collected" },
-      });
-      return;
-    }
-    setNotice(error ? { type: "error", text: friendlyError(error) } : { type: "success", text: "Marked collected." });
-    await onChange();
-  }
-
-  async function remove(id: string) {
-    if (!supabase || !window.confirm("Delete this collection reminder?")) return;
-    if (!navigator.onLine) {
-      onLocalCollectionsChange(collections.filter((collection) => collection.id !== id));
-      await onQueueOfflineMutation({
-        resource: "collections",
-        affectedResources: ["collections", "dashboardSummary"],
-        operation: "delete",
-        table: "collection_reminders",
-        recordId: id,
-      });
-      return;
-    }
-    const { error } = await supabase.from("collection_reminders").delete().eq("id", id);
-    if (error && isOfflineLikeError(error)) {
-      onLocalCollectionsChange(collections.filter((collection) => collection.id !== id));
-      await onQueueOfflineMutation({
-        resource: "collections",
-        affectedResources: ["collections", "dashboardSummary"],
-        operation: "delete",
-        table: "collection_reminders",
-        recordId: id,
-      });
-      return;
-    }
-    setNotice(error ? { type: "error", text: friendlyError(error) } : { type: "success", text: "Collection reminder deleted." });
-    await onChange();
-  }
-
-  return (
-    <div className="page-stack">
-      <PageHeader
-        action={
-          <button className="primary-button compact" onClick={() => { setEditing(null); setFormOpen(true); }} type="button">
-            <Plus size={16} />
-            Add collection
-          </button>
-        }
-        eyebrow="Customer receivables"
-        title="Collections"
-        text="Track incoming amounts expected from clients and customers."
-      />
-      <Toolbar query={query} setQuery={setQuery} />
-      <DataTable
-        empty="No open collection reminders yet."
-        headers={["Title", "Client", "Amount", "Due date", "Status", "Actions"]}
-        rows={rows.map((collection) => [
-          <RecordTitle key="title" title={collection.title} notes={collection.notes} />,
-          collection.client_name,
-          currency.format(toNumber(collection.amount)),
-          collection.due_date,
-          <StatusPill key="status" status={computedCollectionStatus(collection)} />,
-          <RowActions
-            key="actions"
-            canMarkPaid={collection.status !== "collected"}
-            markActionLabel="Mark collected"
-            onDelete={() => remove(collection.id)}
-            onEdit={() => { setEditing(collection); setFormOpen(true); }}
-            onMarkPaid={() => markCollected(collection.id)}
-          />,
-        ])}
-      />
-      {formOpen && (
-        <CollectionForm
-          initial={editing}
-          onClose={() => { setEditing(null); setFormOpen(false); }}
-          onSubmit={saveCollection}
-        />
-      )}
-    </div>
-  );
-}
-
-function computedCollectionStatus(collection: CollectionReminder) {
-  if (collection.status === "collected") return "collected";
-  if (collection.status === "overdue" || isBeforeToday(collection.due_date)) return "overdue";
-  if (isToday(collection.due_date)) return "due today";
-  return "pending";
-}
-
 function PageHeader({
   action,
   eyebrow,
@@ -5347,62 +5148,6 @@ function PaymentForm({
           <select value={values.status} onChange={(event) => setValues({ ...values, status: event.target.value as PaymentFormValues["status"] })}>
             <option value="pending">Pending</option>
             <option value="paid">Paid</option>
-            <option value="overdue">Overdue</option>
-          </select>
-        </label>
-        <label className="full">
-          Notes
-          <textarea rows={4} value={values.notes} onChange={(event) => setValues({ ...values, notes: event.target.value })} />
-        </label>
-        <FormActions busy={busy} onClose={onClose} />
-      </form>
-    </Modal>
-  );
-}
-
-function CollectionForm({
-  initial,
-  onClose,
-  onSubmit,
-}: {
-  initial: CollectionReminder | null;
-  onClose: () => void;
-  onSubmit: (values: CollectionFormValues) => Promise<void>;
-}) {
-  const [values, setValues] = useState<CollectionFormValues>(
-    initial
-      ? {
-          title: initial.title,
-          client_name: initial.client_name,
-          amount: String(initial.amount),
-          due_date: initial.due_date,
-          status: initial.status,
-          notes: initial.notes,
-        }
-      : emptyCollection,
-  );
-  const [busy, setBusy] = useState(false);
-
-  async function handleSubmit(event: FormEvent) {
-    event.preventDefault();
-    if (!values.title.trim() || !values.client_name.trim() || !values.amount || !values.due_date) return;
-    setBusy(true);
-    await onSubmit(values);
-    setBusy(false);
-  }
-
-  return (
-    <Modal title={initial ? "Edit collection" : "Add collection"} onClose={onClose}>
-      <form className="form-grid" onSubmit={handleSubmit}>
-        <TextField label="Title" value={values.title} onChange={(title) => setValues({ ...values, title })} required />
-        <TextField label="Client / customer" value={values.client_name} onChange={(client_name) => setValues({ ...values, client_name })} required />
-        <TextField label="Amount" min="0" step="0.01" type="number" value={values.amount} onChange={(amount) => setValues({ ...values, amount })} required />
-        <TextField label="Due date" type="date" value={values.due_date} onChange={(due_date) => setValues({ ...values, due_date })} required />
-        <label>
-          Status
-          <select value={values.status} onChange={(event) => setValues({ ...values, status: event.target.value as CollectionFormValues["status"] })}>
-            <option value="pending">Pending</option>
-            <option value="collected">Collected</option>
             <option value="overdue">Overdue</option>
           </select>
         </label>

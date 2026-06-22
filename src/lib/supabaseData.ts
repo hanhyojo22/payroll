@@ -1,6 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
   AttendanceEntry,
+  BillingRecord,
+  BillingSettings,
   CollectionReminder,
   DashboardLatestRun,
   DashboardSummary,
@@ -14,6 +16,8 @@ import type {
   Position,
   SalaryBond,
 } from "../types";
+import { collectionAgingBucket } from "../domain/collections";
+import { fetchReceivables } from "../features/collections/collectionRepository";
 
 type AppErrorLike = { message?: string; details?: string | null; code?: string };
 type QueryResult<T> = { data: T[] | null; error: AppErrorLike | null };
@@ -142,13 +146,7 @@ export async function loadDashboardSummary(supabase: SupabaseClient) {
         .lte("due_date", today)
         .order("due_date"),
     ),
-    settle<CollectionReminder>(
-      "Collection reminders",
-      supabase
-        .from("collection_reminders")
-        .select("id,user_id,title,client_name,amount,due_date,status,notes,created_at,updated_at")
-        .order("due_date"),
-    ),
+    loadCollections(supabase),
   ]);
 
   const currentRunIds = currentRunsResult.data.map((run) => run.id);
@@ -171,7 +169,18 @@ export async function loadDashboardSummary(supabase: SupabaseClient) {
     : { count: 0, error: null, label: "Latest payroll item count" };
 
   const currentItems = currentItemsResult.data;
-  const openCollections = collectionsResult.data.filter((item) => item.status !== "collected");
+  const openCollections = collectionsResult.data.filter((item) => !item.archived_at && item.outstanding_balance > 0);
+  const monthKey = `${year}-${String(month).padStart(2, "0")}`;
+  const collectionAging = {
+    current: 0,
+    days1To30: 0,
+    days31To60: 0,
+    days61To90: 0,
+    daysOver90: 0,
+  };
+  openCollections.forEach((item) => {
+    collectionAging[collectionAgingBucket(item.due_date, today)] += item.outstanding_balance;
+  });
   const summary: DashboardSummary = {
     activeEmployeeCount: activeEmployees.count,
     currentPayrollItemCount: currentItems.length,
@@ -181,10 +190,17 @@ export async function loadDashboardSummary(supabase: SupabaseClient) {
     paidPayroll: currentItems
       .filter((item) => item.status === "paid")
       .reduce((sum, item) => sum + toNumber(item.net_pay), 0),
-    pendingCollections: openCollections.reduce((sum, item) => sum + toNumber(item.amount), 0),
-    collectedTotal: collectionsResult.data
-      .filter((item) => item.status === "collected")
-      .reduce((sum, item) => sum + toNumber(item.amount), 0),
+    pendingCollections: openCollections.reduce((sum, item) => sum + toNumber(item.outstanding_balance), 0),
+    collectedTotal: collectionsResult.data.flatMap((item) => item.payments)
+      .filter((payment) => !payment.is_void)
+      .reduce((sum, payment) => sum + toNumber(payment.amount), 0),
+    overdueCollectionBalance: openCollections
+      .filter((item) => item.due_date < today)
+      .reduce((sum, item) => sum + toNumber(item.outstanding_balance), 0),
+    collectedThisMonth: collectionsResult.data.flatMap((item) => item.payments)
+      .filter((payment) => !payment.is_void && payment.payment_date.startsWith(monthKey))
+      .reduce((sum, payment) => sum + toNumber(payment.amount), 0),
+    collectionAging,
     latestRun: latestRun ? { ...latestRun, item_count: latestItemCount.count } : null,
     dueTodayPayments: paymentsResult.data.filter((item) => item.due_date === today),
     overduePayments: paymentsResult.data.filter((item) => item.due_date < today),
@@ -216,13 +232,12 @@ export async function loadPayments(supabase: SupabaseClient) {
 }
 
 export async function loadCollections(supabase: SupabaseClient) {
-  return settle<CollectionReminder>(
-    "Collections",
-    supabase
-      .from("collection_reminders")
-      .select("id,user_id,title,client_name,amount,due_date,status,notes,created_at,updated_at")
-      .order("due_date"),
-  );
+  try {
+    const result = await withTimeout(fetchReceivables(supabase), "Collections");
+    return { data: result.data, error: result.error, label: "Collections" };
+  } catch (error) {
+    return { data: [] as CollectionReminder[], error: error as AppErrorLike, label: "Collections" };
+  }
 }
 
 export async function loadSalaryBonds(supabase: SupabaseClient) {
@@ -452,6 +467,32 @@ export async function loadEmployeePayrollRuns(supabase: SupabaseClient, employee
 
   return {
     data: Array.from(runMap.values()),
+    error: result.error,
+    label: result.label,
+  };
+}
+
+export async function loadBillingRecords(supabase: SupabaseClient) {
+  return settle<BillingRecord>(
+    "Billing records",
+    supabase
+      .from("billing_records")
+      .select("id,user_id,billing_month,billing_year,total_tickets,disputed_tickets,billable_tickets,billing_rate,billing_amount,collections_pct,collections_amount,collectibles_amount,collection_id,notes,created_at,updated_at")
+      .order("billing_year", { ascending: false })
+      .order("billing_month", { ascending: false }),
+  );
+}
+
+export async function loadBillingSettings(supabase: SupabaseClient) {
+  const result = await settle<BillingSettings>(
+    "Billing settings",
+    supabase
+      .from("billing_settings")
+      .select("id,user_id,billing_rate,collections_pct,client_name,created_at,updated_at")
+      .limit(1),
+  );
+  return {
+    data: result.data[0] ?? null,
     error: result.error,
     label: result.label,
   };
