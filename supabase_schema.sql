@@ -800,3 +800,302 @@ drop constraint if exists payroll_run_items_pay_mode_check;
 alter table public.payroll_run_items
 add constraint payroll_run_items_pay_mode_check
 check (pay_mode in ('fixed', 'ticket', 'hybrid', 'daily', 'legacy'));
+
+-- Receivable collection tracking
+alter table public.collection_reminders add column if not exists collection_no text;
+alter table public.collection_reminders add column if not exists external_reference text not null default '';
+alter table public.collection_reminders add column if not exists issue_date date;
+alter table public.collection_reminders add column if not exists archived_at timestamptz;
+
+update public.collection_reminders
+set issue_date = coalesce(issue_date, created_at::date)
+where issue_date is null;
+
+alter table public.collection_reminders
+alter column issue_date set default current_date;
+alter table public.collection_reminders
+alter column issue_date set not null;
+
+create table if not exists public.collection_number_sequences (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  sequence_year integer not null check (sequence_year between 1900 and 2200),
+  last_value integer not null default 0 check (last_value >= 0),
+  primary key (user_id, sequence_year)
+);
+
+create or replace function public.next_collection_number(owner_id uuid, issue_year integer)
+returns text
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  next_value integer;
+begin
+  insert into public.collection_number_sequences (user_id, sequence_year, last_value)
+  values (owner_id, issue_year, 1)
+  on conflict (user_id, sequence_year)
+  do update set last_value = public.collection_number_sequences.last_value + 1
+  returning last_value into next_value;
+  return 'COL-' || issue_year::text || '-' || lpad(next_value::text, 4, '0');
+end;
+$$;
+
+create or replace function public.assign_collection_number()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.collection_no is null or btrim(new.collection_no) = '' then
+    new.collection_no := public.next_collection_number(new.user_id, extract(year from new.issue_date)::integer);
+  end if;
+  return new;
+end;
+$$;
+
+with numbered as (
+  select id, user_id, extract(year from issue_date)::integer as issue_year,
+    row_number() over (
+      partition by user_id, extract(year from issue_date)::integer
+      order by created_at, id
+    ) as sequence_value
+  from public.collection_reminders
+  where collection_no is null or btrim(collection_no) = ''
+)
+update public.collection_reminders c
+set collection_no = 'COL-' || n.issue_year::text || '-' || lpad(n.sequence_value::text, 4, '0')
+from numbered n where n.id = c.id;
+
+insert into public.collection_number_sequences (user_id, sequence_year, last_value)
+select user_id, extract(year from issue_date)::integer, count(*)
+from public.collection_reminders
+group by user_id, extract(year from issue_date)::integer
+on conflict (user_id, sequence_year)
+do update set last_value = greatest(public.collection_number_sequences.last_value, excluded.last_value);
+
+create unique index if not exists collection_reminders_user_collection_no_key
+on public.collection_reminders (user_id, collection_no);
+
+drop trigger if exists assign_collection_number_trigger on public.collection_reminders;
+create trigger assign_collection_number_trigger
+before insert on public.collection_reminders
+for each row execute function public.assign_collection_number();
+
+create table if not exists public.collection_payments (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  collection_id uuid not null references public.collection_reminders(id) on delete restrict,
+  amount numeric(12, 2) not null check (amount > 0),
+  payment_date date not null default current_date,
+  payment_method text not null default 'other'
+    check (payment_method in ('cash', 'bank_transfer', 'check', 'e_wallet', 'card', 'other')),
+  reference_number text not null default '',
+  notes text not null default '',
+  is_void boolean not null default false,
+  void_reason text not null default '',
+  voided_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+insert into public.collection_payments
+  (user_id, collection_id, amount, payment_date, payment_method, reference_number, notes)
+select c.user_id, c.id, c.amount, coalesce(c.updated_at::date, c.due_date), 'other', 'LEGACY',
+  'Migrated from the previous collected status.'
+from public.collection_reminders c
+where c.status = 'collected'
+  and not exists (select 1 from public.collection_payments p where p.collection_id = c.id);
+
+create index if not exists collection_payments_collection_date_idx
+on public.collection_payments (collection_id, payment_date desc, created_at desc);
+create index if not exists collection_payments_user_date_idx
+on public.collection_payments (user_id, payment_date desc);
+
+drop trigger if exists set_collection_payments_updated_at on public.collection_payments;
+create trigger set_collection_payments_updated_at
+before update on public.collection_payments
+for each row execute function public.set_updated_at();
+
+alter table public.collection_number_sequences enable row level security;
+alter table public.collection_payments enable row level security;
+
+drop policy if exists "collection sequences are owned by their user" on public.collection_number_sequences;
+create policy "collection sequences are owned by their user"
+on public.collection_number_sequences for select
+using (auth.uid() = user_id);
+
+drop policy if exists "collection payments are owned by their user" on public.collection_payments;
+create policy "collection payments are owned by their user"
+on public.collection_payments for select
+using (auth.uid() = user_id);
+
+create or replace function public.record_collection_payment(
+  collection_record_id uuid,
+  payment_record_id uuid,
+  payment_amount numeric,
+  paid_on date,
+  method text,
+  payment_reference text default '',
+  payment_notes text default ''
+)
+returns public.collection_payments
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  receivable public.collection_reminders%rowtype;
+  paid_total numeric(12, 2);
+  result public.collection_payments%rowtype;
+begin
+  if auth.uid() is null then raise exception 'Authentication required.'; end if;
+  if payment_amount is null or payment_amount <= 0 then raise exception 'Payment amount must be greater than zero.'; end if;
+  if paid_on is null or paid_on > current_date then raise exception 'Payment date cannot be in the future.'; end if;
+  if method not in ('cash', 'bank_transfer', 'check', 'e_wallet', 'card', 'other') then raise exception 'Invalid payment method.'; end if;
+
+  if payment_record_id is not null then
+    select * into result from public.collection_payments
+    where id = payment_record_id and user_id = auth.uid();
+    if found then return result; end if;
+  end if;
+
+  select * into receivable from public.collection_reminders
+  where id = collection_record_id and user_id = auth.uid()
+  for update;
+  if not found then raise exception 'Receivable not found.'; end if;
+  if receivable.archived_at is not null then raise exception 'Archived receivables cannot accept payments.'; end if;
+
+  select coalesce(sum(amount), 0) into paid_total
+  from public.collection_payments
+  where collection_id = collection_record_id and not is_void;
+  if payment_amount > receivable.amount - paid_total then raise exception 'Payment exceeds the outstanding balance.'; end if;
+
+  insert into public.collection_payments
+    (id, user_id, collection_id, amount, payment_date, payment_method, reference_number, notes)
+  values
+    (coalesce(payment_record_id, gen_random_uuid()), auth.uid(), collection_record_id, payment_amount,
+     paid_on, method, coalesce(payment_reference, ''), coalesce(payment_notes, ''))
+  returning * into result;
+  return result;
+end;
+$$;
+
+create or replace function public.void_collection_payment(payment_record_id uuid, reason text)
+returns public.collection_payments
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  result public.collection_payments%rowtype;
+begin
+  if auth.uid() is null then raise exception 'Authentication required.'; end if;
+  if reason is null or btrim(reason) = '' then raise exception 'A void reason is required.'; end if;
+
+  select * into result from public.collection_payments
+  where id = payment_record_id and user_id = auth.uid()
+  for update;
+  if not found then raise exception 'Payment not found.'; end if;
+  if result.is_void then return result; end if;
+
+  update public.collection_payments
+  set is_void = true, void_reason = btrim(reason), voided_at = now()
+  where id = payment_record_id
+  returning * into result;
+  return result;
+end;
+$$;
+
+revoke insert, update, delete on public.collection_payments from authenticated;
+grant select on public.collection_payments to authenticated;
+revoke all on function public.next_collection_number(uuid, integer) from public;
+revoke all on function public.record_collection_payment(uuid, uuid, numeric, date, text, text, text) from public;
+revoke all on function public.void_collection_payment(uuid, text) from public;
+grant execute on function public.record_collection_payment(uuid, uuid, numeric, date, text, text, text) to authenticated;
+grant execute on function public.void_collection_payment(uuid, text) to authenticated;
+
+create or replace function public.validate_collection_receivable()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  paid_total numeric(12, 2);
+begin
+  if new.amount <= 0 then raise exception 'Receivable amount must be greater than zero.'; end if;
+  if new.issue_date > new.due_date then raise exception 'Due date cannot be before issue date.'; end if;
+  if tg_op = 'UPDATE' and new.amount <> old.amount then
+    select coalesce(sum(amount), 0) into paid_total
+    from public.collection_payments where collection_id = new.id and not is_void;
+    if new.amount < paid_total then raise exception 'Receivable amount cannot be less than payments already received.'; end if;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists validate_collection_receivable_trigger on public.collection_reminders;
+create trigger validate_collection_receivable_trigger
+before insert or update of amount, issue_date, due_date on public.collection_reminders
+for each row execute function public.validate_collection_receivable();
+
+-- Billing & Collection integration
+create table if not exists public.billing_settings (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  billing_rate numeric(12, 2) not null default 0 check (billing_rate >= 0),
+  collections_pct integer not null default 70 check (collections_pct >= 0 and collections_pct <= 100),
+  client_name text not null default '',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id)
+);
+
+drop trigger if exists set_billing_settings_updated_at on public.billing_settings;
+create trigger set_billing_settings_updated_at
+before update on public.billing_settings
+for each row execute function public.set_updated_at();
+
+alter table public.billing_settings enable row level security;
+
+drop policy if exists "billing settings are owned by their user" on public.billing_settings;
+create policy "billing settings are owned by their user"
+on public.billing_settings for all
+using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create table if not exists public.billing_records (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  billing_month integer not null check (billing_month between 1 and 12),
+  billing_year integer not null check (billing_year between 1900 and 2200),
+  total_tickets integer not null default 0 check (total_tickets >= 0),
+  disputed_tickets integer not null default 0 check (disputed_tickets >= 0),
+  billable_tickets integer not null default 0 check (billable_tickets >= 0),
+  billing_rate numeric(12, 2) not null default 0 check (billing_rate >= 0),
+  billing_amount numeric(12, 2) not null default 0 check (billing_amount >= 0),
+  collections_pct integer not null default 70 check (collections_pct >= 0 and collections_pct <= 100),
+  collections_amount numeric(12, 2) not null default 0 check (collections_amount >= 0),
+  collectibles_amount numeric(12, 2) not null default 0 check (collectibles_amount >= 0),
+  collection_id uuid references public.collection_reminders(id) on delete set null,
+  notes text not null default '',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, billing_month, billing_year)
+);
+
+create index if not exists billing_records_user_year_month_idx
+on public.billing_records (user_id, billing_year desc, billing_month desc);
+
+drop trigger if exists set_billing_records_updated_at on public.billing_records;
+create trigger set_billing_records_updated_at
+before update on public.billing_records
+for each row execute function public.set_updated_at();
+
+alter table public.billing_records enable row level security;
+
+drop policy if exists "billing records are owned by their user" on public.billing_records;
+create policy "billing records are owned by their user"
+on public.billing_records for all
+using (auth.uid() = user_id) with check (auth.uid() = user_id);
