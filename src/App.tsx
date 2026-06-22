@@ -49,25 +49,39 @@ import {
   wageCategoryLabel,
 } from "./domain/tickets";
 import {
+  loadAttendanceEntries,
+  loadDashboardSummary,
   loadCollections,
   loadDailyTicketEntries,
+  loadEmployeePayrollRuns,
   loadEmployees,
   loadPayments,
+  loadPayrollHistoryRows,
+  loadPayrollRunItems,
   loadPayrollRuns,
+  loadPositions,
   loadSalaryBonds,
 } from "./lib/supabaseData";
+import { queueMutation, readCachedResource, writeCachedResource, type PendingMutation } from "./lib/offlineDb";
+import { flushPendingMutations, isOfflineLikeError } from "./lib/offlineSync";
 import type {
+  AttendanceEntry,
   CollectionFormValues,
   CollectionReminder,
+  DashboardSummary,
   DailyTicketEntry,
   Employee,
   EmployeeFormValues,
   PaymentFormValues,
   PaymentReminder,
+  PayrollHistoryRow,
   PayrollRun,
   PayrollRunFormValues,
   PayrollRunItem,
   PayrollRunWithItems,
+  Position,
+  PositionFormValues,
+  ResourceKey,
   SalaryBond,
   SalaryBondFormValues,
 } from "./types";
@@ -85,25 +99,42 @@ type View =
   | "payment-history"
   | "collections"
   | "collection-history";
-type ResourceKey = "collections" | "dailyTicketEntries" | "employees" | "payments" | "payrollRuns" | "salaryBonds";
 type ResourceStatus = "idle" | "loading" | "ready";
 type Notice = { type: "success" | "error"; text: string } | null;
 type AppError = { message?: string; code?: string; details?: string | null };
+type QueueOfflineMutation = (mutation: Omit<PendingMutation, "id" | "createdAt" | "status" | "attempts" | "userId">) => Promise<void>;
 
 const initialResourceStatuses: Record<ResourceKey, ResourceStatus> = {
+  attendanceEntries: "idle",
   collections: "idle",
+  dashboardSummary: "idle",
   dailyTicketEntries: "idle",
   employees: "idle",
   payments: "idle",
+  payrollHistory: "idle",
   payrollRuns: "idle",
+  positions: "idle",
   salaryBonds: "idle",
+};
+
+const initialResourceHydration: Record<ResourceKey, boolean> = {
+  attendanceEntries: false,
+  collections: false,
+  dashboardSummary: false,
+  dailyTicketEntries: false,
+  employees: false,
+  payments: false,
+  payrollHistory: false,
+  payrollRuns: false,
+  positions: false,
+  salaryBonds: false,
 };
 
 const viewPaths: Record<View, string> = {
   dashboard: "/dashboard",
   employees: "/employees",
   "employee-add": "/employees/new",
-  compensation: "/compensation",
+  compensation: "/positions",
   "daily-tickets": "/daily-tickets",
   "salary-bonds": "/salary-bonds",
   payroll: "/payroll",
@@ -115,18 +146,32 @@ const viewPaths: Record<View, string> = {
 };
 
 const viewResources: Record<View, ResourceKey[]> = {
-  dashboard: ["employees", "payrollRuns", "payments", "collections"],
+  dashboard: ["dashboardSummary"],
   employees: ["employees", "payrollRuns", "salaryBonds"],
   "employee-add": ["employees", "payrollRuns", "salaryBonds"],
-  compensation: [],
-  "daily-tickets": ["employees", "dailyTicketEntries"],
+  compensation: ["positions", "employees"],
+  "daily-tickets": ["positions", "employees", "dailyTicketEntries"],
   "salary-bonds": ["employees", "salaryBonds"],
-  payroll: ["employees", "dailyTicketEntries", "payrollRuns", "salaryBonds"],
-  "payroll-history": ["employees", "payrollRuns"],
+  payroll: ["positions", "employees", "dailyTicketEntries", "payrollRuns", "salaryBonds"],
+  "payroll-history": ["payrollHistory"],
   payments: ["payments"],
   "payment-history": ["payments"],
   collections: ["collections"],
   "collection-history": ["collections"],
+};
+
+const emptyDashboardSummary: DashboardSummary = {
+  activeEmployeeCount: 0,
+  currentPayrollItemCount: 0,
+  pendingPayroll: 0,
+  paidPayroll: 0,
+  pendingCollections: 0,
+  collectedTotal: 0,
+  latestRun: null,
+  dueTodayPayments: [],
+  overduePayments: [],
+  dueTodayCollections: [],
+  overdueCollections: [],
 };
 
 const currency = new Intl.NumberFormat("en-PH", {
@@ -175,6 +220,9 @@ const friendlyError = (error: AppError | null | undefined, fallback = "Something
   }
   if (message.includes("daily_ticket_entries") && message.includes("schema cache")) {
     return "Daily ticket tables are not ready yet. Run the latest Supabase SQL setup, then refresh the app.";
+  }
+  if ((message.includes("positions") || message.includes("position_ticket_categories")) && message.includes("schema cache")) {
+    return "Position compensation tables are not ready yet. Run the latest Supabase SQL setup, then refresh the app.";
   }
   if (
     (message.includes("employees") || message.includes("payroll_runs") || message.includes("payroll_run_items")) &&
@@ -256,6 +304,7 @@ const emptySalaryBond: SalaryBondFormValues = {
 const emptyEmployee: EmployeeFormValues = {
   full_name: "",
   role: "",
+  position_id: "",
   department: "",
   contact_number: "",
   email: "",
@@ -329,7 +378,7 @@ function FullPageMessage({ title, text }: { title: string; text: string }) {
     <main className="center-screen">
       <section className="auth-panel">
         <div className="brand-mark">
-          <CalendarClock size={30} />
+          {title.toLowerCase().includes("loading") ? <Spinner /> : <CalendarClock size={30} />}
         </div>
         <h1>{title}</h1>
         <p>{text}</p>
@@ -403,6 +452,7 @@ function Login() {
           </label>
           <NoticeBanner notice={notice} onDismiss={() => setNotice(null)} />
           <button className="primary-button" disabled={busy} type="submit">
+            {busy && <Spinner size="small" />}
             {busy ? "Please wait..." : mode === "sign-in" ? "Sign in" : "Create admin"}
           </button>
         </form>
@@ -422,14 +472,38 @@ function Workspace({ session }: { session: Session }) {
   const [view, setView] = useState<View>(() => viewFromPath(window.location.pathname));
   const [employeeMenuOpen, setEmployeeMenuOpen] = useState(false);
   const [dailyTicketMenuOpen, setDailyTicketMenuOpen] = useState(false);
+  const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary>(emptyDashboardSummary);
   const [payments, setPayments] = useState<PaymentReminder[]>([]);
   const [collections, setCollections] = useState<CollectionReminder[]>([]);
+  const [attendanceEntries, setAttendanceEntries] = useState<AttendanceEntry[]>([]);
   const [dailyTicketEntries, setDailyTicketEntries] = useState<DailyTicketEntry[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [payrollRuns, setPayrollRuns] = useState<PayrollRunWithItems[]>([]);
+  const [positions, setPositions] = useState<Position[]>([]);
+  const [payrollHistoryRows, setPayrollHistoryRows] = useState<PayrollHistoryRow[]>([]);
   const [salaryBonds, setSalaryBonds] = useState<SalaryBond[]>([]);
   const [resourceStatuses, setResourceStatuses] = useState(initialResourceStatuses);
+  const [resourceHydration, setResourceHydration] = useState(initialResourceHydration);
   const [notice, setNotice] = useState<Notice>(null);
+
+  async function queueOfflineMutation(mutation: Omit<PendingMutation, "id" | "createdAt" | "status" | "attempts" | "userId">) {
+    await queueMutation({ ...mutation, userId: session.user.id });
+    setNotice({ type: "success", text: "Saved locally. It will sync when online." });
+  }
+
+  async function syncQueuedMutations(showToast = false) {
+    if (!supabase || !navigator.onLine) return;
+    const result = await flushPendingMutations(supabase, session.user.id);
+    if (result.failed.length > 0) {
+      setNotice({ type: "error", text: `${result.failed.length} offline change could not sync. Check the record and try again.` });
+    } else if (showToast && result.synced.length > 0) {
+      setNotice({ type: "success", text: `${result.synced.length} offline change${result.synced.length === 1 ? "" : "s"} synced.` });
+    }
+    if (result.synced.length > 0) {
+      const affected = Array.from(new Set(result.synced.flatMap((mutation) => mutation.affectedResources)));
+      await Promise.all(affected.map((resource) => loadResource(resource, true)));
+    }
+  }
 
   function navigate(nextView: View) {
     setView(nextView);
@@ -443,22 +517,67 @@ function Workspace({ session }: { session: Session }) {
     if (!supabase) return;
     if (!force && (resourceStatuses[resource] === "loading" || resourceStatuses[resource] === "ready")) return;
     const previousStatus = resourceStatuses[resource];
+    const cached = !force ? await readCachedResource<unknown>(resource, session.user.id) : null;
+
+    if (cached) {
+      switch (resource) {
+        case "attendanceEntries":
+          setAttendanceEntries(cached as AttendanceEntry[]);
+          break;
+        case "collections":
+          setCollections(cached as CollectionReminder[]);
+          break;
+        case "dashboardSummary":
+          setDashboardSummary(cached as DashboardSummary);
+          break;
+        case "dailyTicketEntries":
+          setDailyTicketEntries(cached as DailyTicketEntry[]);
+          break;
+        case "employees":
+          setEmployees(cached as Employee[]);
+          break;
+        case "payments":
+          setPayments(cached as PaymentReminder[]);
+          break;
+        case "payrollHistory":
+          setPayrollHistoryRows(cached as PayrollHistoryRow[]);
+          break;
+        case "payrollRuns":
+          setPayrollRuns(cached as PayrollRunWithItems[]);
+          break;
+        case "positions":
+          setPositions(cached as Position[]);
+          break;
+        case "salaryBonds":
+          setSalaryBonds(cached as SalaryBond[]);
+          break;
+      }
+      setResourceHydration((current) => ({ ...current, [resource]: true }));
+    }
 
     setResourceStatuses((current) => current[resource] === "ready" ? current : { ...current, [resource]: "loading" });
 
     try {
       const result = await (async () => {
         switch (resource) {
+          case "attendanceEntries":
+            return loadAttendanceEntries(supabase);
           case "collections":
             return loadCollections(supabase);
+          case "dashboardSummary":
+            return loadDashboardSummary(supabase);
           case "dailyTicketEntries":
             return loadDailyTicketEntries(supabase);
           case "employees":
             return loadEmployees(supabase);
           case "payments":
             return loadPayments(supabase);
+          case "payrollHistory":
+            return loadPayrollHistoryRows(supabase);
           case "payrollRuns":
             return loadPayrollRuns(supabase);
+          case "positions":
+            return loadPositions(supabase);
           case "salaryBonds":
             return loadSalaryBonds(supabase);
         }
@@ -470,8 +589,14 @@ function Workspace({ session }: { session: Session }) {
       }
 
       switch (resource) {
+        case "attendanceEntries":
+          setAttendanceEntries(result.data as AttendanceEntry[]);
+          break;
         case "collections":
           setCollections(result.data as CollectionReminder[]);
+          break;
+        case "dashboardSummary":
+          setDashboardSummary(result.data as DashboardSummary);
           break;
         case "dailyTicketEntries":
           setDailyTicketEntries(result.data as DailyTicketEntry[]);
@@ -482,18 +607,46 @@ function Workspace({ session }: { session: Session }) {
         case "payments":
           setPayments(result.data as PaymentReminder[]);
           break;
+        case "payrollHistory":
+          setPayrollHistoryRows(result.data as PayrollHistoryRow[]);
+          break;
         case "payrollRuns":
           setPayrollRuns(result.data as PayrollRunWithItems[]);
+          break;
+        case "positions":
+          setPositions(result.data as Position[]);
           break;
         case "salaryBonds":
           setSalaryBonds(result.data as SalaryBond[]);
           break;
       }
 
+      await writeCachedResource(resource, session.user.id, result.data);
+      setResourceHydration((current) => ({ ...current, [resource]: true }));
       setResourceStatuses((current) => ({ ...current, [resource]: "ready" }));
     } catch (error) {
       setResourceStatuses((current) => ({ ...current, [resource]: previousStatus === "ready" ? "ready" : "idle" }));
     }
+  }
+
+  async function ensurePayrollRunItems(payrollRunId: string) {
+    if (!supabase || !payrollRunId) return;
+    const existingRun = payrollRuns.find((run) => run.id === payrollRunId);
+    if (existingRun && existingRun.items.length > 0) return;
+
+    const result = await loadPayrollRunItems(supabase, payrollRunId);
+    if (result.error) {
+      setNotice({ type: "error", text: friendlyError(result.error) });
+      return;
+    }
+
+    setPayrollRuns((current) => {
+      const next = current.map((run) =>
+        run.id === payrollRunId ? { ...run, items: result.data } : run,
+      );
+      void writeCachedResource("payrollRuns", session.user.id, next);
+      return next;
+    });
   }
 
   async function loadPageData(targetView: View, force = false) {
@@ -501,27 +654,57 @@ function Workspace({ session }: { session: Session }) {
   }
 
   async function refreshEmployeesPage() {
-    await Promise.all([loadResource("employees", true), loadResource("payrollRuns", true), loadResource("salaryBonds", true)]);
+    await Promise.all([
+      loadResource("employees", true),
+      loadResource("positions", true),
+      loadResource("payrollRuns", true),
+      loadResource("salaryBonds", true),
+      loadResource("dashboardSummary", true),
+    ]);
+  }
+
+  async function refreshPositionsPage() {
+    await Promise.all([
+      loadResource("positions", true),
+      loadResource("employees", true),
+    ]);
   }
 
   async function refreshDailyTicketsPage() {
-    await loadResource("dailyTicketEntries", true);
+    await Promise.all([
+      loadResource("dailyTicketEntries", true),
+      loadResource("dashboardSummary", true),
+    ]);
   }
 
   async function refreshPayrollPage() {
-    await Promise.all([loadResource("payrollRuns", true), loadResource("salaryBonds", true)]);
+    await Promise.all([
+      loadResource("payrollRuns", true),
+      loadResource("salaryBonds", true),
+      loadResource("payrollHistory", true),
+      loadResource("dashboardSummary", true),
+    ]);
   }
 
   async function refreshPaymentsPage() {
-    await loadResource("payments", true);
+    await Promise.all([
+      loadResource("payments", true),
+      loadResource("dashboardSummary", true),
+    ]);
   }
 
   async function refreshCollectionsPage() {
-    await loadResource("collections", true);
+    await Promise.all([
+      loadResource("collections", true),
+      loadResource("dashboardSummary", true),
+    ]);
   }
 
   async function refreshSalaryBonds() {
-    await loadResource("salaryBonds", true);
+    await Promise.all([
+      loadResource("salaryBonds", true),
+      loadResource("dashboardSummary", true),
+    ]);
   }
 
   useEffect(() => {
@@ -534,9 +717,30 @@ function Workspace({ session }: { session: Session }) {
     void loadPageData(view);
   }, [view]);
 
+  useEffect(() => {
+    void syncQueuedMutations(false);
+
+    const handleOnline = () => void syncQueuedMutations(true);
+    const handleFocus = () => void syncQueuedMutations(false);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("focus", handleFocus);
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, []);
+
   async function signOut() {
     await supabase?.auth.signOut();
   }
+
+  const currentViewResources = viewResources[view];
+  const pageLoading = currentViewResources.some((resource) => resourceStatuses[resource] === "loading");
+  const pageHydrated = currentViewResources.length === 0 ||
+    currentViewResources.every((resource) => resourceHydration[resource]);
+  const showPageSkeleton = pageLoading && !pageHydrated;
+  const showSyncIndicator = pageLoading && pageHydrated;
 
   return (
     <main className="app-shell">
@@ -572,7 +776,7 @@ function Workspace({ session }: { session: Session }) {
               </div>
             )}
           </div>
-          <NavButton active={view === "compensation"} icon={<Briefcase size={18} />} label="Compensation" onClick={() => navigate("compensation")} />
+          <NavButton active={view === "compensation"} icon={<Briefcase size={18} />} label="Positions" onClick={() => navigate("compensation")} />
           <div className="nav-group">
             <button
               className={view === "daily-tickets" ? "nav-button active" : "nav-button"}
@@ -646,15 +850,22 @@ function Workspace({ session }: { session: Session }) {
         </header>
         <section className="content">
           <NoticeBanner notice={notice} onDismiss={() => setNotice(null)} />
+          {showSyncIndicator && <SyncIndicator text="Syncing latest data..." />}
+          {showPageSkeleton ? (
+            <PageSkeleton />
+          ) : (
           <>
               {view === "dashboard" && (
-                <Dashboard collections={collections} employees={employees} payments={payments} payrollRuns={payrollRuns} />
+                <Dashboard summary={dashboardSummary} />
               )}
               {view === "employees" && (
                 <EmployeesView
                   employees={employees}
                   onChange={refreshEmployeesPage}
+                  onLocalEmployeesChange={setEmployees}
+                  onQueueOfflineMutation={queueOfflineMutation}
                   payrollRuns={payrollRuns}
+                  positions={positions}
                   salaryBonds={salaryBonds}
                   setNotice={setNotice}
                   userId={session.user.id}
@@ -666,20 +877,33 @@ function Workspace({ session }: { session: Session }) {
                 mode="add"
                 onChange={refreshEmployeesPage}
                 onExitForm={() => navigate("employees")}
+                onLocalEmployeesChange={setEmployees}
+                onQueueOfflineMutation={queueOfflineMutation}
                 payrollRuns={payrollRuns}
+                positions={positions}
                 salaryBonds={salaryBonds}
                 setNotice={setNotice}
                 userId={session.user.id}
               />
             )}
               {view === "compensation" && (
-                <EmployeeCompensationSetupView />
+                <PositionsView
+                  employees={employees}
+                  onChange={refreshPositionsPage}
+                  onLocalPositionsChange={setPositions}
+                  onQueueOfflineMutation={queueOfflineMutation}
+                  positions={positions}
+                  setNotice={setNotice}
+                  userId={session.user.id}
+                />
               )}
               {view === "daily-tickets" && (
                 <DailyTicketEntryView
                   dailyTicketEntries={dailyTicketEntries}
                   employees={employees}
+                  positions={positions}
                   onChange={refreshDailyTicketsPage}
+                  onQueueOfflineMutation={queueOfflineMutation}
                   setNotice={setNotice}
                   userId={session.user.id}
                 />
@@ -688,6 +912,7 @@ function Workspace({ session }: { session: Session }) {
                 <SalaryBondsView
                   employees={employees}
                   onChange={refreshSalaryBonds}
+                  onQueueOfflineMutation={queueOfflineMutation}
                   setNotice={setNotice}
                   userId={session.user.id}
                 />
@@ -696,19 +921,25 @@ function Workspace({ session }: { session: Session }) {
                 <PayrollView
                   dailyTicketEntries={dailyTicketEntries}
                   employees={employees}
+                  ensurePayrollRunItems={ensurePayrollRunItems}
+                  onLocalPayrollRunsChange={setPayrollRuns}
                   onChange={refreshPayrollPage}
+                  onQueueOfflineMutation={queueOfflineMutation}
                   payrollRuns={payrollRuns}
+                  positions={positions}
                   salaryBonds={salaryBonds}
                   setNotice={setNotice}
                   userId={session.user.id}
                 />
               )}
               {view === "payroll-history" && (
-                <PayrollHistoryView employees={employees} payrollRuns={payrollRuns} />
+                <PayrollHistoryView rows={payrollHistoryRows} />
               )}
               {view === "payments" && (
                 <PaymentsView
                   onChange={refreshPaymentsPage}
+                  onLocalPaymentsChange={setPayments}
+                  onQueueOfflineMutation={queueOfflineMutation}
                   payments={payments}
                   setNotice={setNotice}
                   userId={session.user.id}
@@ -721,6 +952,8 @@ function Workspace({ session }: { session: Session }) {
                 <CollectionsView
                   collections={collections}
                   onChange={refreshCollectionsPage}
+                  onLocalCollectionsChange={setCollections}
+                  onQueueOfflineMutation={queueOfflineMutation}
                   setNotice={setNotice}
                   userId={session.user.id}
                 />
@@ -729,6 +962,7 @@ function Workspace({ session }: { session: Session }) {
                 <CollectionHistoryView collections={collections} />
               )}
           </>
+          )}
         </section>
       </div>
     </main>
@@ -761,6 +995,13 @@ function NoticeBanner({
   notice: Notice;
   onDismiss: () => void;
 }) {
+  useEffect(() => {
+    if (notice?.type !== "success") return;
+
+    const timeout = window.setTimeout(onDismiss, 3000);
+    return () => window.clearTimeout(timeout);
+  }, [notice, onDismiss]);
+
   if (!notice) return null;
 
   return (
@@ -776,42 +1017,47 @@ function NoticeBanner({
   );
 }
 
-function Dashboard({
-  collections,
-  employees,
-  payments,
-  payrollRuns,
-}: {
-  collections: CollectionReminder[];
-  employees: Employee[];
-  payments: PaymentReminder[];
-  payrollRuns: PayrollRunWithItems[];
-}) {
-  const activeEmployees = employees.filter((employee) => employee.status === "active");
-  const latestRun = payrollRuns[0];
-  const currentRuns = payrollRuns.filter(
-    (run) =>
-      run.period_month === Number(currentMonth()) &&
-      run.period_year === Number(currentYear()),
-  );
-  const currentItems = currentRuns.flatMap((run) => run.items);
-  const pendingPayroll = currentItems
-    .filter((item) => item.status !== "paid")
-    .reduce((sum, item) => sum + toNumber(item.net_pay), 0);
-  const paidPayroll = currentItems
-    .filter((item) => item.status === "paid")
-    .reduce((sum, item) => sum + toNumber(item.net_pay), 0);
-  const unpaidPayments = payments.filter((item) => item.status !== "paid");
-  const overduePayments = unpaidPayments.filter((item) => isBeforeToday(item.due_date));
-  const dueTodayPayments = unpaidPayments.filter((item) => isToday(item.due_date));
-  const openCollections = collections.filter((item) => item.status !== "collected");
-  const pendingCollections = openCollections.reduce((sum, item) => sum + toNumber(item.amount), 0);
-  const collectedTotal = collections
-    .filter((item) => item.status === "collected")
-    .reduce((sum, item) => sum + toNumber(item.amount), 0);
-  const overdueCollections = openCollections.filter((item) => isBeforeToday(item.due_date));
-  const dueTodayCollections = openCollections.filter((item) => isToday(item.due_date));
+function Spinner({ size = "default" }: { size?: "small" | "default" }) {
+  return <span aria-hidden="true" className={`spinner ${size}`} />;
+}
 
+function SyncIndicator({ text }: { text: string }) {
+  return (
+    <div className="sync-indicator" role="status">
+      <Spinner size="small" />
+      <span>{text}</span>
+    </div>
+  );
+}
+
+function PageSkeleton() {
+  return (
+    <div className="page-skeleton" aria-label="Loading page">
+      <div className="skeleton-header">
+        <span />
+        <strong />
+        <p />
+      </div>
+      <div className="skeleton-metric-grid">
+        {Array.from({ length: 6 }, (_, index) => (
+          <div className="skeleton-card" key={index}>
+            <span />
+            <strong />
+          </div>
+        ))}
+      </div>
+      <div className="skeleton-band" />
+      <div className="skeleton-table">
+        {Array.from({ length: 5 }, (_, index) => (
+          <span key={index} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Dashboard({ summary }: { summary: DashboardSummary }) {
+  const latestRun = summary.latestRun;
   return (
     <div className="page-stack">
       <PageHeader
@@ -820,12 +1066,12 @@ function Dashboard({
         text="Monitor employees, payroll runs, payment reminders, and receivables."
       />
       <section className="metric-grid">
-        <Metric icon={<Users />} label="Active employees" value={activeEmployees.length} />
-        <Metric icon={<CalendarClock />} label="Current payroll" value={currentItems.length} />
-        <Metric icon={<BadgeDollarSign />} label="Pending payroll" value={currency.format(pendingPayroll)} />
-        <Metric icon={<CheckCircle2 />} label="Paid payroll" value={currency.format(paidPayroll)} tone="success" />
-        <Metric icon={<BadgeDollarSign />} label="Pending collections" value={currency.format(pendingCollections)} />
-        <Metric icon={<CheckCircle2 />} label="Collected total" value={currency.format(collectedTotal)} tone="success" />
+        <Metric icon={<Users />} label="Active employees" value={summary.activeEmployeeCount} />
+        <Metric icon={<CalendarClock />} label="Current payroll" value={summary.currentPayrollItemCount} />
+        <Metric icon={<BadgeDollarSign />} label="Pending payroll" value={currency.format(summary.pendingPayroll)} />
+        <Metric icon={<CheckCircle2 />} label="Paid payroll" value={currency.format(summary.paidPayroll)} tone="success" />
+        <Metric icon={<BadgeDollarSign />} label="Pending collections" value={currency.format(summary.pendingCollections)} />
+        <Metric icon={<CheckCircle2 />} label="Collected total" value={currency.format(summary.collectedTotal)} tone="success" />
       </section>
       <section className="summary-band">
         <div>
@@ -834,15 +1080,15 @@ function Dashboard({
         </div>
         <p>
           {latestRun
-            ? `${monthNames[latestRun.period_month - 1]} ${latestRun.period_year} - ${payPeriodLabel(latestRun.pay_period)} has ${latestRun.items.length} payroll items.`
+            ? `${monthNames[latestRun.period_month - 1]} ${latestRun.period_year} - ${payPeriodLabel(latestRun.pay_period)} has ${latestRun.item_count} payroll items.`
             : "Create employees first, then generate a monthly payroll run."}
         </p>
       </section>
       <section className="two-column">
-        <DueList title="Payments due today" rows={dueTodayPayments} />
-        <DueList title="Overdue payments" rows={overduePayments} empty="No overdue payment reminders." />
-        <DueList title="Collections due today" rows={dueTodayCollections} />
-        <DueList title="Overdue collections" rows={overdueCollections} empty="No overdue collections." />
+        <DueList title="Payments due today" rows={summary.dueTodayPayments} />
+        <DueList title="Overdue payments" rows={summary.overduePayments} empty="No overdue payment reminders." />
+        <DueList title="Collections due today" rows={summary.dueTodayCollections} />
+        <DueList title="Overdue collections" rows={summary.overdueCollections} empty="No overdue collections." />
       </section>
     </div>
   );
@@ -902,11 +1148,13 @@ function DueList({
 function SalaryBondsView({
   employees,
   onChange,
+  onQueueOfflineMutation,
   setNotice,
   userId,
 }: {
   employees: Employee[];
   onChange: () => Promise<void>;
+  onQueueOfflineMutation: QueueOfflineMutation;
   setNotice: (notice: Notice) => void;
   userId: string;
 }) {
@@ -954,9 +1202,34 @@ function SalaryBondsView({
       status: bondForm.status,
       notes: bondForm.notes.trim(),
     };
+    if (!navigator.onLine) {
+      await onQueueOfflineMutation({
+        resource: "salaryBonds",
+        affectedResources: ["salaryBonds", "dashboardSummary"],
+        operation: "insert",
+        table: "salary_bonds",
+        payload,
+      });
+      setBondForm(emptySalaryBond);
+      await onChange();
+      return;
+    }
+
     const result = await supabase.from("salary_bonds").insert(payload);
 
     if (result.error) {
+      if (isOfflineLikeError(result.error)) {
+        await onQueueOfflineMutation({
+          resource: "salaryBonds",
+          affectedResources: ["salaryBonds", "dashboardSummary"],
+          operation: "insert",
+          table: "salary_bonds",
+          payload,
+        });
+        setBondForm(emptySalaryBond);
+        await onChange();
+        return;
+      }
       setNotice({ type: "error", text: friendlyError(result.error) });
       return;
     }
@@ -1282,6 +1555,344 @@ function SummaryStat({ label, value }: { label: string; value: number | string }
   );
 }
 
+function PositionsView({
+  employees,
+  onChange,
+  onLocalPositionsChange,
+  onQueueOfflineMutation,
+  positions,
+  setNotice,
+  userId,
+}: {
+  employees: Employee[];
+  onChange: () => Promise<void>;
+  onLocalPositionsChange: (positions: Position[]) => void;
+  onQueueOfflineMutation: QueueOfflineMutation;
+  positions: Position[];
+  setNotice: (notice: Notice) => void;
+  userId: string;
+}) {
+  const [editing, setEditing] = useState<Position | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<Position | null>(null);
+  const [query, setQuery] = useState("");
+  const rows = positions.filter((position) =>
+    `${position.name} ${position.department} ${position.pay_mode}`.toLowerCase().includes(query.toLowerCase())
+  );
+
+  async function savePosition(values: PositionFormValues) {
+    if (!supabase) return;
+    const needsTickets = values.pay_mode === "ticket" || values.pay_mode === "hybrid";
+    const categories = values.categories
+      .map((category, index) => ({
+        id: category.id ?? crypto.randomUUID(),
+        user_id: userId,
+        position_id: editing?.id ?? "",
+        name: category.name.trim(),
+        rate: toNumber(category.rate),
+        display_order: index,
+        status: category.status,
+      }))
+      .filter((category) => category.name);
+    if (!values.name.trim()) {
+      setNotice({ type: "error", text: "Position name is required." });
+      return;
+    }
+    if (needsTickets && categories.filter((category) => category.status === "active").length === 0) {
+      setNotice({ type: "error", text: "Ticket and hybrid positions need at least one active ticket category." });
+      return;
+    }
+    const positionId = editing?.id ?? crypto.randomUUID();
+    const payload = {
+      id: positionId,
+      user_id: userId,
+      name: values.name.trim(),
+      department: values.department.trim(),
+      description: values.description.trim(),
+      status: values.status,
+      pay_mode: values.pay_mode,
+      monthly_base_salary: values.pay_mode === "ticket" ? 0 : toNumber(values.monthly_base_salary),
+    };
+    const categoryPayloads = categories.map((category) => ({ ...category, position_id: positionId }));
+    const removedCategories = editing?.categories.filter(
+      (existing) => !categoryPayloads.some((category) => category.id === existing.id),
+    ) ?? [];
+    const optimistic: Position = {
+      ...(editing ?? {} as Position),
+      ...payload,
+      created_at: editing?.created_at ?? new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      categories: categoryPayloads.map((category) => ({
+        ...category,
+        created_at: editing?.categories.find((item) => item.id === category.id)?.created_at ?? new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })),
+    };
+
+    if (!navigator.onLine) {
+      onLocalPositionsChange(editing
+        ? positions.map((position) => position.id === positionId ? optimistic : position)
+        : [optimistic, ...positions]);
+      await onQueueOfflineMutation({
+        resource: "positions",
+        affectedResources: ["positions", "employees", "dailyTicketEntries", "payrollRuns"],
+        operation: "upsert",
+        table: "positions",
+        recordId: positionId,
+        payload,
+        options: { onConflict: "id" },
+      });
+      if (categoryPayloads.length > 0) {
+        await onQueueOfflineMutation({
+          resource: "positions",
+          affectedResources: ["positions"],
+          operation: "upsert",
+          table: "position_ticket_categories",
+          payload: categoryPayloads,
+          options: { onConflict: "id" },
+        });
+      }
+      for (const category of removedCategories) {
+        await onQueueOfflineMutation({
+          resource: "positions",
+          affectedResources: ["positions"],
+          operation: "update",
+          table: "position_ticket_categories",
+          recordId: category.id,
+          payload: { status: "archived" },
+        });
+      }
+      setFormOpen(false);
+      setEditing(null);
+      return;
+    }
+
+    const positionResult = await supabase.from("positions").upsert(payload, { onConflict: "id" });
+    if (positionResult.error) {
+      setNotice({ type: "error", text: friendlyError(positionResult.error) });
+      return;
+    }
+    if (categoryPayloads.length > 0) {
+      const categoryResult = await supabase.from("position_ticket_categories").upsert(categoryPayloads, { onConflict: "id" });
+      if (categoryResult.error) {
+        setNotice({ type: "error", text: friendlyError(categoryResult.error) });
+        return;
+      }
+    }
+    if (removedCategories.length > 0) {
+      const archiveResult = await supabase
+        .from("position_ticket_categories")
+        .update({ status: "archived" })
+        .in("id", removedCategories.map((category) => category.id));
+      if (archiveResult.error) {
+        setNotice({ type: "error", text: friendlyError(archiveResult.error) });
+        return;
+      }
+    }
+    setNotice({ type: "success", text: "Position saved." });
+    setFormOpen(false);
+    setEditing(null);
+    await onChange();
+  }
+
+  async function toggleArchive(position: Position) {
+    if (!supabase) return;
+    const status = position.status === "active" ? "archived" : "active";
+    const assignedActiveEmployees = employees.filter(
+      (employee) => employee.position_id === position.id && employee.status === "active",
+    ).length;
+    if (status === "archived" && assignedActiveEmployees > 0) {
+      setNotice({ type: "error", text: `Reassign ${assignedActiveEmployees} active employee${assignedActiveEmployees === 1 ? "" : "s"} before archiving this position.` });
+      return;
+    }
+    const optimistic = positions.map((item) => item.id === position.id ? { ...item, status } as Position : item);
+    if (!navigator.onLine) {
+      onLocalPositionsChange(optimistic);
+      await onQueueOfflineMutation({
+        resource: "positions",
+        affectedResources: ["positions"],
+        operation: "update",
+        table: "positions",
+        recordId: position.id,
+        payload: { status },
+      });
+      return;
+    }
+    const { error } = await supabase.from("positions").update({ status }).eq("id", position.id);
+    setNotice(error ? { type: "error", text: friendlyError(error) } : { type: "success", text: `Position ${status}.` });
+    if (!error) await onChange();
+  }
+
+  async function deletePosition(position: Position) {
+    if (!supabase) return;
+    const assignedEmployees = employees.filter((e) => e.position_id === position.id).length;
+    if (assignedEmployees > 0) {
+      setNotice({ type: "error", text: `Cannot delete "${position.name}" — ${assignedEmployees} employee${assignedEmployees === 1 ? " is" : "s are"} still assigned. Reassign them first.` });
+      return;
+    }
+    if (!navigator.onLine) {
+      onLocalPositionsChange(positions.filter((p) => p.id !== position.id));
+      await onQueueOfflineMutation({
+        resource: "positions",
+        affectedResources: ["positions", "employees", "dailyTicketEntries", "payrollRuns"],
+        operation: "delete",
+        table: "position_ticket_categories",
+        payload: { position_id: position.id },
+      });
+      await onQueueOfflineMutation({
+        resource: "positions",
+        affectedResources: ["positions", "employees", "dailyTicketEntries", "payrollRuns"],
+        operation: "delete",
+        table: "positions",
+        recordId: position.id,
+      });
+      return;
+    }
+    const catResult = await supabase.from("position_ticket_categories").delete().eq("position_id", position.id);
+    if (catResult.error) {
+      setNotice({ type: "error", text: friendlyError(catResult.error) });
+      return;
+    }
+    const { error } = await supabase.from("positions").delete().eq("id", position.id);
+    if (error) {
+      setNotice({ type: "error", text: friendlyError(error) });
+      return;
+    }
+    setNotice({ type: "success", text: `"${position.name}" deleted.` });
+    await onChange();
+  }
+
+  return (
+    <div className="page-stack">
+      <PageHeader
+        action={<button className="primary-button compact" onClick={() => { setEditing(null); setFormOpen(true); }} type="button"><Plus size={16} /> Add position</button>}
+        eyebrow="Compensation setup"
+        title="Positions"
+        text="Define a position's base salary and ticket categories once, then assign it to employees."
+      />
+      <Toolbar query={query} setQuery={setQuery} />
+      <DataTable
+        empty="No positions yet. Create one before adding active employees."
+        headers={["Position", "Department", "Pay method", "Base salary", "Ticket categories", "Employees", "Status", "Actions"]}
+        rows={rows.map((position) => [
+          <RecordTitle key="name" title={position.name} notes={position.description || "No description"} />,
+          position.department || "Unassigned",
+          position.pay_mode === "fixed" ? "Fixed salary" : position.pay_mode === "ticket" ? "Per ticket" : "Base + ticket",
+          currency.format(toNumber(position.monthly_base_salary)),
+          position.categories.filter((category) => category.status === "active").map((category) => `${category.name} (${currency.format(toNumber(category.rate))})`).join(", ") || "None",
+          employees.filter((employee) => employee.position_id === position.id).length,
+          <StatusPill key="status" status={position.status} />,
+          <div className="row-actions" key="actions">
+            <button aria-label="Edit position" onClick={() => { setEditing(position); setFormOpen(true); }} title="Edit" type="button"><Pencil size={16} /></button>
+            <button aria-label={position.status === "active" ? "Archive position" : "Restore position"} onClick={() => toggleArchive(position)} title={position.status === "active" ? "Archive" : "Restore"} type="button"><History size={16} /></button>
+            <button aria-label="Delete position" className="delete-action" onClick={() => setConfirmDelete(position)} title="Delete" type="button"><Trash2 size={16} /></button>
+          </div>,
+        ])}
+      />
+      {formOpen && <PositionForm initial={editing} onClose={() => { setFormOpen(false); setEditing(null); }} onSubmit={savePosition} />}
+      {confirmDelete && (
+        <div className="modal-backdrop" role="presentation">
+          <section aria-label="Delete position" aria-modal="true" className="modal confirm-modal" role="dialog">
+            <div className="confirm-icon-wrap danger">
+              <Trash2 size={24} />
+            </div>
+            <h2>Delete position</h2>
+            <p>Are you sure you want to permanently delete <strong>{confirmDelete.name}</strong>? This action cannot be undone.</p>
+            {employees.filter((e) => e.position_id === confirmDelete.id).length > 0 && (
+              <div className="confirm-warning">
+                <span>{employees.filter((e) => e.position_id === confirmDelete.id).length} employee{employees.filter((e) => e.position_id === confirmDelete.id).length === 1 ? "" : "s"} assigned — reassign before deleting.</span>
+              </div>
+            )}
+            <div className="confirm-actions">
+              <button className="secondary-button" onClick={() => setConfirmDelete(null)} type="button">Cancel</button>
+              <button
+                className="primary-button danger-button"
+                disabled={employees.filter((e) => e.position_id === confirmDelete.id).length > 0}
+                onClick={async () => {
+                  await deletePosition(confirmDelete);
+                  setConfirmDelete(null);
+                }}
+                type="button"
+              >
+                <Trash2 size={15} />
+                Delete
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PositionForm({
+  initial,
+  onClose,
+  onSubmit,
+}: {
+  initial: Position | null;
+  onClose: () => void;
+  onSubmit: (values: PositionFormValues) => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [values, setValues] = useState<PositionFormValues>(initial ? {
+    name: initial.name,
+    department: initial.department,
+    description: initial.description,
+    status: initial.status,
+    pay_mode: initial.pay_mode,
+    monthly_base_salary: String(initial.monthly_base_salary),
+    daily_rate: String(initial.daily_rate ?? 0),
+    categories: initial.categories.map((category) => ({ id: category.id, name: category.name, rate: String(category.rate), status: category.status })),
+  } : {
+    name: "",
+    department: "",
+    description: "",
+    status: "active",
+    pay_mode: "fixed",
+    monthly_base_salary: "",
+    daily_rate: "",
+    categories: [],
+  });
+  const usesTickets = values.pay_mode === "ticket" || values.pay_mode === "hybrid";
+
+  return (
+    <Modal title={initial ? "Edit position" : "Add position"} onClose={onClose}>
+      <form className="form-grid" onSubmit={async (event) => { event.preventDefault(); setBusy(true); await onSubmit(values); setBusy(false); }}>
+        <TextField label="Position name" value={values.name} onChange={(name) => setValues({ ...values, name })} required />
+        <TextField label="Department" value={values.department} onChange={(department) => setValues({ ...values, department })} />
+        <label>
+          Pay method
+          <select value={values.pay_mode} onChange={(event) => setValues({ ...values, pay_mode: event.target.value as PositionFormValues["pay_mode"] })}>
+            <option value="fixed">Fixed salary</option>
+            <option value="ticket">Per closed ticket</option>
+            <option value="hybrid">Base salary + tickets</option>
+          </select>
+        </label>
+        {values.pay_mode !== "ticket" && <TextField label="Monthly base salary" min="0" step="0.01" type="number" value={values.monthly_base_salary} onChange={(monthly_base_salary) => setValues({ ...values, monthly_base_salary })} required />}
+        <label className="full">
+          Description
+          <textarea rows={3} value={values.description} onChange={(event) => setValues({ ...values, description: event.target.value })} />
+        </label>
+        {usesTickets && (
+          <section className="full stack">
+            <div className="section-heading"><div><p className="eyebrow">Ticket compensation</p><h3>Closed-ticket categories</h3></div><button className="secondary-button compact" onClick={() => setValues({ ...values, categories: [...values.categories, { name: "", rate: "", status: "active" }] })} type="button"><Plus size={15} /> Add category</button></div>
+            {values.categories.map((category, index) => (
+              <div className="inline-fields" key={category.id ?? index}>
+                <input aria-label="Category name" placeholder="Category name" value={category.name} onChange={(event) => setValues({ ...values, categories: values.categories.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item) })} />
+                <input aria-label="Rate" min="0" placeholder="Rate" step="0.01" type="number" value={category.rate} onChange={(event) => setValues({ ...values, categories: values.categories.map((item, itemIndex) => itemIndex === index ? { ...item, rate: event.target.value } : item) })} />
+                <select aria-label="Category status" value={category.status} onChange={(event) => setValues({ ...values, categories: values.categories.map((item, itemIndex) => itemIndex === index ? { ...item, status: event.target.value as PositionFormValues["categories"][number]["status"] } : item) })}><option value="active">Active</option><option value="archived">Archived</option></select>
+                <button aria-label="Remove category" onClick={() => setValues({ ...values, categories: values.categories.filter((_, itemIndex) => itemIndex !== index) })} type="button"><Trash2 size={16} /></button>
+              </div>
+            ))}
+          </section>
+        )}
+        <FormActions busy={busy} onClose={onClose} />
+      </form>
+    </Modal>
+  );
+}
+
 type DailyTicketDraft = {
   employee: Employee;
   employeeCode: string;
@@ -1291,16 +1902,199 @@ type DailyTicketDraft = {
   status: "pending" | "saved";
 };
 
+type PositionTicketDraft = {
+  employee: Employee;
+  position: Position;
+  counts: Record<string, number>;
+  entry?: DailyTicketEntry;
+};
+
 export function DailyTicketEntryView({
   dailyTicketEntries,
   employees,
+  positions,
   onChange,
+  onQueueOfflineMutation,
+  setNotice,
+  userId,
+}: {
+  dailyTicketEntries: DailyTicketEntry[];
+  employees: Employee[];
+  positions: Position[];
+  onChange: () => Promise<void>;
+  onQueueOfflineMutation: QueueOfflineMutation;
+  setNotice: (notice: Notice) => void;
+  userId: string;
+}) {
+  const [entryDate, setEntryDate] = useState(todayKey());
+  const [draftCounts, setDraftCounts] = useState<Record<string, Record<string, number>>>({});
+  const [busyEmployeeId, setBusyEmployeeId] = useState("");
+  const activePositions = new Map(positions.map((position) => [position.id, position]));
+  const drafts: PositionTicketDraft[] = employees
+    .filter((employee) => employee.status === "active")
+    .flatMap((employee) => {
+      const entry = dailyTicketEntries.find((item) => item.employee_id === employee.id && item.entry_date === entryDate);
+      const effectivePositionId = entry?.position_id ?? employee.position_id;
+      const position = effectivePositionId ? activePositions.get(effectivePositionId) : undefined;
+      if (!position || (!entry && position.status !== "active") || position.pay_mode === "fixed") return [];
+      const counts = Object.fromEntries(
+        position.categories
+          .filter((category) => category.status === "active")
+          .map((category) => [
+            category.id,
+            draftCounts[employee.id]?.[category.id] ??
+              entry?.details?.find((detail) => detail.position_ticket_category_id === category.id)?.ticket_count ?? 0,
+          ]),
+      );
+      return [{ employee, position, counts, entry }];
+    });
+
+  async function saveDraft(draft: PositionTicketDraft) {
+    if (!supabase) return;
+    setBusyEmployeeId(draft.employee.id);
+    const entryId = draft.entry?.id ?? crypto.randomUUID();
+    const activeCategories = draft.position.categories.filter((category) => category.status === "active");
+    const headerPayload = {
+      id: entryId,
+      user_id: userId,
+      entry_date: entryDate,
+      employee_id: draft.employee.id,
+      employee_name: draft.employee.full_name,
+      position_id: draft.position.id,
+      position_name: draft.position.name,
+      installation_tickets: 0,
+      repair_tickets: 0,
+      installation_rate: 0,
+      repair_rate: 0,
+    };
+    const detailPayloads = activeCategories.map((category) => {
+      const existingDetail = draft.entry?.details?.find((detail) => detail.position_ticket_category_id === category.id);
+      return {
+      id: existingDetail?.id ?? crypto.randomUUID(),
+      user_id: userId,
+      daily_ticket_entry_id: entryId,
+      position_ticket_category_id: category.id,
+      category_name: category.name,
+      ticket_count: normalizeTicketCount(draft.counts[category.id]),
+      rate: toNumber(existingDetail?.rate ?? category.rate),
+    };
+    });
+    const optimisticEntry: DailyTicketEntry = {
+      ...headerPayload,
+      details: detailPayloads.map((detail) => ({
+        ...detail,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })),
+      created_at: draft.entry?.created_at ?? new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    if (!navigator.onLine) {
+      await onQueueOfflineMutation({
+        resource: "dailyTicketEntries",
+        affectedResources: ["dailyTicketEntries", "payrollRuns", "dashboardSummary"],
+        operation: "upsert",
+        table: "daily_ticket_entries",
+        recordId: entryId,
+        payload: headerPayload,
+        options: { onConflict: "user_id,entry_date,employee_id" },
+      });
+      await onQueueOfflineMutation({
+        resource: "dailyTicketEntries",
+        affectedResources: ["dailyTicketEntries", "payrollRuns"],
+        operation: "delete",
+        table: "daily_ticket_entry_items",
+        match: { daily_ticket_entry_id: entryId },
+      });
+      if (detailPayloads.length > 0) {
+        await onQueueOfflineMutation({
+          resource: "dailyTicketEntries",
+          affectedResources: ["dailyTicketEntries", "payrollRuns"],
+          operation: "insert",
+          table: "daily_ticket_entry_items",
+          payload: detailPayloads,
+        });
+      }
+      // Cache is refreshed by the standard offline queue after synchronization.
+      setNotice({ type: "success", text: `${draft.employee.full_name}'s ticket counts were saved locally.` });
+      setBusyEmployeeId("");
+      return;
+    }
+
+    const headerResult = await supabase.from("daily_ticket_entries").upsert(headerPayload, { onConflict: "user_id,entry_date,employee_id" });
+    if (headerResult.error) {
+      setNotice({ type: "error", text: friendlyError(headerResult.error) });
+      setBusyEmployeeId("");
+      return;
+    }
+    const deleteResult = await supabase.from("daily_ticket_entry_items").delete().eq("daily_ticket_entry_id", entryId);
+    if (deleteResult.error) {
+      setNotice({ type: "error", text: friendlyError(deleteResult.error) });
+      setBusyEmployeeId("");
+      return;
+    }
+    if (detailPayloads.length > 0) {
+      const detailsResult = await supabase.from("daily_ticket_entry_items").insert(detailPayloads);
+      if (detailsResult.error) {
+        setNotice({ type: "error", text: friendlyError(detailsResult.error) });
+        setBusyEmployeeId("");
+        return;
+      }
+    }
+    setNotice({ type: "success", text: `${draft.employee.full_name}'s ticket counts were saved.` });
+    setBusyEmployeeId("");
+    await onChange();
+  }
+
+  return (
+    <div className="page-stack">
+      <PageHeader eyebrow="Daily operations" title="Daily closed tickets" text="Record category totals using the employee's assigned position and current rates." />
+      <section className="panel">
+        <label className="date-field">Entry date<input type="date" value={entryDate} onChange={(event) => { setEntryDate(event.target.value); setDraftCounts({}); }} /></label>
+      </section>
+      {employees.some((employee) => employee.status === "active" && !employee.position_id) && <NoticeBanner notice={{ type: "error", text: "Some active employees have no position and cannot receive ticket entries." }} onDismiss={() => undefined} />}
+      <div className="ticket-entry-grid">
+        {drafts.map((draft) => {
+          const ticketPay = draft.position.categories
+            .filter((category) => category.status === "active")
+            .reduce((sum, category) => sum + normalizeTicketCount(draft.counts[category.id]) * toNumber(category.rate), 0);
+          return (
+            <section className="panel stack" key={draft.employee.id}>
+              <div className="section-heading">
+                <div><p className="eyebrow">{draft.position.name}</p><h3>{draft.employee.full_name}</h3></div>
+                <strong>{currency.format(ticketPay)}</strong>
+              </div>
+              {draft.position.categories.filter((category) => category.status === "active").map((category) => (
+                <label key={category.id}>
+                  {category.name} · {currency.format(toNumber(category.rate))} per ticket
+                  <input min="0" step="1" type="number" value={draft.counts[category.id] ?? 0} onChange={(event) => setDraftCounts((current) => ({ ...current, [draft.employee.id]: { ...(current[draft.employee.id] ?? draft.counts), [category.id]: normalizeTicketCount(event.target.value) } }))} />
+                </label>
+              ))}
+              <button className="primary-button compact" disabled={busyEmployeeId === draft.employee.id} onClick={() => saveDraft(draft)} type="button">
+                {busyEmployeeId === draft.employee.id ? <Spinner size="small" /> : <Save size={16} />} {draft.entry ? "Update entry" : "Save entry"}
+              </button>
+            </section>
+          );
+        })}
+      </div>
+      {drafts.length === 0 && <div className="panel"><p className="muted">No active employees currently have a ticket or hybrid position.</p></div>}
+    </div>
+  );
+}
+
+function LegacyDailyTicketEntryView({
+  dailyTicketEntries,
+  employees,
+  onChange,
+  onQueueOfflineMutation,
   setNotice,
   userId,
 }: {
   dailyTicketEntries: DailyTicketEntry[];
   employees: Employee[];
   onChange: () => Promise<void>;
+  onQueueOfflineMutation: QueueOfflineMutation;
   setNotice: (notice: Notice) => void;
   userId: string;
 }) {
@@ -1437,11 +2231,53 @@ export function DailyTicketEntryView({
         repair_rate: repairRate,
       };
     });
+    if (!navigator.onLine) {
+      await onQueueOfflineMutation({
+        resource: "dailyTicketEntries",
+        affectedResources: ["dailyTicketEntries", "dashboardSummary"],
+        operation: "upsert",
+        table: "daily_ticket_entries",
+        payload,
+        options: { onConflict: "user_id,entry_date,employee_id" },
+      });
+      setLocalSavedTickets((current) => {
+        const next = { ...current };
+        rows.forEach((row) => {
+          next[row.employee.id] = {
+            entryDate: selectedDate,
+            installation: row.installation,
+            repair: row.repair,
+          };
+        });
+        return next;
+      });
+      setPendingTicketEdits((current) => {
+        const next = { ...current };
+        rows.forEach((row) => {
+          next[row.employee.id] = false;
+        });
+        return next;
+      });
+      setTicketDrafts({});
+      return;
+    }
+
     const { error } = await supabase
       .from("daily_ticket_entries")
       .upsert(payload, { onConflict: "user_id,entry_date,employee_id" });
 
     if (error) {
+      if (isOfflineLikeError(error)) {
+        await onQueueOfflineMutation({
+          resource: "dailyTicketEntries",
+          affectedResources: ["dailyTicketEntries", "dashboardSummary"],
+          operation: "upsert",
+          table: "daily_ticket_entries",
+          payload,
+          options: { onConflict: "user_id,entry_date,employee_id" },
+        });
+        return;
+      }
       setNotice({ type: "error", text: friendlyError(error) });
       return;
     }
@@ -1483,11 +2319,46 @@ export function DailyTicketEntryView({
       installation_rate: installationRate,
       repair_rate: repairRate,
     };
+    if (!navigator.onLine) {
+      await onQueueOfflineMutation({
+        resource: "dailyTicketEntries",
+        affectedResources: ["dailyTicketEntries", "dashboardSummary"],
+        operation: "upsert",
+        table: "daily_ticket_entries",
+        payload,
+        options: { onConflict: "user_id,entry_date,employee_id" },
+      });
+      setLocalSavedTickets((current) => ({
+        ...current,
+        [row.employee.id]: {
+          entryDate: selectedDate,
+          installation: row.installation,
+          repair: row.repair,
+        },
+      }));
+      setPendingTicketEdits((current) => ({
+        ...current,
+        [row.employee.id]: false,
+      }));
+      return;
+    }
+
     const { error } = await supabase
       .from("daily_ticket_entries")
       .upsert(payload, { onConflict: "user_id,entry_date,employee_id" });
 
     if (error) {
+      if (isOfflineLikeError(error)) {
+        await onQueueOfflineMutation({
+          resource: "dailyTicketEntries",
+          affectedResources: ["dailyTicketEntries", "dashboardSummary"],
+          operation: "upsert",
+          table: "daily_ticket_entries",
+          payload,
+          options: { onConflict: "user_id,entry_date,employee_id" },
+        });
+        return;
+      }
       setNotice({ type: "error", text: friendlyError(error) });
       return;
     }
@@ -1764,7 +2635,10 @@ export function EmployeesView({
   mode = "list",
   onChange,
   onExitForm,
+  onLocalEmployeesChange,
+  onQueueOfflineMutation,
   payrollRuns,
+  positions,
   salaryBonds,
   setNotice,
   userId,
@@ -1773,7 +2647,10 @@ export function EmployeesView({
   mode?: "list" | "add";
   onChange: () => Promise<void>;
   onExitForm?: () => void;
+  onLocalEmployeesChange: (employees: Employee[]) => void;
+  onQueueOfflineMutation: QueueOfflineMutation;
   payrollRuns: PayrollRunWithItems[];
+  positions: Position[];
   salaryBonds: SalaryBond[];
   setNotice: (notice: Notice) => void;
   userId: string;
@@ -1812,7 +2689,9 @@ export function EmployeesView({
         onChange={onChange}
         onBack={() => setDetailsEmployee(null)}
         onEmployeeUpdate={setDetailsEmployee}
+        onQueueOfflineMutation={onQueueOfflineMutation}
         payrollRuns={payrollRuns}
+        positions={positions}
         salaryBonds={salaryBonds}
         setNotice={setNotice}
       />
@@ -1821,39 +2700,29 @@ export function EmployeesView({
 
   if (formOpen) {
     return (
-      <div className="page-stack">
-        <header className="employee-form-heading">
-          <button className="text-button" onClick={() => { setEditing(null); setFormOpen(false); }} type="button">
-            Employees
-          </button>
-          <h1>{editing ? "Edit Employee" : "Add New Employee"}</h1>
-          <p>
-            <span>Dashboard</span>
-            <ChevronDown size={14} />
-            <span>Employees</span>
-            <ChevronDown size={14} />
-            <strong>{editing ? "Edit" : "Add New"}</strong>
-          </p>
-        </header>
-        <div className="employee-entry-layout">
-          <EmployeeForm
-            embedded
-            initial={editing}
-            onClose={closeForm}
-            onSubmit={saveEmployee}
-          />
-          <EmployeePositionPanel />
-        </div>
-      </div>
+      <EmployeeForm
+        embedded
+        initial={editing}
+        onClose={closeForm}
+        onSubmit={saveEmployee}
+        positions={positions}
+      />
     );
   }
 
   async function saveEmployee(values: EmployeeFormValues) {
     if (!supabase) return;
+    const selectedPosition = positions.find((position) => position.id === values.position_id && position.status === "active");
+    if (!selectedPosition) {
+      setNotice({ type: "error", text: "Select an active position before saving this employee." });
+      return;
+    }
     const payload = {
+      ...(editing ? {} : { id: crypto.randomUUID() }),
       full_name: values.full_name.trim(),
-      role: values.role.trim(),
-      department: values.department.trim(),
+      role: selectedPosition.name,
+      position_id: selectedPosition.id,
+      department: selectedPosition.department,
       contact_number: values.contact_number.trim(),
       email: values.email.trim(),
       address: values.address.trim(),
@@ -1869,11 +2738,55 @@ export function EmployeesView({
       notes: values.notes.trim(),
       user_id: userId,
     };
+    const optimisticEmployee = {
+      ...(editing ?? {}),
+      ...payload,
+      id: editing?.id ?? payload.id,
+      created_at: editing?.created_at ?? new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    } as Employee;
+
+    if (!navigator.onLine) {
+      onLocalEmployeesChange(
+        editing
+          ? employees.map((employee) => employee.id === editing.id ? optimisticEmployee : employee)
+          : [optimisticEmployee, ...employees],
+      );
+      await onQueueOfflineMutation({
+        resource: "employees",
+        affectedResources: ["employees", "dashboardSummary"],
+        operation: editing ? "update" : "insert",
+        table: "employees",
+        recordId: editing?.id,
+        payload,
+      });
+      setNotice({ type: "success", text: "Employee saved locally. It will sync when online." });
+      closeForm();
+      return;
+    }
+
     const result = editing
       ? await supabase.from("employees").update(payload).eq("id", editing.id)
       : await supabase.from("employees").insert(payload);
 
     if (result.error) {
+      if (isOfflineLikeError(result.error)) {
+        onLocalEmployeesChange(
+          editing
+            ? employees.map((employee) => employee.id === editing.id ? optimisticEmployee : employee)
+            : [optimisticEmployee, ...employees],
+        );
+        await onQueueOfflineMutation({
+          resource: "employees",
+          affectedResources: ["employees", "dashboardSummary"],
+          operation: editing ? "update" : "insert",
+          table: "employees",
+          recordId: editing?.id,
+          payload,
+        });
+        closeForm();
+        return;
+      }
       setNotice({ type: "error", text: friendlyError(result.error) });
       return;
     }
@@ -1918,6 +2831,7 @@ export function EmployeesView({
           initial={editing}
           onClose={closeForm}
           onSubmit={saveEmployee}
+          positions={positions}
         />
       )}
     </div>
@@ -1929,7 +2843,9 @@ export function EmployeeDetailsView({
   onChange,
   onBack,
   onEmployeeUpdate,
+  onQueueOfflineMutation,
   payrollRuns,
+  positions,
   salaryBonds,
   setNotice,
 }: {
@@ -1937,12 +2853,15 @@ export function EmployeeDetailsView({
   onChange: () => Promise<void>;
   onBack: () => void;
   onEmployeeUpdate: (employee: Employee) => void;
+  onQueueOfflineMutation: QueueOfflineMutation;
   payrollRuns: PayrollRunWithItems[];
+  positions: Position[];
   salaryBonds: SalaryBond[];
   setNotice: (notice: Notice) => void;
 }) {
   const [activeTab, setActiveTab] = useState<"information" | "payroll" | "tickets" | "salary-bond" | "payments" | "documents">("tickets");
   const [currentEmployee, setCurrentEmployee] = useState(employee);
+  const [employeePayrollRuns, setEmployeePayrollRuns] = useState<PayrollRunWithItems[]>([]);
   const [editingRate, setEditingRate] = useState<"installation" | "repair" | null>(null);
   const [rateDrafts, setRateDrafts] = useState({ installation: "", repair: "" });
 
@@ -1957,10 +2876,37 @@ export function EmployeeDetailsView({
     });
   }, [currentEmployee]);
 
+  useEffect(() => {
+    if (!supabase) return;
+
+    loadEmployeePayrollRuns(supabase, currentEmployee.id).then((result) => {
+      if (result.error) {
+        setNotice({ type: "error", text: friendlyError(result.error) });
+        return;
+      }
+      setEmployeePayrollRuns(result.data);
+    });
+  }, [currentEmployee.id]);
+
   async function saveTicketRate(type: "installation" | "repair") {
     if (!supabase) return;
     const value = Math.max(0, toNumber(rateDrafts[type]));
     const column = type === "installation" ? "installation_rate" : "repair_rate";
+    if (!navigator.onLine) {
+      const nextEmployee = { ...currentEmployee, [column]: value, updated_at: new Date().toISOString() };
+      setCurrentEmployee(nextEmployee);
+      onEmployeeUpdate(nextEmployee);
+      setEditingRate(null);
+      await onQueueOfflineMutation({
+        resource: "employees",
+        affectedResources: ["employees", "dashboardSummary"],
+        operation: "update",
+        table: "employees",
+        recordId: currentEmployee.id,
+        payload: { [column]: value },
+      });
+      return;
+    }
     const { data, error } = await supabase
       .from("employees")
       .update({ [column]: value })
@@ -1969,6 +2915,21 @@ export function EmployeeDetailsView({
       .single();
 
     if (error) {
+      if (isOfflineLikeError(error)) {
+        const nextEmployee = { ...currentEmployee, [column]: value, updated_at: new Date().toISOString() };
+        setCurrentEmployee(nextEmployee);
+        onEmployeeUpdate(nextEmployee);
+        setEditingRate(null);
+        await onQueueOfflineMutation({
+          resource: "employees",
+          affectedResources: ["employees", "dashboardSummary"],
+          operation: "update",
+          table: "employees",
+          recordId: currentEmployee.id,
+          payload: { [column]: value },
+        });
+        return;
+      }
       setNotice({ type: "error", text: friendlyError(error) });
       return;
     }
@@ -1981,7 +2942,8 @@ export function EmployeeDetailsView({
     await onChange();
   }
 
-  const history = payrollRuns
+  const detailPayrollRuns = employeePayrollRuns.length > 0 ? employeePayrollRuns : payrollRuns;
+  const history = detailPayrollRuns
     .flatMap((run) =>
       run.items
         .filter((item) => item.employee_id === currentEmployee.id)
@@ -2036,6 +2998,7 @@ export function EmployeeDetailsView({
     .map((part) => part[0])
     .join("")
     .toUpperCase() || "E";
+  const currentPosition = positions.find((position) => position.id === currentEmployee.position_id);
 
   return (
     <div className="page-stack employee-details-page">
@@ -2101,7 +3064,8 @@ export function EmployeeDetailsView({
               <DetailItem label="Email" value={currentEmployee.email || "No email"} />
               <DetailItem label="Contact number" value={currentEmployee.contact_number || "Not provided"} />
               <DetailItem label="Hire date" value={currentEmployee.hire_date || "Not provided"} />
-              <DetailItem label="Monthly salary" value={currency.format(toNumber(currentEmployee.monthly_salary))} />
+              <DetailItem label="Pay method" value={currentPosition?.pay_mode === "fixed" ? "Fixed salary" : currentPosition?.pay_mode === "hybrid" ? "Base + tickets" : "Per ticket"} />
+              <DetailItem label="Position monthly base" value={currency.format(toNumber(currentPosition?.monthly_base_salary))} />
               <DetailItem label="Address" value={currentEmployee.address || "Not provided"} />
               <DetailItem label="Notes" value={currentEmployee.notes || "No notes"} />
             </div>
@@ -2142,116 +3106,39 @@ export function EmployeeDetailsView({
         )}
 
         {activeTab === "tickets" && (
-          <div className="ticket-wages-layout">
-            <section className="employee-detail-card ticket-wages-main">
-              <div className="ticket-section-heading">
-                <div>
-                  <h3>Commission per Closed Ticket</h3>
-                  <p>Define the wage/commission for each ticket type when closed.</p>
-                </div>
-                <button className="primary-button compact" type="button">
-                  <Plus size={15} />
-                  Add Ticket Type
-                </button>
+          <section className="employee-detail-card history-stack">
+            <div className="ticket-section-heading">
+              <div>
+                <h3>{currentPosition?.name ?? "Unassigned position"} ticket compensation</h3>
+                <p>Rates are controlled by the assigned position. Employee-specific overrides are not used.</p>
               </div>
-              <div className="ticket-rate-list">
-                <div className="ticket-rate-header">
-                  <span>Ticket Type</span>
-                  <span>Description</span>
-                  <span>Wage per Closed Ticket</span>
-                  <span>Status</span>
-                  <span>Actions</span>
-                </div>
-                <TicketRateRow
-                  description="Repair and troubleshooting services"
-                  draftValue={rateDrafts.repair}
-                  editing={editingRate === "repair"}
-                  icon={<Wrench size={16} />}
-                  onDraftChange={(value) => setRateDrafts((current) => ({ ...current, repair: value }))}
-                  onEdit={() => setEditingRate("repair")}
-                  onSave={() => saveTicketRate("repair")}
-                  rate={repairRate}
-                  title="Repair"
-                  tone="green"
-                />
-                <TicketRateRow
-                  description="Installation services for products/equipment"
-                  draftValue={rateDrafts.installation}
-                  editing={editingRate === "installation"}
-                  icon={<Settings size={16} />}
-                  onDraftChange={(value) => setRateDrafts((current) => ({ ...current, installation: value }))}
-                  onEdit={() => setEditingRate("installation")}
-                  onSave={() => saveTicketRate("installation")}
-                  rate={installationRate}
-                  title="Installation"
-                  tone="blue"
-                />
-              </div>
-              <div className="detail-note">
-                <CheckCircle2 size={16} />
-                <p>
-                  <strong>How it works</strong>
-                  Employee earnings are computed based on the number of closed tickets per type.
-                  Example: 1 Repair ({currency.format(repairRate)}) + 1 Installation ({currency.format(installationRate)}) = {currency.format(repairRate + installationRate)}
-                </p>
-              </div>
-              <div className="recent-ticket-table">
-                <h3>Recent Closed Tickets</h3>
-                <DataTable
-                  empty="No closed tickets for this employee yet."
-                  headers={["Ticket #", "Customer", "Ticket Type", "Closed Date", "Amount Earned"]}
-                  rows={history.flatMap(({ item, run }) => {
-                    return [
-                      ...Array.from({ length: Math.min(3, normalizeTicketCount(item.repair_tickets)) }, (_, index) => [
-                        `TK-${run.period_year}-${String(run.period_month).padStart(2, "0")}-R${index + 1}`,
-                        currentEmployee.full_name,
-                        <span className="ticket-type repair" key="type">Repair</span>,
-                        run.generated_date,
-                        currency.format(toNumber(item.repair_rate)),
-                      ]),
-                      ...Array.from({ length: Math.min(3, normalizeTicketCount(item.installation_tickets)) }, (_, index) => [
-                        `TK-${run.period_year}-${String(run.period_month).padStart(2, "0")}-I${index + 1}`,
-                        currentEmployee.full_name,
-                        <span className="ticket-type installation" key="type">Installation</span>,
-                        run.generated_date,
-                        currency.format(toNumber(item.installation_rate)),
-                      ]),
-                    ];
-                  }).slice(0, 6)}
-                />
-              </div>
-            </section>
-            <aside className="ticket-wages-side">
-              <section className="employee-detail-card">
-                <div className="side-card-heading">
-                  <h3>Earnings Preview</h3>
-                  <button className="secondary-button compact" type="button">
-                    <CalendarClock size={14} />
-                    This Month
-                  </button>
-                </div>
-                <div className="earnings-list">
-                  <div><span>Repair</span><span>{ticketTotals.repair}</span><strong>{currency.format(repairEarnings)}</strong></div>
-                  <div><span>Installation</span><span>{ticketTotals.installation}</span><strong>{currency.format(installationEarnings)}</strong></div>
-                  <div><strong>Total Estimated Earnings</strong><strong>{currency.format(totalTicketEarnings)}</strong></div>
-                </div>
-              </section>
-              <section className="employee-detail-card">
-                <h3>Summary</h3>
-                <div className="summary-list">
-                  <div><span>Total Closed Tickets</span><strong>{closedTickets}</strong></div>
-                  <div><span>Average per Day</span><strong>{(closedTickets / 20).toFixed(2)}</strong></div>
-                  <div><span>Commission Rate Basis</span><strong>Per Closed Ticket</strong></div>
-                  <div><span>Last Updated</span><strong>{currentEmployee.updated_at ? new Date(currentEmployee.updated_at).toLocaleDateString() : "Not available"}</strong></div>
-                  <div><span>Updated By</span><strong>Admin User</strong></div>
-                </div>
-                <div className="detail-note compact-note">
-                  <CheckCircle2 size={16} />
-                  <p>Changes to wages apply to tickets closed after the update.</p>
-                </div>
-              </section>
-            </aside>
-          </div>
+            </div>
+            <DataTable
+              empty="This position has no ticket categories."
+              headers={["Category", "Rate", "Status"]}
+              rows={(currentPosition?.categories ?? []).map((category) => [
+                category.name,
+                currency.format(toNumber(category.rate)),
+                <StatusPill key="status" status={category.status} />,
+              ])}
+            />
+            <h3>Payroll ticket history</h3>
+            <DataTable
+              empty="No ticket-based payroll records for this employee yet."
+              headers={["Period", "Category", "Closed", "Saved rate", "Earned"]}
+              rows={history.flatMap(({ item, run }) => (item.ticket_details ?? []).map((detail) => [
+                `${monthNames[run.period_month - 1]} ${run.period_year} - ${payPeriodLabel(run.pay_period)}`,
+                detail.category_name,
+                detail.ticket_count,
+                currency.format(toNumber(detail.rate)),
+                currency.format(toNumber(detail.amount)),
+              ]))}
+            />
+            <div className="detail-note">
+              <CheckCircle2 size={16} />
+              <p>Saved payroll rates are snapshots. Editing the position affects only future daily entries.</p>
+            </div>
+          </section>
         )}
 
         {activeTab === "salary-bond" && (
@@ -2450,13 +3337,14 @@ function salaryBondDeductionsForEmployee(
 
 function payrollItemPayloadForEmployeeWithSalaryBonds(
   employee: Employee,
+  position: Position | undefined,
   payrollRunId: string,
   userId: string,
   dailyTicketEntries: DailyTicketEntry[],
   salaryBonds: SalaryBond[],
   payrollDate: string,
 ) {
-  const payload = payrollItemPayloadForEmployee(employee, payrollRunId, userId, dailyTicketEntries);
+  const payload = payrollItemPayloadForEmployee(employee, payrollRunId, userId, dailyTicketEntries, position);
   const bondDeductions = salaryBondDeductionsForEmployee(salaryBonds, employee, payrollDate);
   const salaryBondDeduction = bondDeductions.reduce((sum, deduction) => sum + deduction.amount, 0);
 
@@ -2499,16 +3387,24 @@ async function applySalaryBondPayrollDeductions(deductions: SalaryBondPayrollDed
 export function PayrollView({
   dailyTicketEntries,
   employees,
+  ensurePayrollRunItems,
+  onLocalPayrollRunsChange,
   onChange,
+  onQueueOfflineMutation,
   payrollRuns,
+  positions,
   salaryBonds,
   setNotice,
   userId,
 }: {
   dailyTicketEntries: DailyTicketEntry[];
   employees: Employee[];
+  ensurePayrollRunItems: (payrollRunId: string) => Promise<void>;
+  onLocalPayrollRunsChange: (payrollRuns: PayrollRunWithItems[]) => void;
   onChange: () => Promise<void>;
+  onQueueOfflineMutation: QueueOfflineMutation;
   payrollRuns: PayrollRunWithItems[];
+  positions: Position[];
   salaryBonds: SalaryBond[];
   setNotice: (notice: Notice) => void;
   userId: string;
@@ -2532,11 +3428,66 @@ export function PayrollView({
     }
   }, [payrollRuns, selectedRunId]);
 
+  useEffect(() => {
+    if (selectedRun?.id && selectedRun.items.length === 0) {
+      void ensurePayrollRunItems(selectedRun.id);
+    }
+  }, [selectedRun?.id, selectedRun?.items.length]);
+
+  function createOfflinePayrollItems(payloads: Array<Omit<PayrollRunItem, "id" | "created_at" | "updated_at">>) {
+    const now = new Date().toISOString();
+    const detailPayloads: Array<Record<string, unknown>> = [];
+    const items = payloads.map((payload) => {
+      const id = crypto.randomUUID();
+      const ticketDetails = payload.ticket_details.map((detail) => {
+        const savedDetail = {
+          ...detail,
+          id: crypto.randomUUID(),
+          payroll_run_item_id: id,
+          created_at: now,
+        };
+        detailPayloads.push(savedDetail);
+        return savedDetail;
+      });
+      return { ...payload, id, ticket_details: ticketDetails, created_at: now, updated_at: now } as PayrollRunItem;
+    });
+    const itemPayloads = items.map(({ ticket_details: _ticketDetails, created_at: _createdAt, updated_at: _updatedAt, ...item }) => item);
+    return { detailPayloads, itemPayloads, items };
+  }
+
+  async function insertPayrollItems(payloads: Array<Omit<PayrollRunItem, "id" | "created_at" | "updated_at">>) {
+    if (!supabase) return { error: null };
+    for (const payload of payloads) {
+      const { ticket_details: ticketDetails, ...itemPayload } = payload;
+      const itemResult = await supabase.from("payroll_run_items").insert(itemPayload).select("id").single();
+      if (itemResult.error) return { error: itemResult.error };
+      if (ticketDetails.length > 0) {
+        const detailResult = await supabase.from("payroll_run_item_ticket_details").insert(
+          ticketDetails.map(({ id: _id, created_at: _createdAt, ...detail }) => ({
+            ...detail,
+            id: crypto.randomUUID(),
+            payroll_run_item_id: itemResult.data.id,
+          })),
+        );
+        if (detailResult.error) return { error: detailResult.error };
+      }
+    }
+    return { error: null };
+  }
+
   async function createRun(values: PayrollRunFormValues) {
     if (!supabase) return;
     const activeEmployees = employees.filter((employee) => employee.status === "active");
     if (activeEmployees.length === 0) {
       setNotice({ type: "error", text: "Add at least one active employee first." });
+      return;
+    }
+    const invalidEmployees = activeEmployees.filter((employee) => {
+      const position = positions.find((item) => item.id === employee.position_id);
+      return !position || position.status !== "active";
+    });
+    if (invalidEmployees.length > 0) {
+      setNotice({ type: "error", text: `Assign an active position to: ${invalidEmployees.map((employee) => employee.full_name).join(", ")}.` });
       return;
     }
 
@@ -2561,8 +3512,127 @@ export function PayrollView({
       return;
     }
 
+    if (!navigator.onLine) {
+      const offlineRunId = crypto.randomUUID();
+      const offlineRun = {
+        ...runPayload,
+        id: offlineRunId,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      } as PayrollRun;
+      const periodDailyEntries = dailyTicketEntriesForPayrollPeriod(
+        dailyTicketEntries,
+        offlineRun.period_month,
+        offlineRun.period_year,
+        offlineRun.pay_period,
+      );
+      const employeePayrollItems = activeEmployees.map((employee) =>
+        payrollItemPayloadForEmployeeWithSalaryBonds(
+          employee,
+          positions.find((position) => position.id === employee.position_id),
+          offlineRun.id,
+          userId,
+          periodDailyEntries,
+          salaryBonds,
+          offlineRun.generated_date,
+        )
+      );
+      const { detailPayloads, itemPayloads, items: offlineItems } = createOfflinePayrollItems(employeePayrollItems.map((item) => item.payload));
+      const salaryBondUpdates = employeePayrollItems
+        .flatMap((item) => item.bondDeductions)
+        .map(({ amount, bond }) => {
+          const balance = Math.max(0, toNumber(bond.balance) - amount);
+          return {
+            id: bond.id,
+            payload: {
+              balance,
+              status: balance === 0 ? "completed" : bond.status,
+            },
+          };
+        });
+
+      await onQueueOfflineMutation({
+        resource: "payrollRuns",
+        affectedResources: ["payrollRuns", "payrollHistory", "salaryBonds", "dashboardSummary"],
+        operation: "payroll_group",
+        table: "payroll_runs",
+        payload: {
+          runPayload: offlineRun,
+          itemPayloads,
+          detailPayloads,
+          salaryBondUpdates,
+        },
+      });
+      onLocalPayrollRunsChange([
+        { ...offlineRun, items: offlineItems },
+        ...payrollRuns,
+      ]);
+      setFormOpen(false);
+      setSelectedRunId(offlineRunId);
+      return;
+    }
+
     const runResult = await supabase.from("payroll_runs").insert(runPayload).select().single();
     if (runResult.error) {
+      if (isOfflineLikeError(runResult.error)) {
+        const offlineRunId = crypto.randomUUID();
+        const offlineRun = {
+          ...runPayload,
+          id: offlineRunId,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        } as PayrollRun;
+        const periodDailyEntries = dailyTicketEntriesForPayrollPeriod(
+          dailyTicketEntries,
+          offlineRun.period_month,
+          offlineRun.period_year,
+          offlineRun.pay_period,
+        );
+        const employeePayrollItems = activeEmployees.map((employee) =>
+          payrollItemPayloadForEmployeeWithSalaryBonds(
+            employee,
+            positions.find((position) => position.id === employee.position_id),
+            offlineRun.id,
+            userId,
+            periodDailyEntries,
+            salaryBonds,
+            offlineRun.generated_date,
+          )
+        );
+        const { detailPayloads, itemPayloads, items: offlineItems } = createOfflinePayrollItems(employeePayrollItems.map((item) => item.payload));
+        const salaryBondUpdates = employeePayrollItems
+          .flatMap((item) => item.bondDeductions)
+          .map(({ amount, bond }) => {
+            const balance = Math.max(0, toNumber(bond.balance) - amount);
+            return {
+              id: bond.id,
+              payload: {
+                balance,
+                status: balance === 0 ? "completed" : bond.status,
+              },
+            };
+          });
+
+        await onQueueOfflineMutation({
+          resource: "payrollRuns",
+          affectedResources: ["payrollRuns", "payrollHistory", "salaryBonds", "dashboardSummary"],
+          operation: "payroll_group",
+          table: "payroll_runs",
+          payload: {
+            runPayload: offlineRun,
+            itemPayloads,
+            detailPayloads,
+            salaryBondUpdates,
+          },
+        });
+        onLocalPayrollRunsChange([
+          { ...offlineRun, items: offlineItems },
+          ...payrollRuns,
+        ]);
+        setFormOpen(false);
+        setSelectedRunId(offlineRunId);
+        return;
+      }
       setNotice({ type: "error", text: friendlyError(runResult.error) });
       return;
     }
@@ -2577,6 +3647,7 @@ export function PayrollView({
     const employeePayrollItems = activeEmployees.map((employee) =>
       payrollItemPayloadForEmployeeWithSalaryBonds(
         employee,
+        positions.find((position) => position.id === employee.position_id),
         newRun.id,
         userId,
         periodDailyEntries,
@@ -2585,7 +3656,7 @@ export function PayrollView({
       )
     );
     const itemPayloads = employeePayrollItems.map((item) => item.payload);
-    const itemResult = await supabase.from("payroll_run_items").insert(itemPayloads);
+    const itemResult = await insertPayrollItems(itemPayloads);
     if (itemResult.error) {
       setNotice({ type: "error", text: friendlyError(itemResult.error) });
       return;
@@ -2612,17 +3683,55 @@ export function PayrollView({
     const repairRate = toNumber(patch.repair_rate ?? item.repair_rate ?? NEW_EMPLOYEE_REPAIR_RATE);
     const allowances = toNumber(patch.allowances ?? item.allowances);
     const deductions = toNumber(patch.deductions ?? item.deductions);
-    const gross = ticketGrossPay(installationTickets, repairTickets, installationRate, repairRate);
+    const legacyTicketFieldsChanged = patch.installation_tickets !== undefined || patch.repair_tickets !== undefined ||
+      patch.installation_rate !== undefined || patch.repair_rate !== undefined;
+    const ticketPay = legacyTicketFieldsChanged
+      ? ticketGrossPay(installationTickets, repairTickets, installationRate, repairRate)
+      : toNumber(item.ticket_pay);
+    const basePay = toNumber(item.base_pay);
+    const gross = basePay + ticketPay;
     const payload = {
       ...patch,
       installation_tickets: installationTickets,
       repair_tickets: repairTickets,
       installation_rate: installationRate,
       repair_rate: repairRate,
+      base_pay: basePay,
+      ticket_pay: ticketPay,
       gross_pay: gross,
       net_pay: netPay(gross, allowances, deductions),
     };
+    if (!navigator.onLine) {
+      onLocalPayrollRunsChange(payrollRuns.map((run) => ({
+        ...run,
+        items: run.items.map((runItem) => runItem.id === item.id ? { ...runItem, ...payload } : runItem),
+      })));
+      await onQueueOfflineMutation({
+        resource: "payrollRuns",
+        affectedResources: ["payrollRuns", "payrollHistory", "dashboardSummary"],
+        operation: "update",
+        table: "payroll_run_items",
+        recordId: item.id,
+        payload,
+      });
+      return;
+    }
     const { error } = await supabase.from("payroll_run_items").update(payload).eq("id", item.id);
+    if (error && isOfflineLikeError(error)) {
+      onLocalPayrollRunsChange(payrollRuns.map((run) => ({
+        ...run,
+        items: run.items.map((runItem) => runItem.id === item.id ? { ...runItem, ...payload } : runItem),
+      })));
+      await onQueueOfflineMutation({
+        resource: "payrollRuns",
+        affectedResources: ["payrollRuns", "payrollHistory", "dashboardSummary"],
+        operation: "update",
+        table: "payroll_run_items",
+        recordId: item.id,
+        payload,
+      });
+      return;
+    }
     setNotice(error ? { type: "error", text: friendlyError(error) } : { type: "success", text: "Payroll item updated." });
     await onChange();
   }
@@ -2639,6 +3748,7 @@ export function PayrollView({
     const employeePayrollItems = missingEmployees.map((employee) =>
       payrollItemPayloadForEmployeeWithSalaryBonds(
         employee,
+        positions.find((position) => position.id === employee.position_id),
         selectedRun.id,
         userId,
         periodDailyEntries,
@@ -2647,8 +3757,36 @@ export function PayrollView({
       )
     );
     const itemPayloads = employeePayrollItems.map((item) => item.payload);
-    const { error } = await supabase.from("payroll_run_items").insert(itemPayloads);
+    if (!navigator.onLine) {
+      const { detailPayloads, itemPayloads: offlineItemPayloads, items: offlineItems } = createOfflinePayrollItems(itemPayloads);
+      onLocalPayrollRunsChange(payrollRuns.map((run) =>
+        run.id === selectedRun.id ? { ...run, items: [...run.items, ...offlineItems] } : run,
+      ));
+      await onQueueOfflineMutation({
+        resource: "payrollRuns",
+        affectedResources: ["payrollRuns", "payrollHistory", "salaryBonds", "dashboardSummary"],
+        operation: "payroll_items_group",
+        table: "payroll_run_items",
+        payload: { itemPayloads: offlineItemPayloads, detailPayloads },
+      });
+      return;
+    }
+    const { error } = await insertPayrollItems(itemPayloads);
     if (error) {
+      if (isOfflineLikeError(error)) {
+        const { detailPayloads, itemPayloads: offlineItemPayloads, items: offlineItems } = createOfflinePayrollItems(itemPayloads);
+        onLocalPayrollRunsChange(payrollRuns.map((run) =>
+          run.id === selectedRun.id ? { ...run, items: [...run.items, ...offlineItems] } : run,
+        ));
+        await onQueueOfflineMutation({
+          resource: "payrollRuns",
+          affectedResources: ["payrollRuns", "payrollHistory", "salaryBonds", "dashboardSummary"],
+          operation: "payroll_items_group",
+          table: "payroll_run_items",
+          payload: { itemPayloads: offlineItemPayloads, detailPayloads },
+        });
+        return;
+      }
       setNotice({ type: "error", text: friendlyError(error) });
       return;
     }
@@ -2715,7 +3853,7 @@ export function PayrollView({
           <div>
             <p className="eyebrow">Missing active employees</p>
             <h2>{missingEmployees.length} not included in this payroll run</h2>
-            <p>Add them with daily ticket totals and rates based on each employee wage category.</p>
+            <p>Add them using their position's base salary and saved closed-ticket totals.</p>
           </div>
           <button className="primary-button compact" onClick={addMissingEmployees} type="button">
             <Plus size={16} />
@@ -2747,15 +3885,17 @@ function PayrollItemsTable({
   return (
     <DataTable
       empty="No pending payroll items in this run."
-      headers={["Employee", "Install tickets", "Repair tickets", "Gross", "Allowance", "Deduction", "Net", "Status", "Actions"]}
+      headers={["Employee", "Position", "Base pay", "Ticket pay", "Ticket breakdown", "Gross", "Allowance", "Deduction", "Net", "Status", "Actions"]}
       rows={items.map((item) => [
         <RecordTitle
           key="employee"
           title={item.employee_name}
-          notes={`Install ${currency.format(toNumber(item.installation_rate))} | Repair ${currency.format(toNumber(item.repair_rate))}${item.notes ? ` | ${item.notes}` : ""}`}
+          notes={item.notes || (item.pay_mode === "fixed" ? "Fixed salary" : item.pay_mode === "hybrid" ? "Base + tickets" : "Per ticket")}
         />,
-        normalizeTicketCount(item.installation_tickets),
-        normalizeTicketCount(item.repair_tickets),
+        item.position_name || "Legacy",
+        currency.format(toNumber(item.base_pay)),
+        currency.format(toNumber(item.ticket_pay)),
+        item.ticket_details?.map((detail) => `${detail.category_name}: ${detail.ticket_count} × ${currency.format(toNumber(detail.rate))}`).join("; ") || "—",
         currency.format(toNumber(item.gross_pay)),
         currency.format(toNumber(item.allowances)),
         currency.format(toNumber(item.deductions)),
@@ -2787,41 +3927,21 @@ function PayrollItemsTable({
   );
 }
 
-function PayrollHistoryView({
-  employees,
-  payrollRuns,
-}: {
-  employees: Employee[];
-  payrollRuns: PayrollRunWithItems[];
-}) {
+function PayrollHistoryView({ rows }: { rows: PayrollHistoryRow[] }) {
   const [query, setQuery] = useState("");
-  const employeeById = new Map(employees.map((employee) => [employee.id, employee]));
-  const rows = payrollRuns.flatMap((run) =>
-    run.items.filter((item) => item.status === "paid").map((item, itemIndex) => {
-      const employee = item.employee_id ? employeeById.get(item.employee_id) : undefined;
-      const payrollNo = `${run.period_year}-${String(run.period_month).padStart(2, "0")}-${run.pay_period === "first_half" ? "1" : "2"}-${String(itemIndex + 1).padStart(3, "0")}`;
-      const payPeriod = `${monthNames[run.period_month - 1]} ${run.period_year} - ${payPeriodLabel(run.pay_period)}`;
-      const department = employee?.department || "Unassigned";
-      const processedDate = item.paid_date || run.generated_date;
-      return {
-        cells: [
-          payrollNo,
-          payPeriod,
-          item.employee_name,
-          department,
-          currency.format(toNumber(item.gross_pay)),
-          currency.format(toNumber(item.deductions)),
-          currency.format(toNumber(item.net_pay)),
-          <StatusPill key="status" status={item.status} />,
-          processedDate,
-        ],
-        searchText: `${payrollNo} ${payPeriod} ${item.employee_name} ${department} ${item.status} ${processedDate}`.toLowerCase(),
-      };
-    }),
-  );
   const filteredRows = rows
     .filter((row) => row.searchText.includes(query.toLowerCase()))
-    .map((row) => row.cells);
+    .map((row) => [
+      row.payrollNo,
+      row.payPeriod,
+      row.employeeName,
+      row.department,
+      currency.format(row.grossPay),
+      currency.format(row.deductions),
+      currency.format(row.netPay),
+      <StatusPill key="status" status={row.status} />,
+      row.processedDate,
+    ]);
 
   return (
     <div className="page-stack">
@@ -2890,11 +4010,15 @@ function PaymentHistoryView({ payments }: { payments: PaymentReminder[] }) {
 
 function PaymentsView({
   onChange,
+  onLocalPaymentsChange,
+  onQueueOfflineMutation,
   payments,
   setNotice,
   userId,
 }: {
   onChange: () => Promise<void>;
+  onLocalPaymentsChange: (payments: PaymentReminder[]) => void;
+  onQueueOfflineMutation: QueueOfflineMutation;
   payments: PaymentReminder[];
   setNotice: (notice: Notice) => void;
   userId: string;
@@ -2915,6 +4039,7 @@ function PaymentsView({
   async function savePayment(values: PaymentFormValues) {
     if (!supabase) return;
     const payload = {
+      ...(editing ? {} : { id: crypto.randomUUID() }),
       title: values.title.trim(),
       type: values.type,
       amount: toNumber(values.amount),
@@ -2923,11 +4048,56 @@ function PaymentsView({
       notes: values.notes.trim(),
       user_id: userId,
     };
+    const optimisticPayment = {
+      ...(editing ?? {}),
+      ...payload,
+      id: editing?.id ?? payload.id,
+      created_at: editing?.created_at ?? new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    } as PaymentReminder;
+
+    if (!navigator.onLine) {
+      onLocalPaymentsChange(
+        editing
+          ? payments.map((payment) => payment.id === editing.id ? optimisticPayment : payment)
+          : [optimisticPayment, ...payments],
+      );
+      await onQueueOfflineMutation({
+        resource: "payments",
+        affectedResources: ["payments", "dashboardSummary"],
+        operation: editing ? "update" : "insert",
+        table: "payment_reminders",
+        recordId: editing?.id,
+        payload,
+      });
+      setEditing(null);
+      setFormOpen(false);
+      return;
+    }
+
     const result = editing
       ? await supabase.from("payment_reminders").update(payload).eq("id", editing.id)
       : await supabase.from("payment_reminders").insert(payload);
 
     if (result.error) {
+      if (isOfflineLikeError(result.error)) {
+        onLocalPaymentsChange(
+          editing
+            ? payments.map((payment) => payment.id === editing.id ? optimisticPayment : payment)
+            : [optimisticPayment, ...payments],
+        );
+        await onQueueOfflineMutation({
+          resource: "payments",
+          affectedResources: ["payments", "dashboardSummary"],
+          operation: editing ? "update" : "insert",
+          table: "payment_reminders",
+          recordId: editing?.id,
+          payload,
+        });
+        setEditing(null);
+        setFormOpen(false);
+        return;
+      }
       setNotice({ type: "error", text: friendlyError(result.error) });
       return;
     }
@@ -2939,14 +4109,60 @@ function PaymentsView({
 
   async function markPaid(id: string) {
     if (!supabase) return;
+    if (!navigator.onLine) {
+      onLocalPaymentsChange(payments.map((payment) => payment.id === id ? { ...payment, status: "paid" } : payment));
+      await onQueueOfflineMutation({
+        resource: "payments",
+        affectedResources: ["payments", "dashboardSummary"],
+        operation: "update",
+        table: "payment_reminders",
+        recordId: id,
+        payload: { status: "paid" },
+      });
+      return;
+    }
     const { error } = await supabase.from("payment_reminders").update({ status: "paid" }).eq("id", id);
+    if (error && isOfflineLikeError(error)) {
+      onLocalPaymentsChange(payments.map((payment) => payment.id === id ? { ...payment, status: "paid" } : payment));
+      await onQueueOfflineMutation({
+        resource: "payments",
+        affectedResources: ["payments", "dashboardSummary"],
+        operation: "update",
+        table: "payment_reminders",
+        recordId: id,
+        payload: { status: "paid" },
+      });
+      return;
+    }
     setNotice(error ? { type: "error", text: friendlyError(error) } : { type: "success", text: "Marked paid." });
     await onChange();
   }
 
   async function remove(id: string) {
     if (!supabase || !window.confirm("Delete this payment reminder?")) return;
+    if (!navigator.onLine) {
+      onLocalPaymentsChange(payments.filter((payment) => payment.id !== id));
+      await onQueueOfflineMutation({
+        resource: "payments",
+        affectedResources: ["payments", "dashboardSummary"],
+        operation: "delete",
+        table: "payment_reminders",
+        recordId: id,
+      });
+      return;
+    }
     const { error } = await supabase.from("payment_reminders").delete().eq("id", id);
+    if (error && isOfflineLikeError(error)) {
+      onLocalPaymentsChange(payments.filter((payment) => payment.id !== id));
+      await onQueueOfflineMutation({
+        resource: "payments",
+        affectedResources: ["payments", "dashboardSummary"],
+        operation: "delete",
+        table: "payment_reminders",
+        recordId: id,
+      });
+      return;
+    }
     setNotice(error ? { type: "error", text: friendlyError(error) } : { type: "success", text: "Payment reminder deleted." });
     await onChange();
   }
@@ -3047,11 +4263,15 @@ function CollectionHistoryView({ collections }: { collections: CollectionReminde
 function CollectionsView({
   collections,
   onChange,
+  onLocalCollectionsChange,
+  onQueueOfflineMutation,
   setNotice,
   userId,
 }: {
   collections: CollectionReminder[];
   onChange: () => Promise<void>;
+  onLocalCollectionsChange: (collections: CollectionReminder[]) => void;
+  onQueueOfflineMutation: QueueOfflineMutation;
   setNotice: (notice: Notice) => void;
   userId: string;
 }) {
@@ -3071,6 +4291,7 @@ function CollectionsView({
   async function saveCollection(values: CollectionFormValues) {
     if (!supabase) return;
     const payload = {
+      ...(editing ? {} : { id: crypto.randomUUID() }),
       title: values.title.trim(),
       client_name: values.client_name.trim(),
       amount: toNumber(values.amount),
@@ -3079,11 +4300,56 @@ function CollectionsView({
       notes: values.notes.trim(),
       user_id: userId,
     };
+    const optimisticCollection = {
+      ...(editing ?? {}),
+      ...payload,
+      id: editing?.id ?? payload.id,
+      created_at: editing?.created_at ?? new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    } as CollectionReminder;
+
+    if (!navigator.onLine) {
+      onLocalCollectionsChange(
+        editing
+          ? collections.map((collection) => collection.id === editing.id ? optimisticCollection : collection)
+          : [optimisticCollection, ...collections],
+      );
+      await onQueueOfflineMutation({
+        resource: "collections",
+        affectedResources: ["collections", "dashboardSummary"],
+        operation: editing ? "update" : "insert",
+        table: "collection_reminders",
+        recordId: editing?.id,
+        payload,
+      });
+      setEditing(null);
+      setFormOpen(false);
+      return;
+    }
+
     const result = editing
       ? await supabase.from("collection_reminders").update(payload).eq("id", editing.id)
       : await supabase.from("collection_reminders").insert(payload);
 
     if (result.error) {
+      if (isOfflineLikeError(result.error)) {
+        onLocalCollectionsChange(
+          editing
+            ? collections.map((collection) => collection.id === editing.id ? optimisticCollection : collection)
+            : [optimisticCollection, ...collections],
+        );
+        await onQueueOfflineMutation({
+          resource: "collections",
+          affectedResources: ["collections", "dashboardSummary"],
+          operation: editing ? "update" : "insert",
+          table: "collection_reminders",
+          recordId: editing?.id,
+          payload,
+        });
+        setEditing(null);
+        setFormOpen(false);
+        return;
+      }
       setNotice({ type: "error", text: friendlyError(result.error) });
       return;
     }
@@ -3095,14 +4361,60 @@ function CollectionsView({
 
   async function markCollected(id: string) {
     if (!supabase) return;
+    if (!navigator.onLine) {
+      onLocalCollectionsChange(collections.map((collection) => collection.id === id ? { ...collection, status: "collected" } : collection));
+      await onQueueOfflineMutation({
+        resource: "collections",
+        affectedResources: ["collections", "dashboardSummary"],
+        operation: "update",
+        table: "collection_reminders",
+        recordId: id,
+        payload: { status: "collected" },
+      });
+      return;
+    }
     const { error } = await supabase.from("collection_reminders").update({ status: "collected" }).eq("id", id);
+    if (error && isOfflineLikeError(error)) {
+      onLocalCollectionsChange(collections.map((collection) => collection.id === id ? { ...collection, status: "collected" } : collection));
+      await onQueueOfflineMutation({
+        resource: "collections",
+        affectedResources: ["collections", "dashboardSummary"],
+        operation: "update",
+        table: "collection_reminders",
+        recordId: id,
+        payload: { status: "collected" },
+      });
+      return;
+    }
     setNotice(error ? { type: "error", text: friendlyError(error) } : { type: "success", text: "Marked collected." });
     await onChange();
   }
 
   async function remove(id: string) {
     if (!supabase || !window.confirm("Delete this collection reminder?")) return;
+    if (!navigator.onLine) {
+      onLocalCollectionsChange(collections.filter((collection) => collection.id !== id));
+      await onQueueOfflineMutation({
+        resource: "collections",
+        affectedResources: ["collections", "dashboardSummary"],
+        operation: "delete",
+        table: "collection_reminders",
+        recordId: id,
+      });
+      return;
+    }
     const { error } = await supabase.from("collection_reminders").delete().eq("id", id);
+    if (error && isOfflineLikeError(error)) {
+      onLocalCollectionsChange(collections.filter((collection) => collection.id !== id));
+      await onQueueOfflineMutation({
+        resource: "collections",
+        affectedResources: ["collections", "dashboardSummary"],
+        operation: "delete",
+        table: "collection_reminders",
+        recordId: id,
+      });
+      return;
+    }
     setNotice(error ? { type: "error", text: friendlyError(error) } : { type: "success", text: "Collection reminder deleted." });
     await onChange();
   }
@@ -3313,17 +4625,22 @@ function EmployeeForm({
   initial,
   onClose,
   onSubmit,
+  positions,
 }: {
   embedded?: boolean;
   initial: Employee | null;
   onClose: () => void;
   onSubmit: (values: EmployeeFormValues) => Promise<void>;
+  positions: Position[];
 }) {
+  type FormTab = "personal" | "employment" | "documents";
+  const [activeTab, setActiveTab] = useState<FormTab>("personal");
   const [values, setValues] = useState<EmployeeFormValues>(
     initial
       ? {
           full_name: initial.full_name,
           role: initial.role,
+          position_id: initial.position_id ?? "",
           department: initial.department,
           contact_number: initial.contact_number,
           email: initial.email,
@@ -3373,142 +4690,293 @@ function EmployeeForm({
     setBusy(false);
   }
 
-  const form = (
-    <form className={embedded ? "form-grid employee-form-grid" : "form-grid"} onSubmit={handleSubmit}>
-      {embedded && (
-        <>
-          <div className="form-tabs full">
-            <button className="active" type="button"><Users size={18} /> Personal Information</button>
-            <button type="button"><CalendarClock size={18} /> Employment Details</button>
-            <button type="button"><BadgeDollarSign size={18} /> Compensation</button>
-            <button type="button"><CreditCard size={18} /> Documents</button>
+  const selectedPosition = positions.find((p) => p.id === values.position_id);
+  const initials = values.full_name.trim().split(" ").filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+  const completedFields = [values.full_name, values.position_id, values.email, values.contact_number, values.hire_date, values.sss_number, values.philhealth_number, values.pagibig_number, values.tin_number].filter(Boolean).length;
+  const totalFields = 9;
+
+  const tabs: { id: FormTab; icon: ReactNode; label: string }[] = [
+    { id: "personal", icon: <Users size={16} />, label: "Personal" },
+    { id: "employment", icon: <Briefcase size={16} />, label: "Employment" },
+    { id: "documents", icon: <FileText size={16} />, label: "Documents" },
+  ];
+
+  const formContent = (
+    <form className="emp-form-wizard" onSubmit={handleSubmit}>
+      <div className="emp-form-body">
+        <div className="emp-form-main">
+          <div className="emp-form-tabs" role="tablist" aria-label="Employee form sections">
+            {tabs.map((tab) => (
+              <button
+                aria-selected={activeTab === tab.id}
+                className={activeTab === tab.id ? "active" : ""}
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                role="tab"
+                type="button"
+              >
+                {tab.icon}
+                {tab.label}
+              </button>
+            ))}
           </div>
-          <label
-            className={values.profile_photo_url ? "profile-upload has-photo" : "profile-upload"}
-            onDragOver={(event) => event.preventDefault()}
-            onDrop={(event) => {
-              event.preventDefault();
-              handlePhotoFile(event.dataTransfer.files[0] ?? null);
-            }}
-          >
-            <span>Profile Photo</span>
-            <input
-              accept="image/png,image/jpeg"
-              onChange={(event) => handlePhotoFile(event.target.files?.[0] ?? null)}
-              type="file"
-            />
-            <div>
+
+          {activeTab === "personal" && (
+            <div className="emp-form-section">
+              <div className="emp-form-photo-hero">
+                <label
+                  className={values.profile_photo_url ? "emp-photo-upload has-photo" : "emp-photo-upload"}
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    handlePhotoFile(event.dataTransfer.files[0] ?? null);
+                  }}
+                >
+                  <input
+                    accept="image/png,image/jpeg"
+                    onChange={(event) => handlePhotoFile(event.target.files?.[0] ?? null)}
+                    type="file"
+                  />
+                  <div className="emp-photo-circle">
+                    {values.profile_photo_url ? (
+                      <img alt="Preview" src={values.profile_photo_url} />
+                    ) : (
+                      <span className="emp-photo-placeholder">
+                        {initials || <Plus size={28} />}
+                      </span>
+                    )}
+                    <div className="emp-photo-overlay">
+                      <Upload size={18} />
+                    </div>
+                  </div>
+                  <p className="emp-photo-hint">{values.profile_photo_url ? "Change photo" : "Upload photo"}</p>
+                  {photoError && <small className="emp-photo-error">{photoError}</small>}
+                </label>
+              </div>
+
+              <div className="emp-form-group">
+                <h3>Basic Information</h3>
+                <div className="emp-form-fields">
+                  <TextField label="Full name" value={values.full_name} onChange={(full_name) => setValues({ ...values, full_name })} required />
+                  <TextField label="Email address" type="email" value={values.email} onChange={(email) => setValues({ ...values, email })} />
+                  <TextField label="Contact number" value={values.contact_number} onChange={(contact_number) => setValues({ ...values, contact_number })} />
+                  <label className="full">
+                    Address
+                    <textarea rows={2} value={values.address} onChange={(event) => setValues({ ...values, address: event.target.value })} placeholder="Street, city, province" />
+                  </label>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === "employment" && (
+            <div className="emp-form-section">
+              <div className="emp-form-group">
+                <h3>Position & Department</h3>
+                <div className="emp-form-fields">
+                  <label>
+                    Position
+                    <select
+                      required
+                      value={values.position_id}
+                      onChange={(event) => {
+                        const position = positions.find((item) => item.id === event.target.value);
+                        setValues({
+                          ...values,
+                          position_id: event.target.value,
+                          role: position?.name ?? "",
+                          department: position?.department ?? "",
+                        });
+                      }}
+                    >
+                      <option value="">Select a position</option>
+                      {positions
+                        .filter((position) => position.status === "active" || position.id === initial?.position_id)
+                        .map((position) => (
+                          <option key={position.id} value={position.id}>
+                            {position.name}{position.status === "archived" ? " (Archived)" : ""}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                  <TextField label="Department" value={values.department} onChange={() => undefined} />
+                </div>
+                {selectedPosition && (
+                  <div className="emp-position-badge">
+                    <Briefcase size={14} />
+                    <span>{selectedPosition.pay_mode === "fixed" ? "Fixed salary" : selectedPosition.pay_mode === "hybrid" ? "Base + ticket" : "Per ticket"}</span>
+                    {selectedPosition.monthly_base_salary > 0 && (
+                      <>
+                        <span className="emp-position-sep" />
+                        <span>Base {currency.format(toNumber(selectedPosition.monthly_base_salary))}/mo</span>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="emp-form-group">
+                <h3>Employment Status</h3>
+                <div className="emp-form-fields">
+                  <label>
+                    Status
+                    <select value={values.status} onChange={(event) => setValues({ ...values, status: event.target.value as EmployeeFormValues["status"] })}>
+                      <option value="active">Active</option>
+                      <option value="inactive">Inactive</option>
+                    </select>
+                  </label>
+                  <TextField label="Hire date" type="date" value={values.hire_date} onChange={(hire_date) => setValues({ ...values, hire_date })} />
+                </div>
+              </div>
+              <div className="emp-form-group">
+                <h3>Additional</h3>
+                <div className="emp-form-fields">
+                  <label className="full">
+                    Notes
+                    <textarea rows={3} value={values.notes} onChange={(event) => setValues({ ...values, notes: event.target.value })} placeholder="Any additional notes about this employee" />
+                  </label>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === "documents" && (
+            <div className="emp-form-section">
+              <div className="emp-form-group">
+                <h3>Government IDs</h3>
+                <p className="emp-form-group-desc">Required for payroll compliance and statutory deductions.</p>
+                <div className="emp-form-fields">
+                  <TextField label="SSS number" value={values.sss_number} onChange={(sss_number) => setValues({ ...values, sss_number })} />
+                  <TextField label="PhilHealth number" value={values.philhealth_number} onChange={(philhealth_number) => setValues({ ...values, philhealth_number })} />
+                  <TextField label="Pag-IBIG number" value={values.pagibig_number} onChange={(pagibig_number) => setValues({ ...values, pagibig_number })} />
+                  <TextField label="TIN number" value={values.tin_number} onChange={(tin_number) => setValues({ ...values, tin_number })} />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <aside className="emp-form-sidebar">
+          <div className="emp-form-preview">
+            <div className="emp-preview-avatar">
               {values.profile_photo_url ? (
-                <img alt="Employee profile preview" src={values.profile_photo_url} />
+                <img alt="Preview" src={values.profile_photo_url} />
               ) : (
-                <>
-                  <Plus size={30} />
-                  <strong>Click to upload</strong>
-                  <p>or drag and drop<br />PNG, JPG up to 2MB</p>
-                </>
+                <span>{initials || "?"}</span>
               )}
             </div>
-            {photoError && <small>{photoError}</small>}
-          </label>
-        </>
-      )}
-      <TextField label="Full name" value={values.full_name} onChange={(full_name) => setValues({ ...values, full_name })} required />
-      <TextField label="Role" value={values.role} onChange={(role) => setValues({ ...values, role })} />
-      <TextField label="Department" value={values.department} onChange={(department) => setValues({ ...values, department })} />
-      <TextField label="Contact number" value={values.contact_number} onChange={(contact_number) => setValues({ ...values, contact_number })} />
-      <TextField label="Email" type="email" value={values.email} onChange={(email) => setValues({ ...values, email })} />
-      <label>
-        Status
-        <select value={values.status} onChange={(event) => setValues({ ...values, status: event.target.value as EmployeeFormValues["status"] })}>
-          <option value="active">Active</option>
-          <option value="inactive">Inactive</option>
-        </select>
-      </label>
-      <label>
-        Wage category
-        <select value={values.wage_category} onChange={(event) => setValues({ ...values, wage_category: event.target.value as EmployeeFormValues["wage_category"] })}>
-          <option value="new">New employee</option>
-          <option value="special_old">Special/Old employee</option>
-        </select>
-      </label>
-      <TextField label="Monthly salary" min="0" step="0.01" type="number" value={values.monthly_salary} onChange={(monthly_salary) => setValues({ ...values, monthly_salary })} />
-      <TextField label="Hire date" type="date" value={values.hire_date} onChange={(hire_date) => setValues({ ...values, hire_date })} />
-      <TextField label="SSS number" value={values.sss_number} onChange={(sss_number) => setValues({ ...values, sss_number })} />
-      <TextField label="PhilHealth number" value={values.philhealth_number} onChange={(philhealth_number) => setValues({ ...values, philhealth_number })} />
-      <TextField label="Pag-IBIG number" value={values.pagibig_number} onChange={(pagibig_number) => setValues({ ...values, pagibig_number })} />
-      <TextField label="TIN number" value={values.tin_number} onChange={(tin_number) => setValues({ ...values, tin_number })} />
-      <label className="full">
-        Address
-        <textarea rows={3} value={values.address} onChange={(event) => setValues({ ...values, address: event.target.value })} />
-      </label>
-      <label className="full">
-        Notes
-        <textarea rows={3} value={values.notes} onChange={(event) => setValues({ ...values, notes: event.target.value })} />
-      </label>
-      <FormActions busy={busy} onClose={onClose} />
+            <strong className="emp-preview-name">{values.full_name || "Employee name"}</strong>
+            <span className="emp-preview-role">{selectedPosition?.name || "No position"}</span>
+            <StatusPill status={values.status} />
+          </div>
+
+          <div className="emp-form-progress">
+            <div className="emp-progress-header">
+              <span>Profile completion</span>
+              <strong>{Math.round((completedFields / totalFields) * 100)}%</strong>
+            </div>
+            <div className="emp-progress-bar">
+              <div className="emp-progress-fill" style={{ width: `${(completedFields / totalFields) * 100}%` }} />
+            </div>
+          </div>
+
+          <div className="emp-form-summary">
+            <div className="emp-summary-row">
+              <span>Position</span>
+              <strong>{selectedPosition?.name || "—"}</strong>
+            </div>
+            <div className="emp-summary-row">
+              <span>Department</span>
+              <strong>{values.department || "—"}</strong>
+            </div>
+            <div className="emp-summary-row">
+              <span>Email</span>
+              <strong>{values.email || "—"}</strong>
+            </div>
+            <div className="emp-summary-row">
+              <span>Phone</span>
+              <strong>{values.contact_number || "—"}</strong>
+            </div>
+            <div className="emp-summary-row">
+              <span>Hire date</span>
+              <strong>{values.hire_date || "—"}</strong>
+            </div>
+          </div>
+
+          <div className="emp-form-actions-sticky">
+            <button className="secondary-button" onClick={onClose} type="button">Cancel</button>
+            <button className="primary-button" disabled={busy} type="submit">
+              {busy && <Spinner size="small" />}
+              {busy ? "Saving..." : initial ? "Save Changes" : "Add Employee"}
+            </button>
+          </div>
+        </aside>
+      </div>
     </form>
   );
 
   if (embedded) {
-    return <section className="employee-form-card">{form}</section>;
+    return (
+      <div className="page-stack">
+        <header className="emp-form-header">
+          <div>
+            <button className="text-button" onClick={onClose} type="button">
+              <ArrowLeft size={16} />
+              Back to Employees
+            </button>
+            <h1>{initial ? "Edit Employee" : "Add New Employee"}</h1>
+            <p>{initial ? "Update this employee's information." : "Fill in the details to add a new team member."}</p>
+          </div>
+        </header>
+        {formContent}
+      </div>
+    );
   }
 
   return (
     <Modal title={initial ? "Edit employee" : "Add employee"} onClose={onClose}>
-      {form}
+      <form className="form-grid" onSubmit={handleSubmit}>
+        <TextField label="Full name" value={values.full_name} onChange={(full_name) => setValues({ ...values, full_name })} required />
+        <label>
+          Position
+          <select
+            required
+            value={values.position_id}
+            onChange={(event) => {
+              const position = positions.find((item) => item.id === event.target.value);
+              setValues({ ...values, position_id: event.target.value, role: position?.name ?? "", department: position?.department ?? "" });
+            }}
+          >
+            <option value="">Select a position</option>
+            {positions.filter((p) => p.status === "active" || p.id === initial?.position_id).map((p) => (
+              <option key={p.id} value={p.id}>{p.name}{p.status === "archived" ? " (Archived)" : ""}</option>
+            ))}
+          </select>
+        </label>
+        <TextField label="Contact number" value={values.contact_number} onChange={(contact_number) => setValues({ ...values, contact_number })} />
+        <TextField label="Email" type="email" value={values.email} onChange={(email) => setValues({ ...values, email })} />
+        <label>
+          Status
+          <select value={values.status} onChange={(event) => setValues({ ...values, status: event.target.value as EmployeeFormValues["status"] })}>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+          </select>
+        </label>
+        <TextField label="Hire date" type="date" value={values.hire_date} onChange={(hire_date) => setValues({ ...values, hire_date })} />
+        <TextField label="SSS number" value={values.sss_number} onChange={(sss_number) => setValues({ ...values, sss_number })} />
+        <TextField label="PhilHealth number" value={values.philhealth_number} onChange={(philhealth_number) => setValues({ ...values, philhealth_number })} />
+        <TextField label="Pag-IBIG number" value={values.pagibig_number} onChange={(pagibig_number) => setValues({ ...values, pagibig_number })} />
+        <TextField label="TIN number" value={values.tin_number} onChange={(tin_number) => setValues({ ...values, tin_number })} />
+        <label className="full">
+          Address
+          <textarea rows={2} value={values.address} onChange={(event) => setValues({ ...values, address: event.target.value })} />
+        </label>
+        <label className="full">
+          Notes
+          <textarea rows={2} value={values.notes} onChange={(event) => setValues({ ...values, notes: event.target.value })} />
+        </label>
+        <FormActions busy={busy} onClose={onClose} />
+      </form>
     </Modal>
-  );
-}
-
-function EmployeePositionPanel() {
-  return (
-    <aside className="position-panel">
-      <section>
-        <h2>Position</h2>
-        <label>
-          Select Position <span>*</span>
-          <select defaultValue="Software Developer">
-            <option>Software Developer</option>
-            <option>HR Manager</option>
-            <option>Accountant</option>
-          </select>
-        </label>
-      </section>
-      <section>
-        <h2>Department</h2>
-        <label>
-          Select Department <span>*</span>
-          <select defaultValue="Information Technology">
-            <option>Information Technology</option>
-            <option>Operations</option>
-            <option>Finance</option>
-          </select>
-        </label>
-      </section>
-      <section>
-        <h2>Employment Type</h2>
-        <label>
-          Select Employment Type <span>*</span>
-          <select defaultValue="Full-time">
-            <option>Full-time</option>
-            <option>Part-time</option>
-            <option>Contract</option>
-          </select>
-        </label>
-      </section>
-      <div className="position-description">
-        <strong>Position Description</strong>
-        <p>Develops, tests, and maintains software applications and systems. Works with teams to deliver high-quality solutions.</p>
-        <span>Reports to: IT Manager</span>
-      </div>
-      <div className="other-positions">
-        <h3>Other Positions (Examples)</h3>
-        {["HR Manager", "Accountant", "Sales Executive", "Customer Support", "Warehouse Staff"].map((position) => (
-          <p key={position}><Plus size={14} /> {position}</p>
-        ))}
-        <button className="text-button" type="button">View all positions</button>
-      </div>
-    </aside>
   );
 }
 
@@ -3745,6 +5213,7 @@ function FormActions({ busy, onClose }: { busy: boolean; onClose: () => void }) 
         Cancel
       </button>
       <button className="primary-button compact" disabled={busy} type="submit">
+        {busy && <Spinner size="small" />}
         {busy ? "Saving..." : "Save"}
       </button>
     </div>
