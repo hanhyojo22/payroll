@@ -32,6 +32,7 @@ import {
 import type { Session } from "@supabase/supabase-js";
 import { hasSupabaseConfig, supabase } from "./supabase";
 import {
+  attendanceTotalsForEmployee,
   dailyTicketEntriesForPayrollPeriod,
   payPeriodLabel,
   payrollItemPayloadForEmployee,
@@ -79,6 +80,7 @@ import type {
   PayrollRun,
   PayrollRunFormValues,
   PayrollRunItem,
+  PayrollPayPeriod,
   PayrollRunWithItems,
   Position,
   PositionFormValues,
@@ -939,6 +941,7 @@ function Workspace({ session }: { session: Session }) {
               )}
               {view === "payroll" && (
                 <PayrollView
+                  attendanceEntries={attendanceEntries}
                   dailyTicketEntries={dailyTicketEntries}
                   employees={employees}
                   ensurePayrollRunItems={ensurePayrollRunItems}
@@ -3565,8 +3568,15 @@ function payrollItemPayloadForEmployeeWithSalaryBonds(
   dailyTicketEntries: DailyTicketEntry[],
   salaryBonds: SalaryBond[],
   payrollDate: string,
+  attendanceEntries: AttendanceEntry[] = [],
+  periodMonth = 0,
+  periodYear = 0,
+  payPeriod: PayrollPayPeriod = "first_half",
 ) {
-  const payload = payrollItemPayloadForEmployee(employee, payrollRunId, userId, dailyTicketEntries, position);
+  const payload = payrollItemPayloadForEmployee(
+    employee, payrollRunId, userId, dailyTicketEntries, position,
+    attendanceEntries, periodMonth, periodYear, payPeriod,
+  );
   const bondDeductions = salaryBondDeductionsForEmployee(salaryBonds, employee, payrollDate);
   const salaryBondDeduction = bondDeductions.reduce((sum, deduction) => sum + deduction.amount, 0);
 
@@ -3607,6 +3617,7 @@ async function applySalaryBondPayrollDeductions(deductions: SalaryBondPayrollDed
 }
 
 export function PayrollView({
+  attendanceEntries,
   dailyTicketEntries,
   employees,
   ensurePayrollRunItems,
@@ -3619,6 +3630,7 @@ export function PayrollView({
   setNotice,
   userId,
 }: {
+  attendanceEntries: AttendanceEntry[];
   dailyTicketEntries: DailyTicketEntry[];
   employees: Employee[];
   ensurePayrollRunItems: (payrollRunId: string) => Promise<void>;
@@ -3713,6 +3725,25 @@ export function PayrollView({
       return;
     }
 
+    const periodMonth = Number(values.period_month);
+    const periodYear = Number(values.period_year);
+    const payPeriod = values.pay_period;
+
+    const missingAttendanceEmployees = activeEmployees.filter((emp) => {
+      const pos = positions.find((p) => p.id === emp.position_id);
+      if (pos?.pay_mode !== "daily") return false;
+      const totals = attendanceTotalsForEmployee(attendanceEntries, emp.id, periodMonth, periodYear, payPeriod);
+      return totals.presentDays + totals.halfDays + totals.absentDays === 0;
+    });
+
+    if (missingAttendanceEmployees.length > 0) {
+      setNotice({
+        type: "error",
+        text: `Attendance not recorded for: ${missingAttendanceEmployees.map((e) => e.full_name).join(", ")}. Please log attendance before generating payroll.`,
+      });
+      return;
+    }
+
     const runPayload = {
       user_id: userId,
       period_month: Number(values.period_month),
@@ -3757,6 +3788,10 @@ export function PayrollView({
           periodDailyEntries,
           salaryBonds,
           offlineRun.generated_date,
+          attendanceEntries,
+          offlineRun.period_month,
+          offlineRun.period_year,
+          offlineRun.pay_period,
         )
       );
       const { detailPayloads, itemPayloads, items: offlineItems } = createOfflinePayrollItems(employeePayrollItems.map((item) => item.payload));
@@ -3819,6 +3854,10 @@ export function PayrollView({
             periodDailyEntries,
             salaryBonds,
             offlineRun.generated_date,
+            attendanceEntries,
+            offlineRun.period_month,
+            offlineRun.period_year,
+            offlineRun.pay_period,
           )
         );
         const { detailPayloads, itemPayloads, items: offlineItems } = createOfflinePayrollItems(employeePayrollItems.map((item) => item.payload));
@@ -3875,6 +3914,10 @@ export function PayrollView({
         periodDailyEntries,
         salaryBonds,
         newRun.generated_date,
+        attendanceEntries,
+        newRun.period_month,
+        newRun.period_year,
+        newRun.pay_period,
       )
     );
     const itemPayloads = employeePayrollItems.map((item) => item.payload);
@@ -3976,6 +4019,10 @@ export function PayrollView({
         periodDailyEntries,
         salaryBonds,
         selectedRun.generated_date,
+        attendanceEntries,
+        selectedRun.period_month,
+        selectedRun.period_year,
+        selectedRun.pay_period,
       )
     );
     const itemPayloads = employeePayrollItems.map((item) => item.payload);
