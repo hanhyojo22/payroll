@@ -21,7 +21,7 @@ pnpm-debug.log*
 *.tsbuildinfo
 .vite/
 
-# OS and editor files
+# OS and editor file
 .DS_Store
 Thumbs.db
 .vscode/

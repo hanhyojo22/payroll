@@ -285,7 +285,7 @@ export async function loadEmployees(supabase: SupabaseClient) {
     "Employees",
     supabase
       .from("employees")
-      .select("id,user_id,full_name,role,position_id,department,contact_number,email,address,profile_photo_url,hire_date,status,wage_category,installation_rate,repair_rate,monthly_salary,sss_number,philhealth_number,pagibig_number,tin_number,notes,created_at,updated_at")
+      .select("id,user_id,full_name,role,position_id,department,contact_number,email,address,profile_photo_url,hire_date,status,wage_category,installation_rate,repair_rate,monthly_salary,sss_number,philhealth_number,pagibig_number,tin_number,emergency_contact_name,emergency_contact_number,emergency_contact_relation,notes,created_at,updated_at")
       .order("full_name"),
   );
 }

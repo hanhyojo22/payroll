@@ -1,9 +1,6 @@
 import type { AttendanceEntry, DailyTicketEntry, Employee, PayrollPayPeriod, PayrollRun, PayrollRunItem, Position } from "../types";
 import {
-  employeeInstallationRate,
-  employeeRepairRate,
   normalizeTicketCount,
-  ticketGrossPay,
   toNumber,
 } from "./tickets";
 
@@ -117,14 +114,14 @@ export function dailyTicketTotalsForEmployee(entries: DailyTicketEntry[], employ
         position_ticket_category_id: null,
         category_name: "Installation",
         ticket_count: installationTickets,
-        rate: employeeInstallationRate(employee),
+        rate: installationTickets > 0 ? installationGross / installationTickets : 0,
         amount: installationGross,
       }] : []),
       ...(repairTickets > 0 ? [{
         position_ticket_category_id: null,
         category_name: "Repair",
         ticket_count: repairTickets,
-        rate: employeeRepairRate(employee),
+        rate: repairTickets > 0 ? repairGross / repairTickets : 0,
         amount: repairGross,
       }] : []),
     ],
@@ -142,16 +139,8 @@ export function payrollItemPayloadForEmployee(
   periodYear = 0,
   payPeriod: PayrollPayPeriod = "first_half",
 ): Omit<PayrollRunItem, "id" | "created_at" | "updated_at"> {
-  const installationRate = employeeInstallationRate(employee);
-  const repairRate = employeeRepairRate(employee);
   const dailyTotals = dailyTicketTotalsForEmployee(dailyTicketEntries, employee);
-  const legacyTicketGross = dailyTotals.gross || ticketGrossPay(
-    dailyTotals.installationTickets,
-    dailyTotals.repairTickets,
-    installationRate,
-    repairRate,
-  );
-  const payMode = position?.pay_mode ?? "legacy";
+  const payMode = position?.pay_mode ?? "ticket";
   let basePay: number;
   let ticketPay: number;
   let dailyRate = 0;
@@ -169,7 +158,7 @@ export function payrollItemPayloadForEmployee(
     basePay = payMode === "fixed" || payMode === "hybrid"
       ? toNumber(position?.monthly_base_salary) / 2
       : 0;
-    ticketPay = payMode === "fixed" ? 0 : legacyTicketGross;
+    ticketPay = payMode === "fixed" ? 0 : dailyTotals.gross;
   }
   const gross = basePay + ticketPay;
 
@@ -179,7 +168,7 @@ export function payrollItemPayloadForEmployee(
     employee_id: employee.id,
     employee_name: employee.full_name,
     position_id: position?.id ?? employee.position_id ?? null,
-    position_name: position?.name ?? employee.role ?? "Legacy",
+    position_name: position?.name ?? employee.role ?? "—",
     pay_mode: payMode,
     base_pay: basePay,
     ticket_pay: ticketPay,
@@ -195,8 +184,8 @@ export function payrollItemPayloadForEmployee(
     })),
     installation_tickets: dailyTotals.installationTickets,
     repair_tickets: dailyTotals.repairTickets,
-    installation_rate: installationRate,
-    repair_rate: repairRate,
+    installation_rate: 0,
+    repair_rate: 0,
     gross_pay: gross,
     allowances: 0,
     deductions: 0,

@@ -38,16 +38,10 @@ import {
   payrollItemPayloadForEmployee,
 } from "./domain/payroll";
 import {
-  INSTALLATION_RATE,
-  NEW_EMPLOYEE_REPAIR_RATE,
-  employeeInstallationRate,
-  employeeRepairRate,
   netPay,
   normalizeTicketCount,
-  repairRateForWageCategory,
   ticketGrossPay,
   toNumber,
-  wageCategoryLabel,
 } from "./domain/tickets";
 import {
   loadAttendanceEntries,
@@ -166,8 +160,8 @@ const viewResources: Record<View, ResourceKey[]> = {
   attendance: ["positions", "employees", "attendanceEntries"],
   billing: ["billingRecords", "billingSettings", "dailyTicketEntries", "collections"],
   dashboard: ["dashboardSummary"],
-  employees: ["employees", "payrollRuns", "salaryBonds"],
-  "employee-add": ["employees", "payrollRuns", "salaryBonds"],
+  employees: ["employees", "positions", "payrollRuns", "salaryBonds"],
+  "employee-add": ["employees", "positions", "payrollRuns", "salaryBonds"],
   compensation: ["positions", "employees"],
   "daily-tickets": ["positions", "employees", "dailyTicketEntries"],
   "salary-bonds": ["employees", "salaryBonds"],
@@ -200,6 +194,21 @@ const currency = new Intl.NumberFormat("en-PH", {
   style: "currency",
   currency: "PHP",
 });
+
+function normalizePhoneDigits(raw: string): string {
+  let d = raw.replace(/\D/g, "");
+  if (d.startsWith("63") && d.length > 10) d = d.slice(2);
+  if (d.startsWith("0") && d.length > 10) d = d.slice(1);
+  return d.slice(0, 10);
+}
+
+function formatPhoneNumber(raw: string): string {
+  const d = normalizePhoneDigits(raw);
+  if (d.length === 0) return "";
+  if (d.length <= 4) return `+63 ${d}`;
+  if (d.length <= 7) return `+63 ${d.slice(0, 4)} ${d.slice(4)}`;
+  return `+63 ${d.slice(0, 4)} ${d.slice(4, 7)} ${d.slice(7)}`;
+}
 
 const monthNames = [
   "January",
@@ -331,6 +340,9 @@ const emptyEmployee: EmployeeFormValues = {
   philhealth_number: "",
   pagibig_number: "",
   tin_number: "",
+  emergency_contact_name: "",
+  emergency_contact_number: "",
+  emergency_contact_relation: "",
   notes: "",
 };
 
@@ -1461,8 +1473,10 @@ const compensationTickets = [
 function EmployeeCompensationSetupView() {
   const repairTickets = 12;
   const installationTickets = 5;
-  const repairEarnings = repairTickets * NEW_EMPLOYEE_REPAIR_RATE;
-  const installationEarnings = installationTickets * INSTALLATION_RATE;
+  const repairRate = 200;
+  const installationRate = 600;
+  const repairEarnings = repairTickets * repairRate;
+  const installationEarnings = installationTickets * installationRate;
   const totalPayroll = repairEarnings + installationEarnings;
   const totalTickets = repairTickets + installationTickets;
 
@@ -1531,11 +1545,11 @@ function EmployeeCompensationSetupView() {
           <div className="rate-table">
             <div>
               <span className="ticket-chip repair"><Wrench size={15} /> Repair</span>
-              <strong>{currency.format(NEW_EMPLOYEE_REPAIR_RATE)}</strong>
+              <strong>{currency.format(repairRate)}</strong>
             </div>
             <div>
               <span className="ticket-chip installation"><Briefcase size={15} /> Installation</span>
-              <strong>{currency.format(INSTALLATION_RATE)}</strong>
+              <strong>{currency.format(installationRate)}</strong>
             </div>
           </div>
         </section>
@@ -1551,14 +1565,14 @@ function EmployeeCompensationSetupView() {
           <div className="earnings-grid">
             <EarningsBreakdown
               earnings={repairEarnings}
-              rate={NEW_EMPLOYEE_REPAIR_RATE}
+              rate={repairRate}
               tickets={repairTickets}
               tone="repair"
               type="Repair"
             />
             <EarningsBreakdown
               earnings={installationEarnings}
-              rate={INSTALLATION_RATE}
+              rate={installationRate}
               tickets={installationTickets}
               tone="installation"
               type="Installation"
@@ -1818,6 +1832,7 @@ function PositionsView({
     const assignedEmployees = employees.filter((e) => e.position_id === position.id).length;
     if (assignedEmployees > 0) {
       setNotice({ type: "error", text: `Cannot delete "${position.name}" — ${assignedEmployees} employee${assignedEmployees === 1 ? " is" : "s are"} still assigned. Reassign them first.` });
+      setConfirmDelete(null);
       return;
     }
     if (!navigator.onLine) {
@@ -1836,16 +1851,19 @@ function PositionsView({
         table: "positions",
         recordId: position.id,
       });
+      setConfirmDelete(null);
       return;
     }
     const catResult = await supabase.from("position_ticket_categories").delete().eq("position_id", position.id);
     if (catResult.error) {
       setNotice({ type: "error", text: friendlyError(catResult.error) });
+      setConfirmDelete(null);
       return;
     }
     const { error } = await supabase.from("positions").delete().eq("id", position.id);
     if (error) {
       setNotice({ type: "error", text: friendlyError(error) });
+      setConfirmDelete(null);
       return;
     }
     setNotice({ type: "success", text: `"${position.name}" deleted.` });
@@ -2439,11 +2457,11 @@ function LegacyDailyTicketEntryView({
   const totalInstallation = rows.reduce((sum, row) => sum + row.installation, 0);
   const totalClosed = totalRepair + totalInstallation;
   const totalRepairEarnings = rows.reduce(
-    (sum, row) => sum + row.repair * employeeRepairRate(row.employee),
+    (sum, row) => sum + row.repair * toNumber(row.employee.repair_rate),
     0,
   );
   const totalInstallationEarnings = rows.reduce(
-    (sum, row) => sum + row.installation * employeeInstallationRate(row.employee),
+    (sum, row) => sum + row.installation * toNumber(row.employee.installation_rate),
     0,
   );
   const totalEarnings = totalRepairEarnings + totalInstallationEarnings;
@@ -2507,21 +2525,16 @@ function LegacyDailyTicketEntryView({
       return;
     }
 
-    const payload = rows.map((row) => {
-      const repairRate = employeeRepairRate(row.employee);
-      const installationRate = employeeInstallationRate(row.employee);
-
-      return {
-        user_id: userId,
-        entry_date: selectedDate,
-        employee_id: row.employee.id,
-        employee_name: row.employee.full_name,
-        installation_tickets: row.installation,
-        repair_tickets: row.repair,
-        installation_rate: installationRate,
-        repair_rate: repairRate,
-      };
-    });
+    const payload = rows.map((row) => ({
+      user_id: userId,
+      entry_date: selectedDate,
+      employee_id: row.employee.id,
+      employee_name: row.employee.full_name,
+      installation_tickets: row.installation,
+      repair_tickets: row.repair,
+      installation_rate: toNumber(row.employee.installation_rate),
+      repair_rate: toNumber(row.employee.repair_rate),
+    }));
     if (!navigator.onLine) {
       await onQueueOfflineMutation({
         resource: "dailyTicketEntries",
@@ -2598,8 +2611,6 @@ function LegacyDailyTicketEntryView({
 
   async function saveTicketRow(row: DailyTicketDraft) {
     if (!supabase) return;
-    const repairRate = employeeRepairRate(row.employee);
-    const installationRate = employeeInstallationRate(row.employee);
     const payload = {
       user_id: userId,
       entry_date: selectedDate,
@@ -2607,8 +2618,8 @@ function LegacyDailyTicketEntryView({
       employee_name: row.employee.full_name,
       installation_tickets: row.installation,
       repair_tickets: row.repair,
-      installation_rate: installationRate,
-      repair_rate: repairRate,
+      installation_rate: toNumber(row.employee.installation_rate),
+      repair_rate: toNumber(row.employee.repair_rate),
     };
     if (!navigator.onLine) {
       await onQueueOfflineMutation({
@@ -2757,9 +2768,7 @@ function LegacyDailyTicketEntryView({
                 .join("")
                 .toUpperCase() || "E";
               const total = row.repair + row.installation;
-              const repairRate = employeeRepairRate(row.employee);
-              const installationRate = employeeInstallationRate(row.employee);
-              const earnings = row.repair * repairRate + row.installation * installationRate;
+              const earnings = row.repair * toNumber(row.employee.repair_rate) + row.installation * toNumber(row.employee.installation_rate);
 
               return (
                 <div className="daily-ticket-row" key={row.employee.id}>
@@ -2833,7 +2842,7 @@ function LegacyDailyTicketEntryView({
               earnings={totalInstallationEarnings}
               icon={<Settings size={18} />}
               label="Installation Tickets Closed"
-              rate={INSTALLATION_RATE}
+              rateLabel="By position ticket rate"
               tone="installation"
               value={totalInstallation}
             />
@@ -2947,7 +2956,7 @@ export function EmployeesView({
   userId: string;
 }) {
   const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("active");
   const [editing, setEditing] = useState<Employee | null>(null);
   const [formOpen, setFormOpen] = useState(mode === "add");
   const [detailsEmployee, setDetailsEmployee] = useState<Employee | null>(null);
@@ -2979,6 +2988,7 @@ export function EmployeesView({
         employee={detailsEmployee}
         onChange={onChange}
         onBack={() => setDetailsEmployee(null)}
+        onEdit={(emp) => { setEditing(emp); setFormOpen(true); setDetailsEmployee(null); }}
         onEmployeeUpdate={setDetailsEmployee}
         onQueueOfflineMutation={onQueueOfflineMutation}
         payrollRuns={payrollRuns}
@@ -3008,6 +3018,13 @@ export function EmployeesView({
       setNotice({ type: "error", text: "Select an active position before saving this employee." });
       return;
     }
+    for (const [field, label] of [["contact_number", "Contact number"], ["emergency_contact_number", "Emergency contact number"]] as const) {
+      const digits = values[field];
+      if (digits && digits.length !== 10) {
+        setNotice({ type: "error", text: `${label} must be a valid 10-digit Philippine mobile number.` });
+        return;
+      }
+    }
     const payload = {
       ...(editing ? {} : { id: crypto.randomUUID() }),
       full_name: values.full_name.trim(),
@@ -3021,11 +3038,16 @@ export function EmployeesView({
       hire_date: values.hire_date || null,
       status: values.status,
       wage_category: values.wage_category,
-      monthly_salary: toNumber(values.monthly_salary),
+      monthly_salary: (selectedPosition.pay_mode === "fixed" || selectedPosition.pay_mode === "hybrid")
+        ? toNumber(selectedPosition.monthly_base_salary)
+        : 0,
       sss_number: values.sss_number.trim(),
       philhealth_number: values.philhealth_number.trim(),
       pagibig_number: values.pagibig_number.trim(),
       tin_number: values.tin_number.trim(),
+      emergency_contact_name: values.emergency_contact_name.trim(),
+      emergency_contact_number: values.emergency_contact_number.trim(),
+      emergency_contact_relation: values.emergency_contact_relation.trim(),
       notes: values.notes.trim(),
       user_id: userId,
     };
@@ -3056,17 +3078,18 @@ export function EmployeesView({
       return;
     }
 
+    onLocalEmployeesChange(
+      editing
+        ? employees.map((employee) => employee.id === editing.id ? optimisticEmployee : employee)
+        : [optimisticEmployee, ...employees],
+    );
+
     const result = editing
       ? await supabase.from("employees").update(payload).eq("id", editing.id)
       : await supabase.from("employees").insert(payload);
 
     if (result.error) {
       if (isOfflineLikeError(result.error)) {
-        onLocalEmployeesChange(
-          editing
-            ? employees.map((employee) => employee.id === editing.id ? optimisticEmployee : employee)
-            : [optimisticEmployee, ...employees],
-        );
         await onQueueOfflineMutation({
           resource: "employees",
           affectedResources: ["employees", "dashboardSummary"],
@@ -3078,6 +3101,7 @@ export function EmployeesView({
         closeForm();
         return;
       }
+      onLocalEmployeesChange(employees);
       setNotice({ type: "error", text: friendlyError(result.error) });
       return;
     }
@@ -3133,6 +3157,7 @@ export function EmployeeDetailsView({
   employee,
   onChange,
   onBack,
+  onEdit,
   onEmployeeUpdate,
   onQueueOfflineMutation,
   payrollRuns,
@@ -3143,6 +3168,7 @@ export function EmployeeDetailsView({
   employee: Employee;
   onChange: () => Promise<void>;
   onBack: () => void;
+  onEdit: (employee: Employee) => void;
   onEmployeeUpdate: (employee: Employee) => void;
   onQueueOfflineMutation: QueueOfflineMutation;
   payrollRuns: PayrollRunWithItems[];
@@ -3150,7 +3176,7 @@ export function EmployeeDetailsView({
   salaryBonds: SalaryBond[];
   setNotice: (notice: Notice) => void;
 }) {
-  const [activeTab, setActiveTab] = useState<"information" | "payroll" | "tickets" | "salary-bond" | "payments" | "documents">("tickets");
+  const [activeTab, setActiveTab] = useState<"information" | "payroll" | "tickets" | "salary-bond" | "payments" | "documents">("information");
   const [currentEmployee, setCurrentEmployee] = useState(employee);
   const [employeePayrollRuns, setEmployeePayrollRuns] = useState<PayrollRunWithItems[]>([]);
   const [editingRate, setEditingRate] = useState<"installation" | "repair" | null>(null);
@@ -3162,8 +3188,8 @@ export function EmployeeDetailsView({
 
   useEffect(() => {
     setRateDrafts({
-      installation: String(employeeInstallationRate(currentEmployee)),
-      repair: String(employeeRepairRate(currentEmployee)),
+      installation: String(toNumber(currentEmployee.installation_rate)),
+      repair: String(toNumber(currentEmployee.repair_rate)),
     });
   }, [currentEmployee]);
 
@@ -3233,6 +3259,7 @@ export function EmployeeDetailsView({
     await onChange();
   }
 
+
   const detailPayrollRuns = employeePayrollRuns.length > 0 ? employeePayrollRuns : payrollRuns;
   const history = detailPayrollRuns
     .flatMap((run) =>
@@ -3265,8 +3292,8 @@ export function EmployeeDetailsView({
     }),
     { installation: 0, repair: 0 },
   );
-  const repairRate = employeeRepairRate(currentEmployee);
-  const installationRate = employeeInstallationRate(currentEmployee);
+  const repairRate = toNumber(currentEmployee.repair_rate);
+  const installationRate = toNumber(currentEmployee.installation_rate);
   const repairEarnings = ticketTotals.repair * repairRate;
   const installationEarnings = ticketTotals.installation * installationRate;
   const totalTicketEarnings = repairEarnings + installationEarnings;
@@ -3274,14 +3301,6 @@ export function EmployeeDetailsView({
   const employeeSalaryBonds = salaryBonds
     .filter((bond) => bond.employee_id === currentEmployee.id)
     .sort((a, b) => b.created_at.localeCompare(a.created_at));
-  const tabs = [
-    { id: "information", icon: <Users size={16} />, label: "Information" },
-    { id: "payroll", icon: <Briefcase size={16} />, label: "Payroll" },
-    { id: "tickets", icon: <BadgeDollarSign size={16} />, label: "Tickets" },
-    { id: "salary-bond", icon: <CreditCard size={16} />, label: "Salary Bond" },
-    { id: "payments", icon: <CreditCard size={16} />, label: "Payments" },
-    { id: "documents", icon: <FileText size={16} />, label: "Documents" },
-  ] as const;
   const initials = currentEmployee.full_name
     .split(" ")
     .filter(Boolean)
@@ -3290,46 +3309,50 @@ export function EmployeeDetailsView({
     .join("")
     .toUpperCase() || "E";
   const currentPosition = positions.find((position) => position.id === currentEmployee.position_id);
+  const isTicketBased = currentPosition?.pay_mode === "ticket" || currentPosition?.pay_mode === "hybrid";
+  const tabs = [
+    { id: "information", icon: <Users size={16} />, label: "Information" },
+    { id: "payroll", icon: <Briefcase size={16} />, label: "Salary" },
+    ...(isTicketBased ? [{ id: "tickets" as const, icon: <BadgeDollarSign size={16} />, label: "Tickets" }] : []),
+    { id: "salary-bond", icon: <CreditCard size={16} />, label: "Salary Bond" },
+    { id: "documents", icon: <FileText size={16} />, label: "Documents" },
+  ] as const;
 
   return (
     <div className="page-stack employee-details-page">
       <div className="employee-details">
-        <section className="employee-detail-hero">
-          <div className="employee-detail-profile">
-            <div className="employee-detail-avatar">
-              {currentEmployee.profile_photo_url ? (
-                <img alt={`${currentEmployee.full_name} profile`} src={currentEmployee.profile_photo_url} />
-              ) : (
-                <span>{initials}</span>
-              )}
-            </div>
-            <div>
-              <div className="employee-detail-name">
-                <h2>{currentEmployee.full_name}</h2>
-                <StatusPill status={currentEmployee.status} />
+        <header className="emp-header">
+          <button className="emp-back" onClick={onBack} type="button">
+            <ArrowLeft size={16} />
+          </button>
+          <div className="emp-identity">
+            <div className="emp-avatar-group">
+              <div className="emp-avatar">
+                {currentEmployee.profile_photo_url ? (
+                  <img alt={`${currentEmployee.full_name} profile`} src={currentEmployee.profile_photo_url} />
+                ) : (
+                  <span>{initials}</span>
+                )}
               </div>
-              <p>
-                <Users size={14} />
-                {currentEmployee.role || "Unassigned"}
-                <span />
-                <FileText size={14} />
-                {currentEmployee.email || "No email"}
-              </p>
+              <StatusPill status={currentEmployee.status} />
+            </div>
+            <div className="emp-name-group">
+              <strong className="emp-name">{currentEmployee.full_name}</strong>
+              <span className="emp-position-label">{currentEmployee.role || "Unassigned"}</span>
+              <span className="emp-email">{currentEmployee.email || "No email"}</span>
             </div>
           </div>
-          <div className="employee-detail-actions">
-            <button className="secondary-button compact" onClick={onBack} type="button">
-              <ArrowLeft size={15} />
-              Back to Employee
-            </button>
-            <button className="primary-button compact" type="button">
-              <Save size={15} />
-              Save Changes
-            </button>
+          <div className="emp-stats">
+            <div className="emp-stat-chip"><span>Net Pay</span><strong>{currency.format(totals.net)}</strong></div>
+            <div className="emp-stat-chip"><span>Pending</span><strong>{currency.format(totals.pending)}</strong></div>
+            <div className="emp-stat-chip"><span>Tickets</span><strong>{closedTickets}</strong></div>
           </div>
-        </section>
+          <button className="secondary-button compact" onClick={() => onEdit(currentEmployee)} type="button">
+            <Pencil size={14} /> Edit
+          </button>
+        </header>
 
-        <div className="employee-detail-tabs" role="tablist" aria-label="Employee details sections">
+        <nav className="emp-tabs" role="tablist" aria-label="Employee details sections">
           {tabs.map((tab) => (
             <button
               aria-selected={activeTab === tab.id}
@@ -3343,43 +3366,44 @@ export function EmployeeDetailsView({
               {tab.label}
             </button>
           ))}
-        </div>
+        </nav>
 
         {activeTab === "information" && (
-          <section className="employee-detail-card">
+          <section className="emp-content-card">
             <h3>Employee Information</h3>
-            <div className="details-grid">
+            <div className="emp-info-grid">
               <DetailItem label="Position" value={currentEmployee.role || "Unassigned"} />
               <DetailItem label="Department" value={currentEmployee.department || "Unassigned"} />
               <DetailItem label="Status" value={<StatusPill status={currentEmployee.status} />} />
               <DetailItem label="Email" value={currentEmployee.email || "No email"} />
-              <DetailItem label="Contact number" value={currentEmployee.contact_number || "Not provided"} />
+              <DetailItem label="Contact number" value={currentEmployee.contact_number ? formatPhoneNumber(currentEmployee.contact_number) : "Not provided"} />
               <DetailItem label="Hire date" value={currentEmployee.hire_date || "Not provided"} />
               <DetailItem label="Pay method" value={currentPosition?.pay_mode === "fixed" ? "Fixed salary" : currentPosition?.pay_mode === "hybrid" ? "Base + tickets" : currentPosition?.pay_mode === "daily" ? "Daily wage" : "Per ticket"} />
               <DetailItem label="Position monthly base" value={currency.format(toNumber(currentPosition?.monthly_base_salary))} />
               <DetailItem label="Address" value={currentEmployee.address || "Not provided"} />
               <DetailItem label="Notes" value={currentEmployee.notes || "No notes"} />
             </div>
+            <div className="emp-divider" />
+            <h3>Emergency Contact</h3>
+            <div className="emp-info-grid">
+              <DetailItem label="Contact person" value={currentEmployee.emergency_contact_name || "Not provided"} />
+              <DetailItem label="Contact number" value={currentEmployee.emergency_contact_number ? formatPhoneNumber(currentEmployee.emergency_contact_number) : "Not provided"} />
+              <DetailItem label="Relation" value={currentEmployee.emergency_contact_relation || "Not provided"} />
+            </div>
+            <div className="emp-divider" />
+            <h3>Government IDs</h3>
+            <div className="emp-info-grid">
+              <DetailItem label="SSS Number" value={currentEmployee.sss_number || "Not provided"} />
+              <DetailItem label="PhilHealth Number" value={currentEmployee.philhealth_number || "Not provided"} />
+              <DetailItem label="Pag-IBIG Number" value={currentEmployee.pagibig_number || "Not provided"} />
+              <DetailItem label="TIN" value={currentEmployee.tin_number || "Not provided"} />
+            </div>
           </section>
         )}
 
         {activeTab === "payroll" && (
-          <section className="employee-detail-card history-stack">
-            <h3>Employment Details</h3>
-            <section className="history-summary">
-              <div>
-                <p className="eyebrow">Total net pay</p>
-                <strong>{currency.format(totals.net)}</strong>
-              </div>
-              <div>
-                <p className="eyebrow">Paid</p>
-                <strong>{currency.format(totals.paid)}</strong>
-              </div>
-              <div>
-                <p className="eyebrow">Pending</p>
-                <strong>{currency.format(totals.pending)}</strong>
-              </div>
-            </section>
+          <section className="emp-content-card history-stack">
+            <h3>Salary History</h3>
             <DataTable
               empty="No payroll records for this employee yet."
               headers={["Period", "Generated", "Gross", "Allowance", "Deduction", "Net", "Status"]}
@@ -3397,7 +3421,7 @@ export function EmployeeDetailsView({
         )}
 
         {activeTab === "tickets" && (
-          <section className="employee-detail-card history-stack">
+          <section className="emp-content-card history-stack">
             <div className="ticket-section-heading">
               <div>
                 <h3>{currentPosition?.name ?? "Unassigned position"} ticket compensation</h3>
@@ -3433,7 +3457,7 @@ export function EmployeeDetailsView({
         )}
 
         {activeTab === "salary-bond" && (
-          <section className="employee-detail-card history-stack">
+          <section className="emp-content-card history-stack">
             <div className="ticket-section-heading">
               <div>
                 <h3>Salary Bond</h3>
@@ -3485,36 +3509,6 @@ export function EmployeeDetailsView({
           </section>
         )}
 
-        {activeTab === "payments" && (
-          <section className="employee-detail-card history-stack">
-            <h3>Payments</h3>
-            <section className="history-summary">
-              <div>
-                <p className="eyebrow">Paid</p>
-                <strong>{currency.format(totals.paid)}</strong>
-              </div>
-              <div>
-                <p className="eyebrow">Pending</p>
-                <strong>{currency.format(totals.pending)}</strong>
-              </div>
-              <div>
-                <p className="eyebrow">Total deductions</p>
-                <strong>{currency.format(totals.deductions)}</strong>
-              </div>
-            </section>
-            <DataTable
-              empty="No payment records for this employee yet."
-              headers={["Period", "Net", "Paid date", "Status", "Notes"]}
-              rows={history.map(({ item, run }) => [
-                `${monthNames[run.period_month - 1]} ${run.period_year} - ${payPeriodLabel(run.pay_period)}`,
-                currency.format(toNumber(item.net_pay)),
-                item.paid_date || "Not paid",
-                <StatusPill key="status" status={item.status} />,
-                item.notes || "No notes",
-              ])}
-            />
-          </section>
-        )}
 
         {activeTab === "documents" && (
           <section className="employee-detail-card">
@@ -4010,13 +4004,13 @@ export function PayrollView({
     if (!supabase) return;
     const installationTickets = normalizeTicketCount(patch.installation_tickets ?? item.installation_tickets);
     const repairTickets = normalizeTicketCount(patch.repair_tickets ?? item.repair_tickets);
-    const installationRate = toNumber(patch.installation_rate ?? item.installation_rate ?? INSTALLATION_RATE);
-    const repairRate = toNumber(patch.repair_rate ?? item.repair_rate ?? NEW_EMPLOYEE_REPAIR_RATE);
+    const installationRate = toNumber(patch.installation_rate ?? item.installation_rate);
+    const repairRate = toNumber(patch.repair_rate ?? item.repair_rate);
     const allowances = toNumber(patch.allowances ?? item.allowances);
     const deductions = toNumber(patch.deductions ?? item.deductions);
-    const legacyTicketFieldsChanged = patch.installation_tickets !== undefined || patch.repair_tickets !== undefined ||
+    const ticketFieldsChanged = patch.installation_tickets !== undefined || patch.repair_tickets !== undefined ||
       patch.installation_rate !== undefined || patch.repair_rate !== undefined;
-    const ticketPay = legacyTicketFieldsChanged
+    const ticketPay = ticketFieldsChanged
       ? ticketGrossPay(installationTickets, repairTickets, installationRate, repairRate)
       : toNumber(item.ticket_pay);
     const basePay = toNumber(item.base_pay);
@@ -4227,7 +4221,7 @@ function PayrollItemsTable({
           title={item.employee_name}
           notes={item.notes || (item.pay_mode === "fixed" ? "Fixed salary" : item.pay_mode === "hybrid" ? "Base + tickets" : item.pay_mode === "daily" ? "Daily wage" : "Per ticket")}
         />,
-        item.position_name || "Legacy",
+        item.position_name || "—",
         item.pay_mode === "daily" ? currency.format(toNumber(item.daily_rate)) : currency.format(toNumber(item.base_pay)),
         item.pay_mode === "daily" ? `${item.days_worked} / ${item.total_working_days} days` : currency.format(toNumber(item.ticket_pay)),
         item.pay_mode === "daily" ? `${currency.format(toNumber(item.daily_rate))} × ${item.days_worked} days` : (item.ticket_details?.map((detail) => `${detail.category_name}: ${detail.ticket_count} × ${currency.format(toNumber(detail.rate))}`).join("; ") || "—"),
@@ -4742,6 +4736,9 @@ function EmployeeForm({
           philhealth_number: initial.philhealth_number,
           pagibig_number: initial.pagibig_number,
           tin_number: initial.tin_number,
+          emergency_contact_name: initial.emergency_contact_name ?? "",
+          emergency_contact_number: initial.emergency_contact_number ?? "",
+          emergency_contact_relation: initial.emergency_contact_relation ?? "",
           notes: initial.notes,
         }
       : emptyEmployee,
@@ -4847,11 +4844,19 @@ function EmployeeForm({
                 <div className="emp-form-fields">
                   <TextField label="Full name" value={values.full_name} onChange={(full_name) => setValues({ ...values, full_name })} required />
                   <TextField label="Email address" type="email" value={values.email} onChange={(email) => setValues({ ...values, email })} />
-                  <TextField label="Contact number" value={values.contact_number} onChange={(contact_number) => setValues({ ...values, contact_number })} />
+                  <TextField label="Contact number" type="tel" placeholder="+63 XXXX XXX XXXX" value={formatPhoneNumber(values.contact_number)} onChange={(v) => setValues({ ...values, contact_number: normalizePhoneDigits(v) })} />
                   <label className="full">
                     Address
                     <textarea rows={2} value={values.address} onChange={(event) => setValues({ ...values, address: event.target.value })} placeholder="Street, city, province" />
                   </label>
+                </div>
+              </div>
+              <div className="emp-form-group">
+                <h3>Emergency Contact</h3>
+                <div className="emp-form-fields">
+                  <TextField label="Contact person" value={values.emergency_contact_name} onChange={(emergency_contact_name) => setValues({ ...values, emergency_contact_name })} />
+                  <TextField label="Contact number" type="tel" placeholder="+63 XXXX XXX XXXX" value={formatPhoneNumber(values.emergency_contact_number)} onChange={(v) => setValues({ ...values, emergency_contact_number: normalizePhoneDigits(v) })} />
+                  <TextField label="Relation (e.g., Spouse, Parent)" value={values.emergency_contact_relation} onChange={(emergency_contact_relation) => setValues({ ...values, emergency_contact_relation })} />
                 </div>
               </div>
             </div>
@@ -4869,11 +4874,15 @@ function EmployeeForm({
                       value={values.position_id}
                       onChange={(event) => {
                         const position = positions.find((item) => item.id === event.target.value);
+                        const salary = (position?.pay_mode === "fixed" || position?.pay_mode === "hybrid")
+                          ? String(position.monthly_base_salary)
+                          : "0";
                         setValues({
                           ...values,
                           position_id: event.target.value,
                           role: position?.name ?? "",
                           department: position?.department ?? "",
+                          monthly_salary: salary,
                         });
                       }}
                     >
@@ -4982,7 +4991,7 @@ function EmployeeForm({
             </div>
             <div className="emp-summary-row">
               <span>Phone</span>
-              <strong>{values.contact_number || "—"}</strong>
+              <strong>{values.contact_number ? formatPhoneNumber(values.contact_number) : "—"}</strong>
             </div>
             <div className="emp-summary-row">
               <span>Hire date</span>
@@ -5040,7 +5049,7 @@ function EmployeeForm({
             ))}
           </select>
         </label>
-        <TextField label="Contact number" value={values.contact_number} onChange={(contact_number) => setValues({ ...values, contact_number })} />
+        <TextField label="Contact number" type="tel" placeholder="+63 XXXX XXX XXXX" value={formatPhoneNumber(values.contact_number)} onChange={(v) => setValues({ ...values, contact_number: normalizePhoneDigits(v) })} />
         <TextField label="Email" type="email" value={values.email} onChange={(email) => setValues({ ...values, email })} />
         <label>
           Status
@@ -5184,6 +5193,7 @@ function TextField({
   max,
   min,
   onChange,
+  placeholder,
   required,
   step,
   type = "text",
@@ -5193,6 +5203,7 @@ function TextField({
   max?: string;
   min?: string;
   onChange: (value: string) => void;
+  placeholder?: string;
   required?: boolean;
   step?: string;
   type?: string;
@@ -5205,6 +5216,7 @@ function TextField({
         max={max}
         min={min}
         onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
         required={required}
         step={step}
         type={type}

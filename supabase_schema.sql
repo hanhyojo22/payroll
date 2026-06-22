@@ -575,42 +575,116 @@
   add constraint payroll_run_item_ticket_details_payroll_run_item_id_category_name_rate_key
   unique (payroll_run_item_id, category_name, rate);
 
-  -- Group legacy employees by their old rate pair so no future rate is silently changed.
+  -- Convert pre-position employees into normal ticket-based positions by role and rate pair.
+  -- The validation trigger may already exist when this migration is re-run.
+  drop trigger if exists validate_employee_position_trigger on public.employees;
+
   do $$
   declare
     rate_group record;
-    legacy_position_id uuid;
+    migrated_position_id uuid;
+    migrated_position_name text;
   begin
     for rate_group in
-      select distinct user_id, installation_rate, repair_rate
-      from public.employees
-      where position_id is null
+      select
+        e.user_id,
+        case
+          when btrim(coalesce(e.role, '')) = '' or e.role ~* '^Legacy[[:space:]]' then 'Ticket-based position'
+          else btrim(e.role)
+        end as role_name,
+        max(e.department) as department,
+        e.installation_rate,
+        e.repair_rate
+      from public.employees e
+      left join public.positions current_position on current_position.id = e.position_id
+      where e.position_id is null
+         or current_position.description = 'Migrated from employee installation and repair rates.'
+      group by e.user_id,
+        case
+          when btrim(coalesce(e.role, '')) = '' or e.role ~* '^Legacy[[:space:]]' then 'Ticket-based position'
+          else btrim(e.role)
+        end,
+        e.installation_rate, e.repair_rate
     loop
+      migrated_position_name := rate_group.role_name ||
+        case when rate_group.role_name = 'Ticket-based position' then ' ' else ' - Ticket ' end ||
+        trim(to_char(rate_group.installation_rate, 'FM999999990.00')) || '/' ||
+        trim(to_char(rate_group.repair_rate, 'FM999999990.00'));
+
       insert into public.positions (user_id, name, department, description, pay_mode, monthly_base_salary)
       values (
         rate_group.user_id,
-        'Legacy ' || trim(to_char(rate_group.installation_rate, 'FM999999990.00')) || '/' || trim(to_char(rate_group.repair_rate, 'FM999999990.00')),
-        'Legacy',
-        'Migrated from employee installation and repair rates.',
+        migrated_position_name,
+        coalesce(rate_group.department, ''),
+        'Ticket-based position created from existing employee rates.',
         'ticket',
         0
       )
       on conflict (user_id, name) do update set updated_at = now()
-      returning id into legacy_position_id;
+      returning id into migrated_position_id;
 
       insert into public.position_ticket_categories (user_id, position_id, name, rate, display_order)
       values
-        (rate_group.user_id, legacy_position_id, 'Installation', rate_group.installation_rate, 0),
-        (rate_group.user_id, legacy_position_id, 'Repair', rate_group.repair_rate, 1)
+        (rate_group.user_id, migrated_position_id, 'Installation', rate_group.installation_rate, 0),
+        (rate_group.user_id, migrated_position_id, 'Repair', rate_group.repair_rate, 1)
       on conflict (position_id, name) do nothing;
 
       update public.employees
-      set position_id = legacy_position_id
+      set position_id = migrated_position_id,
+          role = migrated_position_name,
+          department = coalesce(rate_group.department, department)
       where user_id = rate_group.user_id
+        and case
+          when btrim(coalesce(role, '')) = '' or role ~* '^Legacy[[:space:]]' then 'Ticket-based position'
+          else btrim(role)
+        end = rate_group.role_name
         and installation_rate = rate_group.installation_rate
         and repair_rate = rate_group.repair_rate
-        and position_id is null;
+        and (
+          position_id is null
+          or position_id in (
+            select id from public.positions
+            where description = 'Migrated from employee installation and repair rates.'
+          )
+        );
     end loop;
+
+    update public.daily_ticket_entries d
+    set position_id = e.position_id,
+        position_name = coalesce(p.name, '')
+    from public.employees e
+    left join public.positions p on p.id = e.position_id
+    where d.employee_id = e.id
+      and (
+        d.position_id is null
+        or d.position_id in (
+          select id from public.positions
+          where description = 'Migrated from employee installation and repair rates.'
+        )
+      );
+
+    update public.payroll_run_items pri
+    set position_id = e.position_id,
+        position_name = coalesce(p.name, '')
+    from public.employees e
+    left join public.positions p on p.id = e.position_id
+    where pri.employee_id = e.id
+      and (
+        pri.position_id is null
+        or pri.position_id in (
+          select id from public.positions
+          where description = 'Migrated from employee installation and repair rates.'
+        )
+      );
+
+    delete from public.position_ticket_categories
+    where position_id in (
+      select id from public.positions
+      where description = 'Migrated from employee installation and repair rates.'
+    );
+
+    delete from public.positions
+    where description = 'Migrated from employee installation and repair rates.';
   end $$;
 
   update public.daily_ticket_entries d
@@ -1099,3 +1173,8 @@ drop policy if exists "billing records are owned by their user" on public.billin
 create policy "billing records are owned by their user"
 on public.billing_records for all
 using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- Emergency contact fields on employees
+alter table public.employees add column if not exists emergency_contact_name text not null default '';
+alter table public.employees add column if not exists emergency_contact_number text not null default '';
+alter table public.employees add column if not exists emergency_contact_relation text not null default '';

@@ -156,6 +156,9 @@ export type Employee = {
   philhealth_number: string;
   pagibig_number: string;
   tin_number: string;
+  emergency_contact_name: string;
+  emergency_contact_number: string;
+  emergency_contact_relation: string;
   notes: string;
   created_at: string;
   updated_at: string;
@@ -397,6 +400,9 @@ export type EmployeeFormValues = {
   philhealth_number: string;
   pagibig_number: string;
   tin_number: string;
+  emergency_contact_name: string;
+  emergency_contact_number: string;
+  emergency_contact_relation: string;
   notes: string;
 };
 
