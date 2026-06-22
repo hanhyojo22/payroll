@@ -4162,9 +4162,9 @@ function PayrollItemsTable({
           notes={item.notes || (item.pay_mode === "fixed" ? "Fixed salary" : item.pay_mode === "hybrid" ? "Base + tickets" : item.pay_mode === "daily" ? "Daily wage" : "Per ticket")}
         />,
         item.position_name || "Legacy",
-        currency.format(toNumber(item.base_pay)),
-        currency.format(toNumber(item.ticket_pay)),
-        item.ticket_details?.map((detail) => `${detail.category_name}: ${detail.ticket_count} × ${currency.format(toNumber(detail.rate))}`).join("; ") || "—",
+        item.pay_mode === "daily" ? currency.format(toNumber(item.daily_rate)) : currency.format(toNumber(item.base_pay)),
+        item.pay_mode === "daily" ? `${item.days_worked} / ${item.total_working_days} days` : currency.format(toNumber(item.ticket_pay)),
+        item.pay_mode === "daily" ? `${currency.format(toNumber(item.daily_rate))} × ${item.days_worked} days` : (item.ticket_details?.map((detail) => `${detail.category_name}: ${detail.ticket_count} × ${currency.format(toNumber(detail.rate))}`).join("; ") || "—"),
         currency.format(toNumber(item.gross_pay)),
         currency.format(toNumber(item.allowances)),
         currency.format(toNumber(item.deductions)),
