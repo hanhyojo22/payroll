@@ -66,6 +66,7 @@ import { queueMutation, readCachedResource, writeCachedResource, type PendingMut
 import { flushPendingMutations, isOfflineLikeError } from "./lib/offlineSync";
 import type {
   AttendanceEntry,
+  AttendanceStatus,
   CollectionFormValues,
   CollectionReminder,
   DashboardSummary,
@@ -87,6 +88,7 @@ import type {
 } from "./types";
 
 type View =
+  | "attendance"
   | "dashboard"
   | "employees"
   | "employee-add"
@@ -131,6 +133,7 @@ const initialResourceHydration: Record<ResourceKey, boolean> = {
 };
 
 const viewPaths: Record<View, string> = {
+  attendance: "/attendance",
   dashboard: "/dashboard",
   employees: "/employees",
   "employee-add": "/employees/new",
@@ -146,13 +149,14 @@ const viewPaths: Record<View, string> = {
 };
 
 const viewResources: Record<View, ResourceKey[]> = {
+  attendance: ["positions", "employees", "attendanceEntries"],
   dashboard: ["dashboardSummary"],
   employees: ["employees", "payrollRuns", "salaryBonds"],
   "employee-add": ["employees", "payrollRuns", "salaryBonds"],
   compensation: ["positions", "employees"],
   "daily-tickets": ["positions", "employees", "dailyTicketEntries"],
   "salary-bonds": ["employees", "salaryBonds"],
-  payroll: ["positions", "employees", "dailyTicketEntries", "payrollRuns", "salaryBonds"],
+  payroll: ["positions", "employees", "attendanceEntries", "dailyTicketEntries", "payrollRuns", "salaryBonds"],
   "payroll-history": ["payrollHistory"],
   payments: ["payments"],
   "payment-history": ["payments"],
@@ -677,6 +681,10 @@ function Workspace({ session }: { session: Session }) {
     ]);
   }
 
+  async function refreshAttendancePage() {
+    await loadResource("attendanceEntries", true);
+  }
+
   async function refreshPayrollPage() {
     await Promise.all([
       loadResource("payrollRuns", true),
@@ -801,6 +809,7 @@ function Workspace({ session }: { session: Session }) {
               </div>
             )}
           </div>
+          <NavButton active={view === "attendance"} icon={<CheckCircle2 size={18} />} label="Attendance" onClick={() => navigate("attendance")} />
           <NavButton active={view === "payroll"} icon={<BadgeDollarSign size={18} />} label="Payroll" onClick={() => navigate("payroll")} />
           <NavButton active={view === "salary-bonds"} icon={<CreditCard size={18} />} label="Salary Bond" onClick={() => navigate("salary-bonds")} />
           <NavButton active={view === "payroll-history"} icon={<History size={18} />} label="Pay History" onClick={() => navigate("payroll-history")} />
@@ -903,6 +912,17 @@ function Workspace({ session }: { session: Session }) {
                   employees={employees}
                   positions={positions}
                   onChange={refreshDailyTicketsPage}
+                  onQueueOfflineMutation={queueOfflineMutation}
+                  setNotice={setNotice}
+                  userId={session.user.id}
+                />
+              )}
+              {view === "attendance" && (
+                <AttendanceView
+                  attendanceEntries={attendanceEntries}
+                  employees={employees}
+                  positions={positions}
+                  onChange={refreshAttendancePage}
                   onQueueOfflineMutation={queueOfflineMutation}
                   setNotice={setNotice}
                   userId={session.user.id}
@@ -2082,6 +2102,205 @@ export function DailyTicketEntryView({
         })}
       </div>
       {drafts.length === 0 && <div className="panel"><p className="muted">No active employees currently have a ticket or hybrid position.</p></div>}
+    </div>
+  );
+}
+
+export function AttendanceView({
+  attendanceEntries,
+  employees,
+  positions,
+  onChange,
+  onQueueOfflineMutation,
+  setNotice,
+  userId,
+}: {
+  attendanceEntries: AttendanceEntry[];
+  employees: Employee[];
+  positions: Position[];
+  onChange: () => Promise<void>;
+  onQueueOfflineMutation: QueueOfflineMutation;
+  setNotice: (notice: Notice) => void;
+  userId: string;
+}) {
+  const [entryDate, setEntryDate] = useState(todayKey());
+  const [drafts, setDrafts] = useState<Record<string, AttendanceStatus>>({});
+  const [busyEmployeeId, setBusyEmployeeId] = useState("");
+
+  const dailyEmployees = employees.filter((emp) => {
+    if (emp.status !== "active") return false;
+    const pos = positions.find((p) => p.id === emp.position_id);
+    return pos?.pay_mode === "daily" && pos.status === "active";
+  });
+
+  const existingEntries = new Map(
+    attendanceEntries
+      .filter((e) => e.entry_date === entryDate)
+      .map((e) => [e.employee_id, e]),
+  );
+
+  function statusFor(employeeId: string): AttendanceStatus | "" {
+    if (drafts[employeeId] !== undefined) return drafts[employeeId];
+    const entry = existingEntries.get(employeeId);
+    return entry?.status ?? "";
+  }
+
+  function setStatus(employeeId: string, status: AttendanceStatus) {
+    setDrafts((prev) => ({ ...prev, [employeeId]: status }));
+  }
+
+  function markAllPresent() {
+    const newDrafts: Record<string, AttendanceStatus> = {};
+    dailyEmployees.forEach((emp) => {
+      if (!existingEntries.has(emp.id)) {
+        newDrafts[emp.id] = "present";
+      }
+    });
+    setDrafts((prev) => ({ ...prev, ...newDrafts }));
+  }
+
+  async function saveEntry(emp: Employee) {
+    const status = statusFor(emp.id);
+    if (!status) return;
+    setBusyEmployeeId(emp.id);
+    const pos = positions.find((p) => p.id === emp.position_id);
+    const existing = existingEntries.get(emp.id);
+    const payload = {
+      user_id: userId,
+      employee_id: emp.id,
+      employee_name: emp.full_name,
+      position_id: emp.position_id,
+      position_name: pos?.name ?? "",
+      entry_date: entryDate,
+      status,
+    };
+
+    if (!navigator.onLine || !supabase) {
+      await onQueueOfflineMutation({
+        resource: "attendanceEntries",
+        affectedResources: ["attendanceEntries"],
+        operation: existing ? "update" : "upsert",
+        table: "attendance_entries",
+        recordId: existing?.id,
+        payload,
+        options: existing ? undefined : { onConflict: "user_id,entry_date,employee_id" },
+      });
+      setDrafts((prev) => { const next = { ...prev }; delete next[emp.id]; return next; });
+      setBusyEmployeeId("");
+      return;
+    }
+
+    const result = existing
+      ? await supabase.from("attendance_entries").update({ status }).eq("id", existing.id)
+      : await supabase.from("attendance_entries").upsert(payload, { onConflict: "user_id,entry_date,employee_id" });
+
+    if (result.error) {
+      if (isOfflineLikeError(result.error)) {
+        await onQueueOfflineMutation({
+          resource: "attendanceEntries",
+          affectedResources: ["attendanceEntries"],
+          operation: existing ? "update" : "upsert",
+          table: "attendance_entries",
+          recordId: existing?.id,
+          payload,
+          options: existing ? undefined : { onConflict: "user_id,entry_date,employee_id" },
+        });
+      } else {
+        setNotice({ type: "error", text: result.error.message ?? "Failed to save attendance." });
+      }
+    } else {
+      setDrafts((prev) => { const next = { ...prev }; delete next[emp.id]; return next; });
+    }
+    setBusyEmployeeId("");
+    await onChange();
+  }
+
+  async function saveAll() {
+    for (const emp of dailyEmployees) {
+      if (statusFor(emp.id)) {
+        await saveEntry(emp);
+      }
+    }
+    setNotice({ type: "success", text: "Attendance saved." });
+  }
+
+  useEffect(() => {
+    setDrafts({});
+  }, [entryDate]);
+
+  return (
+    <div className="stack">
+      <div className="section-heading">
+        <div>
+          <p className="eyebrow">Daily tracking</p>
+          <h2>Attendance</h2>
+        </div>
+        <div className="inline-actions">
+          <button className="secondary-button compact" onClick={markAllPresent} type="button">
+            <CheckCircle2 size={15} /> Mark all present
+          </button>
+          <button className="primary-button compact" onClick={saveAll} type="button">
+            <Save size={15} /> Save all
+          </button>
+        </div>
+      </div>
+      <div className="filter-bar">
+        <input type="date" value={entryDate} onChange={(e) => setEntryDate(e.target.value)} />
+      </div>
+      {dailyEmployees.length === 0 ? (
+        <p className="muted-text">No employees with daily-wage positions found.</p>
+      ) : (
+        <div className="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Employee</th>
+                <th>Position</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {dailyEmployees.map((emp) => {
+                const pos = positions.find((p) => p.id === emp.position_id);
+                const current = statusFor(emp.id);
+                const saved = existingEntries.has(emp.id);
+                const dirty = drafts[emp.id] !== undefined;
+                return (
+                  <tr key={emp.id}>
+                    <td>{emp.full_name}</td>
+                    <td>{pos?.name ?? "—"}</td>
+                    <td>
+                      <select
+                        value={current}
+                        onChange={(e) => setStatus(emp.id, e.target.value as AttendanceStatus)}
+                      >
+                        <option value="">— Select —</option>
+                        <option value="present">Present</option>
+                        <option value="absent">Absent</option>
+                        <option value="half_day">Half Day</option>
+                      </select>
+                    </td>
+                    <td>
+                      {dirty && (
+                        <button
+                          className="secondary-button compact"
+                          disabled={busyEmployeeId === emp.id}
+                          onClick={() => saveEntry(emp)}
+                          type="button"
+                        >
+                          <Save size={14} /> {busyEmployeeId === emp.id ? "Saving..." : "Save"}
+                        </button>
+                      )}
+                      {saved && !dirty && <span className="badge success">Saved</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
