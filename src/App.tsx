@@ -1611,7 +1611,8 @@ function PositionsView({
       description: values.description.trim(),
       status: values.status,
       pay_mode: values.pay_mode,
-      monthly_base_salary: values.pay_mode === "ticket" ? 0 : toNumber(values.monthly_base_salary),
+      monthly_base_salary: (values.pay_mode === "fixed" || values.pay_mode === "hybrid") ? toNumber(values.monthly_base_salary) : 0,
+      daily_rate: values.pay_mode === "daily" ? toNumber(values.daily_rate) : 0,
     };
     const categoryPayloads = categories.map((category) => ({ ...category, position_id: positionId }));
     const removedCategories = editing?.categories.filter(
@@ -1777,7 +1778,7 @@ function PositionsView({
         rows={rows.map((position) => [
           <RecordTitle key="name" title={position.name} notes={position.description || "No description"} />,
           position.department || "Unassigned",
-          position.pay_mode === "fixed" ? "Fixed salary" : position.pay_mode === "ticket" ? "Per ticket" : "Base + ticket",
+          position.pay_mode === "fixed" ? "Fixed salary" : position.pay_mode === "ticket" ? "Per ticket" : position.pay_mode === "daily" ? "Daily wage" : "Base + ticket",
           currency.format(toNumber(position.monthly_base_salary)),
           position.categories.filter((category) => category.status === "active").map((category) => `${category.name} (${currency.format(toNumber(category.rate))})`).join(", ") || "None",
           employees.filter((employee) => employee.position_id === position.id).length,
@@ -1867,9 +1868,11 @@ function PositionForm({
             <option value="fixed">Fixed salary</option>
             <option value="ticket">Per closed ticket</option>
             <option value="hybrid">Base salary + tickets</option>
+            <option value="daily">Daily wage</option>
           </select>
         </label>
-        {values.pay_mode !== "ticket" && <TextField label="Monthly base salary" min="0" step="0.01" type="number" value={values.monthly_base_salary} onChange={(monthly_base_salary) => setValues({ ...values, monthly_base_salary })} required />}
+        {(values.pay_mode === "fixed" || values.pay_mode === "hybrid") && <TextField label="Monthly base salary" min="0" step="0.01" type="number" value={values.monthly_base_salary} onChange={(monthly_base_salary) => setValues({ ...values, monthly_base_salary })} required />}
+        {values.pay_mode === "daily" && <TextField label="Daily rate" min="0" step="0.01" type="number" value={values.daily_rate} onChange={(daily_rate) => setValues({ ...values, daily_rate })} required />}
         <label className="full">
           Description
           <textarea rows={3} value={values.description} onChange={(event) => setValues({ ...values, description: event.target.value })} />
@@ -1936,7 +1939,7 @@ export function DailyTicketEntryView({
       const entry = dailyTicketEntries.find((item) => item.employee_id === employee.id && item.entry_date === entryDate);
       const effectivePositionId = entry?.position_id ?? employee.position_id;
       const position = effectivePositionId ? activePositions.get(effectivePositionId) : undefined;
-      if (!position || (!entry && position.status !== "active") || position.pay_mode === "fixed") return [];
+      if (!position || (!entry && position.status !== "active") || position.pay_mode === "fixed" || position.pay_mode === "daily") return [];
       const counts = Object.fromEntries(
         position.categories
           .filter((category) => category.status === "active")
@@ -3064,7 +3067,7 @@ export function EmployeeDetailsView({
               <DetailItem label="Email" value={currentEmployee.email || "No email"} />
               <DetailItem label="Contact number" value={currentEmployee.contact_number || "Not provided"} />
               <DetailItem label="Hire date" value={currentEmployee.hire_date || "Not provided"} />
-              <DetailItem label="Pay method" value={currentPosition?.pay_mode === "fixed" ? "Fixed salary" : currentPosition?.pay_mode === "hybrid" ? "Base + tickets" : "Per ticket"} />
+              <DetailItem label="Pay method" value={currentPosition?.pay_mode === "fixed" ? "Fixed salary" : currentPosition?.pay_mode === "hybrid" ? "Base + tickets" : currentPosition?.pay_mode === "daily" ? "Daily wage" : "Per ticket"} />
               <DetailItem label="Position monthly base" value={currency.format(toNumber(currentPosition?.monthly_base_salary))} />
               <DetailItem label="Address" value={currentEmployee.address || "Not provided"} />
               <DetailItem label="Notes" value={currentEmployee.notes || "No notes"} />
@@ -3890,7 +3893,7 @@ function PayrollItemsTable({
         <RecordTitle
           key="employee"
           title={item.employee_name}
-          notes={item.notes || (item.pay_mode === "fixed" ? "Fixed salary" : item.pay_mode === "hybrid" ? "Base + tickets" : "Per ticket")}
+          notes={item.notes || (item.pay_mode === "fixed" ? "Fixed salary" : item.pay_mode === "hybrid" ? "Base + tickets" : item.pay_mode === "daily" ? "Daily wage" : "Per ticket")}
         />,
         item.position_name || "Legacy",
         currency.format(toNumber(item.base_pay)),
@@ -4804,7 +4807,7 @@ function EmployeeForm({
                 {selectedPosition && (
                   <div className="emp-position-badge">
                     <Briefcase size={14} />
-                    <span>{selectedPosition.pay_mode === "fixed" ? "Fixed salary" : selectedPosition.pay_mode === "hybrid" ? "Base + ticket" : "Per ticket"}</span>
+                    <span>{selectedPosition.pay_mode === "fixed" ? "Fixed salary" : selectedPosition.pay_mode === "hybrid" ? "Base + ticket" : selectedPosition.pay_mode === "daily" ? "Daily wage" : "Per ticket"}</span>
                     {selectedPosition.monthly_base_salary > 0 && (
                       <>
                         <span className="emp-position-sep" />
