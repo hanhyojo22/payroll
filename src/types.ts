@@ -1,6 +1,7 @@
 export type PaymentType = "loan" | "bill";
 export type PaymentStatus = "pending" | "paid" | "overdue";
-export type CollectionStatus = "pending" | "collected" | "overdue";
+export type CollectionStatus = "pending" | "partial" | "collected" | "overdue" | "archived";
+export type CollectionPaymentMethod = "cash" | "bank_transfer" | "check" | "e_wallet" | "card" | "other";
 export type PayrollItemStatus = "pending" | "paid";
 export type SalaryBondStatus = "active" | "completed" | "archived";
 export type EmployeeStatus = "active" | "inactive";
@@ -11,6 +12,8 @@ export type PositionPayMode = "fixed" | "ticket" | "hybrid" | "daily";
 export type PayrollPayPeriod = "first_half" | "second_half";
 export type ResourceKey =
   | "attendanceEntries"
+  | "billingRecords"
+  | "billingSettings"
   | "collections"
   | "dashboardSummary"
   | "dailyTicketEntries"
@@ -80,12 +83,35 @@ export type PaymentReminder = {
 export type CollectionReminder = {
   id: string;
   user_id: string;
+  collection_no: string | null;
   title: string;
   client_name: string;
+  external_reference: string;
+  issue_date: string;
   amount: number;
   due_date: string;
-  status: CollectionStatus;
+  status: CollectionStatus | "legacy_pending";
   notes: string;
+  archived_at: string | null;
+  amount_paid: number;
+  outstanding_balance: number;
+  payments: CollectionPayment[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type CollectionPayment = {
+  id: string;
+  user_id: string;
+  collection_id: string;
+  amount: number;
+  payment_date: string;
+  payment_method: CollectionPaymentMethod;
+  reference_number: string;
+  notes: string;
+  is_void: boolean;
+  void_reason: string;
+  voided_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -195,6 +221,15 @@ export type DashboardSummary = {
   paidPayroll: number;
   pendingCollections: number;
   collectedTotal: number;
+  overdueCollectionBalance: number;
+  collectedThisMonth: number;
+  collectionAging: {
+    current: number;
+    days1To30: number;
+    days31To60: number;
+    days61To90: number;
+    daysOver90: number;
+  };
   latestRun: DashboardLatestRun | null;
   dueTodayPayments: PaymentReminder[];
   overduePayments: PaymentReminder[];
@@ -269,6 +304,42 @@ export type PayrollTicketDetail = {
   created_at: string;
 };
 
+export type BillingSettings = {
+  id: string;
+  user_id: string;
+  billing_rate: number;
+  collections_pct: number;
+  client_name: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type BillingRecord = {
+  id: string;
+  user_id: string;
+  billing_month: number;
+  billing_year: number;
+  total_tickets: number;
+  disputed_tickets: number;
+  billable_tickets: number;
+  billing_rate: number;
+  billing_amount: number;
+  collections_pct: number;
+  collections_amount: number;
+  collectibles_amount: number;
+  collection_id: string | null;
+  notes: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type BillingFormValues = {
+  billing_month: string;
+  billing_year: string;
+  disputed_tickets: string;
+  notes: string;
+};
+
 export type PaymentFormValues = {
   title: string;
   type: PaymentType;
@@ -281,9 +352,18 @@ export type PaymentFormValues = {
 export type CollectionFormValues = {
   title: string;
   client_name: string;
+  external_reference: string;
+  issue_date: string;
   amount: string;
   due_date: string;
-  status: CollectionStatus;
+  notes: string;
+};
+
+export type CollectionPaymentFormValues = {
+  amount: string;
+  payment_date: string;
+  payment_method: CollectionPaymentMethod;
+  reference_number: string;
   notes: string;
 };
 
