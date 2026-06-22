@@ -67,6 +67,7 @@ import {
 } from "./lib/supabaseData";
 import { queueMutation, readCachedResource, writeCachedResource, type PendingMutation } from "./lib/offlineDb";
 import { flushPendingMutations, isOfflineLikeError } from "./lib/offlineSync";
+import { BillingFeature } from "./features/billing/BillingFeature";
 import { CollectionHistoryFeature, CollectionsFeature } from "./features/collections/CollectionsFeature";
 import { normalizeReceivable } from "./features/collections/collectionRepository";
 import type {
@@ -96,6 +97,7 @@ import type {
 
 type View =
   | "attendance"
+  | "billing"
   | "dashboard"
   | "employees"
   | "employee-add"
@@ -145,6 +147,7 @@ const initialResourceHydration: Record<ResourceKey, boolean> = {
 
 const viewPaths: Record<View, string> = {
   attendance: "/attendance",
+  billing: "/billing",
   dashboard: "/dashboard",
   employees: "/employees",
   "employee-add": "/employees/new",
@@ -161,6 +164,7 @@ const viewPaths: Record<View, string> = {
 
 const viewResources: Record<View, ResourceKey[]> = {
   attendance: ["positions", "employees", "attendanceEntries"],
+  billing: ["billingRecords", "billingSettings", "dailyTicketEntries", "collections"],
   dashboard: ["dashboardSummary"],
   employees: ["employees", "payrollRuns", "salaryBonds"],
   "employee-add": ["employees", "payrollRuns", "salaryBonds"],
@@ -851,6 +855,7 @@ function Workspace({ session }: { session: Session }) {
           <NavButton active={view === "payments"} icon={<CreditCard size={18} />} label="Payments" onClick={() => navigate("payments")} />
           <NavButton active={view === "payment-history"} icon={<CalendarClock size={18} />} label="Bill History" onClick={() => navigate("payment-history")} />
           <NavButton active={view === "collections"} icon={<BadgeDollarSign size={18} />} label="Collections" onClick={() => navigate("collections")} />
+          <NavButton active={view === "billing"} icon={<FileText size={18} />} label="Billing" onClick={() => navigate("billing")} />
           <NavButton active={view === "collection-history"} icon={<History size={18} />} label="Collection History" onClick={() => navigate("collection-history")} />
           <NavButton active={false} icon={<FileText size={18} />} label="Reports" onClick={() => navigate("compensation")} />
           <NavButton active={false} icon={<Bell size={18} />} label="Reminders" onClick={() => navigate("dashboard")} />
@@ -1003,6 +1008,19 @@ function Workspace({ session }: { session: Session }) {
               )}
               {view === "payment-history" && (
                 <PaymentHistoryView payments={payments} />
+              )}
+              {view === "billing" && (
+                <BillingFeature
+                  billingRecords={billingRecords}
+                  billingSettings={billingSettings}
+                  collections={collections}
+                  dailyTicketEntries={dailyTicketEntries}
+                  onChange={refreshBillingPage}
+                  onLocalBillingRecordsChange={setBillingRecords}
+                  onQueueOfflineMutation={queueOfflineMutation}
+                  setNotice={setNotice}
+                  userId={session.user.id}
+                />
               )}
               {view === "collections" && (
                 <CollectionsFeature
