@@ -165,8 +165,8 @@ const viewResources: Record<View, ResourceKey[]> = {
   compensation: ["positions", "employees"],
   "daily-tickets": ["positions", "employees", "dailyTicketEntries"],
   "salary-bonds": ["employees", "salaryBonds"],
-  payroll: ["positions", "employees", "attendanceEntries", "dailyTicketEntries", "payrollRuns", "salaryBonds"],
-  "payroll-history": ["payrollHistory"],
+  payroll: ["positions", "employees", "attendanceEntries", "dailyTicketEntries", "payrollRuns", "salaryBonds", "payrollHistory"],
+  "payroll-history": ["positions", "employees", "attendanceEntries", "dailyTicketEntries", "payrollRuns", "salaryBonds", "payrollHistory"],
   payments: ["payments"],
   "payment-history": ["payments"],
   collections: ["collections"],
@@ -496,8 +496,7 @@ function Login() {
 function Workspace({ session }: { session: Session }) {
   const [view, setView] = useState<View>(() => viewFromPath(window.location.pathname));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [employeeMenuOpen, setEmployeeMenuOpen] = useState(false);
-  const [dailyTicketMenuOpen, setDailyTicketMenuOpen] = useState(false);
+  const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary>(emptyDashboardSummary);
   const [payments, setPayments] = useState<PaymentReminder[]>([]);
   const [collections, setCollections] = useState<CollectionReminder[]>([]);
@@ -831,65 +830,40 @@ function Workspace({ session }: { session: Session }) {
           </div>
         </div>
         <nav className="nav-list" aria-label="Main navigation">
+          <p className="nav-section-label">Team</p>
           <NavButton active={view === "dashboard"} icon={<LayoutDashboard size={18} />} label="Dashboard" onClick={() => navigate("dashboard")} />
-          <div className="nav-group">
-            <button
-              className={view === "employees" || view === "employee-add" ? "nav-button active" : "nav-button"}
-              onClick={() => setEmployeeMenuOpen((open) => !open)}
-              type="button"
-            >
-              <Users size={18} />
-              Employees
-              <ChevronDown className={employeeMenuOpen ? "nav-chevron open" : "nav-chevron"} size={16} />
-            </button>
-            {employeeMenuOpen && (
-              <div className="nav-submenu">
-                <button className={view === "employees" ? "active" : ""} onClick={() => navigate("employees")} type="button">
-                  Employee List
-                </button>
-                <button className={view === "employee-add" ? "active" : ""} onClick={() => navigate("employee-add")} type="button">
-                  Add Employee
-                </button>
-              </div>
-            )}
-          </div>
-          <NavButton active={view === "compensation"} icon={<Briefcase size={18} />} label="Positions" onClick={() => navigate("compensation")} />
-          <div className="nav-group">
-            <button
-              className={view === "daily-tickets" ? "nav-button active" : "nav-button"}
-              onClick={() => setDailyTicketMenuOpen((open) => !open)}
-              type="button"
-            >
-              <CalendarClock size={18} />
-              Daily Tickets
-              <ChevronDown className={dailyTicketMenuOpen ? "nav-chevron open" : "nav-chevron"} size={16} />
-            </button>
-            {dailyTicketMenuOpen && (
-              <div className="nav-submenu">
-                <button className={view === "daily-tickets" ? "active" : ""} onClick={() => navigate("daily-tickets")} type="button">
-                  Daily Ticket Entry
-                </button>
-                <button onClick={() => navigate("daily-tickets")} type="button">
-                  Daily Ticket List
-                </button>
-                <button onClick={() => navigate("daily-tickets")} type="button">
-                  Ticket Summary
-                </button>
-              </div>
-            )}
-          </div>
+          <NavButton active={view === "employees" || view === "employee-add"} icon={<Users size={18} />} label="Employees" onClick={() => navigate("employees")} />
           <NavButton active={view === "attendance"} icon={<CheckCircle2 size={18} />} label="Attendance" onClick={() => navigate("attendance")} />
-          <NavButton active={view === "payroll"} icon={<BadgeDollarSign size={18} />} label="Payroll" onClick={() => navigate("payroll")} />
+
+          <p className="nav-section-label">Operations</p>
+          <NavButton active={view === "daily-tickets"} icon={<CalendarClock size={18} />} label="Daily Tickets" onClick={() => navigate("daily-tickets")} />
+          <NavButton active={view === "payroll" || view === "payroll-history"} icon={<BadgeDollarSign size={18} />} label="Payroll" onClick={() => navigate("payroll")} />
           <NavButton active={view === "salary-bonds"} icon={<CreditCard size={18} />} label="Salary Bond" onClick={() => navigate("salary-bonds")} />
-          <NavButton active={view === "payroll-history"} icon={<History size={18} />} label="Pay History" onClick={() => navigate("payroll-history")} />
-          <NavButton active={view === "payments"} icon={<CreditCard size={18} />} label="Payments" onClick={() => navigate("payments")} />
-          <NavButton active={view === "payment-history"} icon={<CalendarClock size={18} />} label="Bill History" onClick={() => navigate("payment-history")} />
-          <NavButton active={view === "collections"} icon={<BadgeDollarSign size={18} />} label="Collections" onClick={() => navigate("collections")} />
+
+          <p className="nav-section-label">Finance</p>
+          <NavButton active={view === "payments" || view === "payment-history"} icon={<CreditCard size={18} />} label="Payments" onClick={() => navigate("payments")} />
           <NavButton active={view === "billing"} icon={<FileText size={18} />} label="Billing" onClick={() => navigate("billing")} />
-          <NavButton active={view === "collection-history"} icon={<History size={18} />} label="Collection History" onClick={() => navigate("collection-history")} />
-          <NavButton active={false} icon={<FileText size={18} />} label="Reports" onClick={() => navigate("compensation")} />
-          <NavButton active={false} icon={<Bell size={18} />} label="Reminders" onClick={() => navigate("dashboard")} />
-          <NavButton active={false} icon={<Settings size={18} />} label="Settings" onClick={() => navigate("dashboard")} />
+          <NavButton active={view === "collections" || view === "collection-history"} icon={<BadgeDollarSign size={18} />} label="Collections" onClick={() => navigate("collections")} />
+
+          <hr className="nav-divider" />
+          <div className="nav-group">
+            <button
+              className={view === "compensation" ? "nav-button active" : "nav-button"}
+              onClick={() => setSettingsMenuOpen((open) => !open)}
+              type="button"
+            >
+              <Settings size={18} />
+              Settings
+              <ChevronDown className={settingsMenuOpen ? "nav-chevron open" : "nav-chevron"} size={16} />
+            </button>
+            {settingsMenuOpen && (
+              <div className="nav-submenu">
+                <button className={view === "compensation" ? "active" : ""} onClick={() => navigate("compensation")} type="button">
+                  Positions
+                </button>
+              </div>
+            )}
+          </div>
         </nav>
         <div className="help-card">
           <HelpCircle size={24} />
@@ -1015,37 +989,51 @@ function Workspace({ session }: { session: Session }) {
                   userId={session.user.id}
                 />
               )}
-              {view === "payroll" && (
-                <PayrollView
-                  attendanceEntries={attendanceEntries}
-                  dailyTicketEntries={dailyTicketEntries}
-                  employees={employees}
-                  ensurePayrollRunItems={ensurePayrollRunItems}
-                  onLocalPayrollRunsChange={setPayrollRuns}
-                  onChange={refreshPayrollPage}
-                  onQueueOfflineMutation={queueOfflineMutation}
-                  payrollRuns={payrollRuns}
-                  positions={positions}
-                  salaryBonds={salaryBonds}
-                  setNotice={setNotice}
-                  userId={session.user.id}
-                />
+              {(view === "payroll" || view === "payroll-history") && (
+                <>
+                  <div className="page-tabs" role="tablist">
+                    <button className={view === "payroll" ? "active" : ""} onClick={() => navigate("payroll")} role="tab" type="button">Payroll</button>
+                    <button className={view === "payroll-history" ? "active" : ""} onClick={() => navigate("payroll-history")} role="tab" type="button">History</button>
+                  </div>
+                  {view === "payroll" ? (
+                    <PayrollView
+                      attendanceEntries={attendanceEntries}
+                      dailyTicketEntries={dailyTicketEntries}
+                      employees={employees}
+                      ensurePayrollRunItems={ensurePayrollRunItems}
+                      onLocalPayrollRunsChange={setPayrollRuns}
+                      onChange={refreshPayrollPage}
+                      onQueueOfflineMutation={queueOfflineMutation}
+                      payrollRuns={payrollRuns}
+                      positions={positions}
+                      salaryBonds={salaryBonds}
+                      setNotice={setNotice}
+                      userId={session.user.id}
+                    />
+                  ) : (
+                    <PayrollHistoryView rows={payrollHistoryRows} />
+                  )}
+                </>
               )}
-              {view === "payroll-history" && (
-                <PayrollHistoryView rows={payrollHistoryRows} />
-              )}
-              {view === "payments" && (
-                <PaymentsView
-                  onChange={refreshPaymentsPage}
-                  onLocalPaymentsChange={setPayments}
-                  onQueueOfflineMutation={queueOfflineMutation}
-                  payments={payments}
-                  setNotice={setNotice}
-                  userId={session.user.id}
-                />
-              )}
-              {view === "payment-history" && (
-                <PaymentHistoryView payments={payments} />
+              {(view === "payments" || view === "payment-history") && (
+                <>
+                  <div className="page-tabs" role="tablist">
+                    <button className={view === "payments" ? "active" : ""} onClick={() => navigate("payments")} role="tab" type="button">Payments</button>
+                    <button className={view === "payment-history" ? "active" : ""} onClick={() => navigate("payment-history")} role="tab" type="button">History</button>
+                  </div>
+                  {view === "payments" ? (
+                    <PaymentsView
+                      onChange={refreshPaymentsPage}
+                      onLocalPaymentsChange={setPayments}
+                      onQueueOfflineMutation={queueOfflineMutation}
+                      payments={payments}
+                      setNotice={setNotice}
+                      userId={session.user.id}
+                    />
+                  ) : (
+                    <PaymentHistoryView payments={payments} />
+                  )}
+                </>
               )}
               {view === "billing" && (
                 <BillingFeature
@@ -1060,25 +1048,32 @@ function Workspace({ session }: { session: Session }) {
                   userId={session.user.id}
                 />
               )}
-              {view === "collections" && (
-                <CollectionsFeature
-                  collections={collections}
-                  onChange={refreshCollectionsPage}
-                  onLocalCollectionsChange={setCollections}
-                  onQueueOfflineMutation={queueOfflineMutation}
-                  setNotice={setNotice}
-                  userId={session.user.id}
-                />
-              )}
-              {view === "collection-history" && (
-                <CollectionHistoryFeature
-                  collections={collections}
-                  onChange={refreshCollectionsPage}
-                  onLocalCollectionsChange={setCollections}
-                  onQueueOfflineMutation={queueOfflineMutation}
-                  setNotice={setNotice}
-                  userId={session.user.id}
-                />
+              {(view === "collections" || view === "collection-history") && (
+                <>
+                  <div className="page-tabs" role="tablist">
+                    <button className={view === "collections" ? "active" : ""} onClick={() => navigate("collections")} role="tab" type="button">Collections</button>
+                    <button className={view === "collection-history" ? "active" : ""} onClick={() => navigate("collection-history")} role="tab" type="button">History</button>
+                  </div>
+                  {view === "collections" ? (
+                    <CollectionsFeature
+                      collections={collections}
+                      onChange={refreshCollectionsPage}
+                      onLocalCollectionsChange={setCollections}
+                      onQueueOfflineMutation={queueOfflineMutation}
+                      setNotice={setNotice}
+                      userId={session.user.id}
+                    />
+                  ) : (
+                    <CollectionHistoryFeature
+                      collections={collections}
+                      onChange={refreshCollectionsPage}
+                      onLocalCollectionsChange={setCollections}
+                      onQueueOfflineMutation={queueOfflineMutation}
+                      setNotice={setNotice}
+                      userId={session.user.id}
+                    />
+                  )}
+                </>
               )}
           </>
           )}
@@ -1176,156 +1171,146 @@ function PageSkeleton() {
 }
 
 function Dashboard({ summary }: { summary: DashboardSummary }) {
+  const now = new Date();
+  const hour = now.getHours();
+  const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+  const dateStr = now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+
   const latestRun = summary.latestRun;
   const latestRunDate = latestRun
-    ? new Date(`${latestRun.generated_date}T00:00:00`).toLocaleDateString("en-US", { day: "numeric", month: "long", year: "numeric" })
-    : "No payroll generated yet";
-  const agingCells = [
-    { label: "Current", value: summary.collectionAging.current, tone: "current" },
-    { label: "1-30 days", value: summary.collectionAging.days1To30, tone: "warm" },
-    { label: "31-60 days", value: summary.collectionAging.days31To60, tone: "warm" },
-    { label: "61-90 days", value: summary.collectionAging.days61To90, tone: "hot" },
-    { label: "90+ days", value: summary.collectionAging.daysOver90, tone: "hot" },
-  ] as const;
+    ? new Date(`${latestRun.generated_date}T00:00:00`).toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" })
+    : "None";
+
+  const actionItems: Array<{ id: string; title: string; amount: number; urgency: "overdue" | "today"; daysInfo: string; kind: "collection" | "bill" }> = [];
+
+  for (const c of summary.overdueCollections) {
+    const days = Math.max(1, Math.floor((now.getTime() - new Date(c.due_date).getTime()) / 86400000));
+    actionItems.push({ id: c.id, title: c.title, amount: toNumber(c.outstanding_balance), urgency: "overdue", daysInfo: `${days}d overdue`, kind: "collection" });
+  }
+  for (const p of summary.overduePayments) {
+    const days = Math.max(1, Math.floor((now.getTime() - new Date(p.due_date).getTime()) / 86400000));
+    actionItems.push({ id: p.id, title: p.title, amount: toNumber(p.amount), urgency: "overdue", daysInfo: `${days}d overdue`, kind: "bill" });
+  }
+  for (const c of summary.dueTodayCollections) {
+    actionItems.push({ id: c.id, title: c.title, amount: toNumber(c.outstanding_balance), urgency: "today", daysInfo: "due today", kind: "collection" });
+  }
+  for (const p of summary.dueTodayPayments) {
+    actionItems.push({ id: p.id, title: p.title, amount: toNumber(p.amount), urgency: "today", daysInfo: "due today", kind: "bill" });
+  }
+
+  const agingValues = [
+    summary.collectionAging.current,
+    summary.collectionAging.days1To30,
+    summary.collectionAging.days31To60,
+    summary.collectionAging.days61To90,
+    summary.collectionAging.daysOver90,
+  ];
+  const agingTotal = agingValues.reduce((s, v) => s + v, 0);
+  const agingBuckets = [
+    { label: "Current", value: summary.collectionAging.current, tone: "ag-current" },
+    { label: "1–30d", value: summary.collectionAging.days1To30, tone: "ag-warm" },
+    { label: "31–60d", value: summary.collectionAging.days31To60, tone: "ag-warm" },
+    { label: "61–90d", value: summary.collectionAging.days61To90, tone: "ag-hot" },
+    { label: "90d+", value: summary.collectionAging.daysOver90, tone: "ag-hot" },
+  ];
+
   return (
-    <div className="page-stack dashboard-page">
-      <PageHeader
-        eyebrow="Payroll overview"
-        title="Dashboard"
-        text="Monitor employees, payroll runs, payment reminders, and receivables."
-      />
-      <section className="dashboard-hero">
-        <div className="dashboard-hero-card">
-          <p className="eyebrow">Latest payroll run</p>
-          <h2>{latestRunDate}</h2>
-          <p className="dashboard-hero-text">
-            {latestRun
-              ? `${monthNames[latestRun.period_month - 1]} ${latestRun.period_year} - ${payPeriodLabel(latestRun.pay_period)} includes ${latestRun.item_count} payroll items.`
-              : "Create employees first, then generate a payroll run to start tracking live payroll movement."}
-          </p>
-          <div className="dashboard-hero-stats">
-            <DashboardHeroStat icon={<Users size={18} />} label="Active employees" value={summary.activeEmployeeCount} />
-            <DashboardHeroStat icon={<CalendarClock size={18} />} label="Current payroll items" value={summary.currentPayrollItemCount} />
-            <DashboardHeroStat icon={<CheckCircle2 size={18} />} label="Collected this month" value={currency.format(summary.collectedThisMonth)} />
-          </div>
+    <div className="page-stack dash">
+      <header className="dash-header">
+        <p className="dash-greeting">{greeting}</p>
+        <h1 className="dash-date">{dateStr}</h1>
+      </header>
+
+      <section className="dash-pulse">
+        <div className="dash-pulse-card receivables">
+          <span className="dash-pulse-label">Receivables</span>
+          <strong className="dash-pulse-value">{currency.format(summary.pendingCollections)}</strong>
+          <span className="dash-pulse-sub">
+            {summary.overdueCollections.length > 0
+              ? `${summary.overdueCollections.length} overdue`
+              : "all current"}
+          </span>
         </div>
-        <div className="dashboard-focus-card">
-          <p className="eyebrow">Collections pulse</p>
-          <div className="dashboard-focus-value">{currency.format(summary.pendingCollections)}</div>
-          <p className="dashboard-focus-label">Outstanding receivables</p>
-          <div className="dashboard-focus-split">
-            <div>
-              <span>Overdue</span>
-              <strong>{currency.format(summary.overdueCollectionBalance)}</strong>
-            </div>
-            <div>
-              <span>Captured total</span>
-              <strong>{currency.format(summary.collectedTotal)}</strong>
-            </div>
-          </div>
+        <div className="dash-pulse-card collected">
+          <span className="dash-pulse-label">Collected</span>
+          <strong className="dash-pulse-value">{currency.format(summary.collectedThisMonth)}</strong>
+          <span className="dash-pulse-sub">this month</span>
+        </div>
+        <div className="dash-pulse-card bills">
+          <span className="dash-pulse-label">Bills due</span>
+          <strong className="dash-pulse-value">{currency.format(summary.dueTodayPayments.reduce((s, p) => s + toNumber(p.amount), 0) + summary.overduePayments.reduce((s, p) => s + toNumber(p.amount), 0))}</strong>
+          <span className="dash-pulse-sub">
+            {summary.dueTodayPayments.length + summary.overduePayments.length} pending
+          </span>
         </div>
       </section>
-      <section className="dashboard-overview-grid">
-        <Metric icon={<BadgeDollarSign />} label="Pending payroll" value={currency.format(summary.pendingPayroll)} />
-        <Metric icon={<CheckCircle2 />} label="Paid payroll" value={currency.format(summary.paidPayroll)} tone="success" />
-        <Metric icon={<BadgeDollarSign />} label="Outstanding collections" value={currency.format(summary.pendingCollections)} />
-        <Metric icon={<CalendarClock />} label="Overdue collections" value={currency.format(summary.overdueCollectionBalance)} tone="danger" />
-      </section>
-      <section className="dashboard-main-grid">
-        <div className="dashboard-section-card dashboard-payroll-brief">
-          <div className="dashboard-section-heading">
-            <div>
-              <p className="eyebrow">Payroll brief</p>
-              <h3>Where payroll stands right now</h3>
-            </div>
-          </div>
-          <div className="dashboard-payroll-breakdown">
-            <div className="dashboard-payroll-row">
-              <span>Pending payroll</span>
-              <strong>{currency.format(summary.pendingPayroll)}</strong>
-            </div>
-            <div className="dashboard-payroll-row">
-              <span>Paid payroll</span>
-              <strong>{currency.format(summary.paidPayroll)}</strong>
-            </div>
-            <div className="dashboard-payroll-row">
-              <span>Open payroll items</span>
-              <strong>{summary.currentPayrollItemCount}</strong>
-            </div>
-          </div>
-          <div className="dashboard-payroll-note">
-            {latestRun
-              ? `Most recent run: ${monthNames[latestRun.period_month - 1]} ${latestRun.period_year} - ${payPeriodLabel(latestRun.pay_period)}.`
-              : "No payroll run is available yet."}
-          </div>
+
+      <section className="dash-actions">
+        <div className="dash-actions-header">
+          <h2>Needs attention</h2>
+          <span className="dash-actions-count">{actionItems.length}</span>
         </div>
-        <div className="dashboard-section-card">
-          <div className="dashboard-section-heading">
-            <div>
-              <p className="eyebrow">Aging snapshot</p>
-              <h3>Collection balances by age</h3>
-            </div>
-          </div>
-          <div className="dashboard-aging-grid">
-            {agingCells.map((cell) => (
-              <div className={`dashboard-aging-card ${cell.tone}`} key={cell.label}>
-                <span>{cell.label}</span>
-                <strong>{currency.format(cell.value)}</strong>
+        {actionItems.length === 0 ? (
+          <p className="dash-actions-empty">Nothing needs your attention right now.</p>
+        ) : (
+          <div className="dash-actions-list">
+            {actionItems.map((item) => (
+              <div className="dash-action-row" key={item.id}>
+                <span className={`dash-action-dot ${item.urgency}`} />
+                <div className="dash-action-info">
+                  <strong>{item.title}</strong>
+                  <span className="dash-action-meta">
+                    {item.kind === "collection" ? "Collection" : "Bill"} · {item.daysInfo}
+                  </span>
+                </div>
+                <span className="dash-action-amount">{currency.format(item.amount)}</span>
               </div>
             ))}
           </div>
-        </div>
+        )}
       </section>
-      <section className="dashboard-due-grid">
-        <DueList title="Payments due today" rows={summary.dueTodayPayments} />
-        <DueList title="Overdue payments" rows={summary.overduePayments} empty="No overdue payment reminders." tone="danger" />
-        <DueList title="Collections due today" rows={summary.dueTodayCollections} />
-        <DueList title="Overdue collections" rows={summary.overdueCollections} empty="No overdue collections." tone="danger" />
-      </section>
-      <section className="collection-aging dashboard-aging">
-        <div><span>Current</span><strong>{currency.format(summary.collectionAging.current)}</strong></div>
-        <div><span>1–30 days</span><strong>{currency.format(summary.collectionAging.days1To30)}</strong></div>
-        <div><span>31–60 days</span><strong>{currency.format(summary.collectionAging.days31To60)}</strong></div>
-        <div><span>61–90 days</span><strong>{currency.format(summary.collectionAging.days61To90)}</strong></div>
-        <div><span>90+ days</span><strong>{currency.format(summary.collectionAging.daysOver90)}</strong></div>
-      </section>
-      <section className="summary-band">
-        <div>
-          <p className="eyebrow">Latest generated date</p>
-          <h2>{latestRun ? latestRun.generated_date : "No payroll yet"}</h2>
-        </div>
-        <p>
-          {latestRun
-            ? `${monthNames[latestRun.period_month - 1]} ${latestRun.period_year} - ${payPeriodLabel(latestRun.pay_period)} has ${latestRun.item_count} payroll items.`
-            : "Create employees first, then generate a monthly payroll run."}
-        </p>
-      </section>
-      <section className="two-column">
-        <DueList title="Payments due today" rows={summary.dueTodayPayments} />
-        <DueList title="Overdue payments" rows={summary.overduePayments} empty="No overdue payment reminders." />
-        <DueList title="Collections due today" rows={summary.dueTodayCollections} />
-        <DueList title="Overdue collections" rows={summary.overdueCollections} empty="No overdue collections." />
-      </section>
-    </div>
-  );
-}
 
-function DashboardHeroStat({
-  icon,
-  label,
-  value,
-}: {
-  icon: ReactNode;
-  label: string;
-  value: number | string;
-}) {
-  return (
-    <div className="dashboard-hero-stat">
-      <div className="dashboard-hero-stat-icon">{icon}</div>
-      <div>
-        <span>{label}</span>
-        <strong>{value}</strong>
-      </div>
+      <section className="dash-aging">
+        <h2 className="dash-aging-title">Collection aging</h2>
+        {agingTotal > 0 && (
+          <div className="dash-aging-bar">
+            {agingBuckets.map((b) =>
+              b.value > 0 ? (
+                <div
+                  className={`dash-aging-segment ${b.tone}`}
+                  key={b.label}
+                  style={{ flex: b.value / agingTotal }}
+                  title={`${b.label}: ${currency.format(b.value)}`}
+                />
+              ) : null,
+            )}
+          </div>
+        )}
+        <div className="dash-aging-legend">
+          {agingBuckets.map((b) => (
+            <div className="dash-aging-item" key={b.label}>
+              <span className={`dash-aging-swatch ${b.tone}`} />
+              <span className="dash-aging-bucket-label">{b.label}</span>
+              <strong>{currency.format(b.value)}</strong>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="dash-secondary">
+        <div className="dash-secondary-card">
+          <span className="dash-secondary-value">{summary.activeEmployeeCount}</span>
+          <span className="dash-secondary-label">Employees</span>
+        </div>
+        <div className="dash-secondary-card">
+          <span className="dash-secondary-value">{currency.format(summary.pendingPayroll)}</span>
+          <span className="dash-secondary-label">Pending payroll</span>
+        </div>
+        <div className="dash-secondary-card">
+          <span className="dash-secondary-value">{latestRunDate}</span>
+          <span className="dash-secondary-label">Last payroll</span>
+        </div>
+      </section>
     </div>
   );
 }
@@ -1346,44 +1331,6 @@ function Metric({
       <div className="metric-icon">{icon}</div>
       <p>{label}</p>
       <strong>{value}</strong>
-    </div>
-  );
-}
-
-function DueList({
-  empty = "Nothing due today.",
-  rows,
-  title,
-  tone,
-}: {
-  empty?: string;
-  rows: Array<PaymentReminder | CollectionReminder>;
-  title: string;
-  tone?: "danger";
-}) {
-  return (
-    <div className={`panel dashboard-due-card ${tone ?? ""}`}>
-      <div className="dashboard-section-heading">
-        <div>
-          <p className="eyebrow">Action queue</p>
-          <h2>{title}</h2>
-        </div>
-      </div>
-      {rows.length === 0 ? (
-        <p className="muted">{empty}</p>
-      ) : (
-        <div className="mini-list">
-          {rows.map((row) => (
-            <div className="mini-row" key={row.id}>
-              <div>
-                <strong>{row.title}</strong>
-                <p>{row.due_date}</p>
-              </div>
-              <span className="mini-row-amount">{currency.format(toNumber("outstanding_balance" in row ? row.outstanding_balance : row.amount))}</span>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -4356,7 +4303,7 @@ function PayrollItemsTable({
   return (
     <DataTable
       empty="No pending payroll items in this run."
-      headers={["Employee", "Position", "Base pay", "Ticket pay", "Ticket breakdown", "Gross", "Allowance", "Deduction", "Net", "Status", "Actions"]}
+      headers={["Employee", "Position", "Base pay", "Gross", "Allowance", "Deduction", "Net", "Status", "Actions"]}
       rows={items.map((item) => [
         <RecordTitle
           key="employee"
@@ -4365,8 +4312,6 @@ function PayrollItemsTable({
         />,
         item.position_name || "—",
         item.pay_mode === "daily" ? currency.format(toNumber(item.daily_rate)) : currency.format(toNumber(item.base_pay)),
-        item.pay_mode === "daily" ? `${item.days_worked} / ${item.total_working_days} days` : currency.format(toNumber(item.ticket_pay)),
-        item.pay_mode === "daily" ? `${currency.format(toNumber(item.daily_rate))} × ${item.days_worked} days` : (item.ticket_details?.map((detail) => `${detail.category_name}: ${detail.ticket_count} × ${currency.format(toNumber(detail.rate))}`).join("; ") || "—"),
         currency.format(toNumber(item.gross_pay)),
         currency.format(toNumber(item.allowances)),
         currency.format(toNumber(item.deductions)),
