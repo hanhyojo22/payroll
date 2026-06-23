@@ -495,6 +495,7 @@ function Login() {
 
 function Workspace({ session }: { session: Session }) {
   const [view, setView] = useState<View>(() => viewFromPath(window.location.pathname));
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [employeeMenuOpen, setEmployeeMenuOpen] = useState(false);
   const [dailyTicketMenuOpen, setDailyTicketMenuOpen] = useState(false);
   const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary>(emptyDashboardSummary);
@@ -534,6 +535,7 @@ function Workspace({ session }: { session: Session }) {
 
   function navigate(nextView: View) {
     setView(nextView);
+    setMobileNavOpen(false);
     const nextPath = viewPaths[nextView];
     if (window.location.pathname !== nextPath) {
       window.history.pushState(null, "", nextPath);
@@ -767,10 +769,26 @@ function Workspace({ session }: { session: Session }) {
   }
 
   useEffect(() => {
-    const handlePopState = () => setView(viewFromPath(window.location.pathname));
+    const handlePopState = () => {
+      setView(viewFromPath(window.location.pathname));
+      setMobileNavOpen(false);
+    };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
+
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMobileNavOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [mobileNavOpen]);
 
   useEffect(() => {
     void loadPageData(view);
@@ -803,7 +821,7 @@ function Workspace({ session }: { session: Session }) {
 
   return (
     <main className="app-shell">
-      <aside className="sidebar">
+      <aside className={mobileNavOpen ? "sidebar mobile-open" : "sidebar"} id="primary-sidebar">
         <div className="brand-row sidebar-brand">
           <div className="brand-mark">
             <CalendarClock size={24} />
@@ -889,11 +907,19 @@ function Workspace({ session }: { session: Session }) {
           </button>
         </div>
       </aside>
+      {mobileNavOpen && <button aria-label="Close navigation" className="sidebar-backdrop" onClick={() => setMobileNavOpen(false)} type="button" />}
 
       <div className="main-area">
         <header className="topbar">
-          <button aria-label="Toggle navigation" className="topbar-icon" type="button">
-            <Menu size={21} />
+          <button
+            aria-controls="primary-sidebar"
+            aria-expanded={mobileNavOpen}
+            aria-label={mobileNavOpen ? "Close navigation" : "Open navigation"}
+            className="topbar-icon nav-toggle"
+            onClick={() => setMobileNavOpen((open) => !open)}
+            type="button"
+          >
+            {mobileNavOpen ? <X size={21} /> : <Menu size={21} />}
           </button>
           <label className="topbar-search">
             <input placeholder="Search employees, tickets..." type="search" />
@@ -1151,21 +1177,110 @@ function PageSkeleton() {
 
 function Dashboard({ summary }: { summary: DashboardSummary }) {
   const latestRun = summary.latestRun;
+  const latestRunDate = latestRun
+    ? new Date(`${latestRun.generated_date}T00:00:00`).toLocaleDateString("en-US", { day: "numeric", month: "long", year: "numeric" })
+    : "No payroll generated yet";
+  const agingCells = [
+    { label: "Current", value: summary.collectionAging.current, tone: "current" },
+    { label: "1-30 days", value: summary.collectionAging.days1To30, tone: "warm" },
+    { label: "31-60 days", value: summary.collectionAging.days31To60, tone: "warm" },
+    { label: "61-90 days", value: summary.collectionAging.days61To90, tone: "hot" },
+    { label: "90+ days", value: summary.collectionAging.daysOver90, tone: "hot" },
+  ] as const;
   return (
-    <div className="page-stack">
+    <div className="page-stack dashboard-page">
       <PageHeader
         eyebrow="Payroll overview"
         title="Dashboard"
         text="Monitor employees, payroll runs, payment reminders, and receivables."
       />
-      <section className="metric-grid">
-        <Metric icon={<Users />} label="Active employees" value={summary.activeEmployeeCount} />
-        <Metric icon={<CalendarClock />} label="Current payroll" value={summary.currentPayrollItemCount} />
+      <section className="dashboard-hero">
+        <div className="dashboard-hero-card">
+          <p className="eyebrow">Latest payroll run</p>
+          <h2>{latestRunDate}</h2>
+          <p className="dashboard-hero-text">
+            {latestRun
+              ? `${monthNames[latestRun.period_month - 1]} ${latestRun.period_year} - ${payPeriodLabel(latestRun.pay_period)} includes ${latestRun.item_count} payroll items.`
+              : "Create employees first, then generate a payroll run to start tracking live payroll movement."}
+          </p>
+          <div className="dashboard-hero-stats">
+            <DashboardHeroStat icon={<Users size={18} />} label="Active employees" value={summary.activeEmployeeCount} />
+            <DashboardHeroStat icon={<CalendarClock size={18} />} label="Current payroll items" value={summary.currentPayrollItemCount} />
+            <DashboardHeroStat icon={<CheckCircle2 size={18} />} label="Collected this month" value={currency.format(summary.collectedThisMonth)} />
+          </div>
+        </div>
+        <div className="dashboard-focus-card">
+          <p className="eyebrow">Collections pulse</p>
+          <div className="dashboard-focus-value">{currency.format(summary.pendingCollections)}</div>
+          <p className="dashboard-focus-label">Outstanding receivables</p>
+          <div className="dashboard-focus-split">
+            <div>
+              <span>Overdue</span>
+              <strong>{currency.format(summary.overdueCollectionBalance)}</strong>
+            </div>
+            <div>
+              <span>Captured total</span>
+              <strong>{currency.format(summary.collectedTotal)}</strong>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section className="dashboard-overview-grid">
         <Metric icon={<BadgeDollarSign />} label="Pending payroll" value={currency.format(summary.pendingPayroll)} />
         <Metric icon={<CheckCircle2 />} label="Paid payroll" value={currency.format(summary.paidPayroll)} tone="success" />
         <Metric icon={<BadgeDollarSign />} label="Outstanding collections" value={currency.format(summary.pendingCollections)} />
         <Metric icon={<CalendarClock />} label="Overdue collections" value={currency.format(summary.overdueCollectionBalance)} tone="danger" />
-        <Metric icon={<CheckCircle2 />} label="Collected this month" value={currency.format(summary.collectedThisMonth)} tone="success" />
+      </section>
+      <section className="dashboard-main-grid">
+        <div className="dashboard-section-card dashboard-payroll-brief">
+          <div className="dashboard-section-heading">
+            <div>
+              <p className="eyebrow">Payroll brief</p>
+              <h3>Where payroll stands right now</h3>
+            </div>
+          </div>
+          <div className="dashboard-payroll-breakdown">
+            <div className="dashboard-payroll-row">
+              <span>Pending payroll</span>
+              <strong>{currency.format(summary.pendingPayroll)}</strong>
+            </div>
+            <div className="dashboard-payroll-row">
+              <span>Paid payroll</span>
+              <strong>{currency.format(summary.paidPayroll)}</strong>
+            </div>
+            <div className="dashboard-payroll-row">
+              <span>Open payroll items</span>
+              <strong>{summary.currentPayrollItemCount}</strong>
+            </div>
+          </div>
+          <div className="dashboard-payroll-note">
+            {latestRun
+              ? `Most recent run: ${monthNames[latestRun.period_month - 1]} ${latestRun.period_year} - ${payPeriodLabel(latestRun.pay_period)}.`
+              : "No payroll run is available yet."}
+          </div>
+        </div>
+        <div className="dashboard-section-card">
+          <div className="dashboard-section-heading">
+            <div>
+              <p className="eyebrow">Aging snapshot</p>
+              <h3>Collection balances by age</h3>
+            </div>
+          </div>
+          <div className="dashboard-aging-grid">
+            {agingCells.map((cell) => (
+              <div className={`dashboard-aging-card ${cell.tone}`} key={cell.label}>
+                <span>{cell.label}</span>
+                <strong>{currency.format(cell.value)}</strong>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+      <section className="dashboard-due-grid">
+        <DueList title="Payments due today" rows={summary.dueTodayPayments} />
+        <DueList title="Overdue payments" rows={summary.overduePayments} empty="No overdue payment reminders." tone="danger" />
+        <DueList title="Collections due today" rows={summary.dueTodayCollections} />
+        <DueList title="Overdue collections" rows={summary.overdueCollections} empty="No overdue collections." tone="danger" />
       </section>
       <section className="collection-aging dashboard-aging">
         <div><span>Current</span><strong>{currency.format(summary.collectionAging.current)}</strong></div>
@@ -1195,6 +1310,26 @@ function Dashboard({ summary }: { summary: DashboardSummary }) {
   );
 }
 
+function DashboardHeroStat({
+  icon,
+  label,
+  value,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: number | string;
+}) {
+  return (
+    <div className="dashboard-hero-stat">
+      <div className="dashboard-hero-stat-icon">{icon}</div>
+      <div>
+        <span>{label}</span>
+        <strong>{value}</strong>
+      </div>
+    </div>
+  );
+}
+
 function Metric({
   icon,
   label,
@@ -1219,14 +1354,21 @@ function DueList({
   empty = "Nothing due today.",
   rows,
   title,
+  tone,
 }: {
   empty?: string;
   rows: Array<PaymentReminder | CollectionReminder>;
   title: string;
+  tone?: "danger";
 }) {
   return (
-    <div className="panel">
-      <h2>{title}</h2>
+    <div className={`panel dashboard-due-card ${tone ?? ""}`}>
+      <div className="dashboard-section-heading">
+        <div>
+          <p className="eyebrow">Action queue</p>
+          <h2>{title}</h2>
+        </div>
+      </div>
       {rows.length === 0 ? (
         <p className="muted">{empty}</p>
       ) : (
@@ -1237,7 +1379,7 @@ function DueList({
                 <strong>{row.title}</strong>
                 <p>{row.due_date}</p>
               </div>
-              <span>{currency.format(toNumber("outstanding_balance" in row ? row.outstanding_balance : row.amount))}</span>
+              <span className="mini-row-amount">{currency.format(toNumber("outstanding_balance" in row ? row.outstanding_balance : row.amount))}</span>
             </div>
           ))}
         </div>
