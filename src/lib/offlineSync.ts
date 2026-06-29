@@ -81,9 +81,14 @@ async function applyMutation(supabase: SupabaseClient, mutation: PendingMutation
       const payload = mutation.payload as {
         billingPayload: Record<string, unknown>;
         collectionPayload: Record<string, unknown>;
+        collectiblesCollectionPayload?: Record<string, unknown>;
       };
       const collectionResult = await supabase.from("collection_reminders").insert(payload.collectionPayload);
       if (collectionResult.error) return collectionResult;
+      if (payload.collectiblesCollectionPayload) {
+        const c2Result = await supabase.from("collection_reminders").insert(payload.collectiblesCollectionPayload);
+        if (c2Result.error) return c2Result;
+      }
       const billingResult = await supabase.from("billing_records").insert(payload.billingPayload);
       if (billingResult.error) return billingResult;
       return { error: null };

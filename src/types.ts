@@ -17,12 +17,16 @@ export type ResourceKey =
   | "collections"
   | "dashboardSummary"
   | "dailyTicketEntries"
+  | "expenseCategories"
+  | "expenses"
   | "employees"
   | "payments"
   | "payrollHistory"
   | "payrollRuns"
   | "positions"
-  | "salaryBonds";
+  | "salaryBonds"
+  | "subconDailyTickets"
+  | "subcontractors";
 
 export type PositionTicketCategory = {
   id: string;
@@ -30,6 +34,7 @@ export type PositionTicketCategory = {
   position_id: string;
   name: string;
   rate: number;
+  ticket_type: "installation" | "repair";
   display_order: number;
   status: PositionStatus;
   created_at: string;
@@ -63,6 +68,7 @@ export type PositionFormValues = {
     id?: string;
     name: string;
     rate: string;
+    ticket_type: "installation" | "repair";
     status: PositionStatus;
   }>;
 };
@@ -75,6 +81,29 @@ export type PaymentReminder = {
   amount: number;
   due_date: string;
   status: PaymentStatus;
+  notes: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ExpenseCategory = {
+  id: string;
+  user_id: string;
+  name: string;
+  status: "active" | "archived";
+  created_at: string;
+  updated_at: string;
+};
+
+export type Expense = {
+  id: string;
+  user_id: string;
+  employee_id: string;
+  employee_name: string;
+  category_id: string;
+  category_name: string;
+  amount: number;
+  expense_date: string;
   notes: string;
   created_at: string;
   updated_at: string;
@@ -156,6 +185,7 @@ export type Employee = {
   philhealth_number: string;
   pagibig_number: string;
   tin_number: string;
+  gender: string;
   emergency_contact_name: string;
   emergency_contact_number: string;
   emergency_contact_relation: string;
@@ -243,6 +273,7 @@ export type DashboardSummary = {
 export type PayrollHistoryRow = {
   payrollNo: string;
   payPeriod: string;
+  employeeId: string | null;
   employeeName: string;
   department: string;
   grossPay: number;
@@ -278,6 +309,7 @@ export type DailyTicketEntryDetail = {
   category_name: string;
   ticket_count: number;
   rate: number;
+  ticket_type: "installation" | "repair";
   created_at: string;
   updated_at: string;
 };
@@ -291,6 +323,8 @@ export type AttendanceEntry = {
   position_name: string;
   entry_date: string;
   status: AttendanceStatus;
+  time_in: string | null;
+  time_out: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -310,18 +344,74 @@ export type PayrollTicketDetail = {
 export type BillingSettings = {
   id: string;
   user_id: string;
-  billing_rate: number;
+  installation_rate: number;
+  repair_rate: number;
   collections_pct: number;
   client_name: string;
   created_at: string;
   updated_at: string;
 };
 
+export type SubcontractorStatus = "active" | "archived";
+
+export type Subcontractor = {
+  id: string;
+  user_id: string;
+  name: string;
+  installation_rate: number;
+  repair_rate: number;
+  payable_pct: number;
+  status: SubcontractorStatus;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SubconDailyTicket = {
+  id: string;
+  user_id: string;
+  entry_date: string;
+  subcontractor_id: string;
+  subcon_name: string;
+  install_tickets: number;
+  repair_tickets: number;
+  installation_rate: number;
+  repair_rate: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type BillingSubconItem = {
+  id: string;
+  user_id: string;
+  billing_record_id: string;
+  subcontractor_id: string;
+  subcon_name: string;
+  install_tickets: number;
+  repair_tickets: number;
+  disputed_install: number;
+  disputed_repair: number;
+  installation_rate: number;
+  repair_rate: number;
+  billable_tickets: number;
+  billing_amount: number;
+  payable_pct: number;
+  payable_amount: number;
+  collection_amount: number;
+  created_at: string;
+};
+
+export type BillingPeriod = "first_half" | "second_half";
+
 export type BillingRecord = {
   id: string;
   user_id: string;
   billing_month: number;
   billing_year: number;
+  billing_period: BillingPeriod;
+  install_tickets: number;
+  repair_tickets: number;
+  disputed_install: number;
+  disputed_repair: number;
   total_tickets: number;
   disputed_tickets: number;
   billable_tickets: number;
@@ -331,6 +421,8 @@ export type BillingRecord = {
   collections_amount: number;
   collectibles_amount: number;
   collection_id: string | null;
+  collectibles_collection_id: string | null;
+  subcon_items: BillingSubconItem[];
   notes: string;
   created_at: string;
   updated_at: string;
@@ -339,7 +431,11 @@ export type BillingRecord = {
 export type BillingFormValues = {
   billing_month: string;
   billing_year: string;
-  disputed_tickets: string;
+  billing_period: BillingPeriod;
+  install_tickets: string;
+  repair_tickets: string;
+  disputed_install: string;
+  disputed_repair: string;
   notes: string;
 };
 
@@ -395,6 +491,7 @@ export type EmployeeFormValues = {
   hire_date: string;
   status: EmployeeStatus;
   wage_category: EmployeeWageCategory;
+  gender: string;
   monthly_salary: string;
   sss_number: string;
   philhealth_number: string;

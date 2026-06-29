@@ -8,6 +8,8 @@ import type {
   DashboardSummary,
   DailyTicketEntry,
   Employee,
+  Expense,
+  ExpenseCategory,
   PaymentReminder,
   PayrollHistoryRow,
   PayrollRun,
@@ -15,9 +17,16 @@ import type {
   PayrollRunWithItems,
   Position,
   SalaryBond,
+  SubconDailyTicket,
+  Subcontractor,
 } from "../types";
 import { collectionAgingBucket } from "../domain/collections";
 import { fetchReceivables } from "../features/collections/collectionRepository";
+import { fetchSubcontractors } from "../features/billing/billingRepository";
+import { fetchSubconDailyTickets } from "../features/billing/subconTicketRepository";
+import { fetchExpenseCategories, fetchExpenses } from "../features/expenses/expenseRepository";
+import { fetchPayrollHistoryRows, fetchPayrollRunItems, fetchPayrollRuns } from "../features/payroll/payrollRepository";
+import { fetchSalaryBonds } from "../features/payroll/salaryBondRepository";
 
 type AppErrorLike = { message?: string; details?: string | null; code?: string };
 type QueryResult<T> = { data: T[] | null; error: AppErrorLike | null };
@@ -231,6 +240,16 @@ export async function loadPayments(supabase: SupabaseClient) {
   );
 }
 
+export async function loadExpenseCategories(supabase: SupabaseClient) {
+  const result = await fetchExpenseCategories(supabase);
+  return { data: result.data as ExpenseCategory[], error: result.error, label: "Expense categories" };
+}
+
+export async function loadExpenses(supabase: SupabaseClient) {
+  const result = await fetchExpenses(supabase);
+  return { data: result.data as Expense[], error: result.error, label: "Expenses" };
+}
+
 export async function loadCollections(supabase: SupabaseClient) {
   try {
     const result = await withTimeout(fetchReceivables(supabase), "Collections");
@@ -241,13 +260,12 @@ export async function loadCollections(supabase: SupabaseClient) {
 }
 
 export async function loadSalaryBonds(supabase: SupabaseClient) {
-  return settle<SalaryBond>(
-    "Salary bonds",
-    supabase
-      .from("salary_bonds")
-      .select("id,user_id,employee_id,employee_name,bond_id,bond_type,date_granted,start_deduction,purpose,amount,balance,deduction_per_payroll,status,notes,created_at,updated_at")
-      .order("created_at", { ascending: false }),
-  );
+  try {
+    const result = await withTimeout(fetchSalaryBonds(supabase), "Salary bonds");
+    return { data: result.data, error: result.error, label: "Salary bonds" };
+  } catch (error) {
+    return { data: [] as SalaryBond[], error: error as AppErrorLike, label: "Salary bonds" };
+  }
 }
 
 export async function loadDailyTicketEntries(supabase: SupabaseClient) {
@@ -255,7 +273,7 @@ export async function loadDailyTicketEntries(supabase: SupabaseClient) {
     "Daily tickets",
     supabase
       .from("daily_ticket_entries")
-      .select("id,user_id,entry_date,employee_id,employee_name,position_id,position_name,installation_tickets,repair_tickets,installation_rate,repair_rate,created_at,updated_at,details:daily_ticket_entry_items(id,user_id,daily_ticket_entry_id,position_ticket_category_id,category_name,ticket_count,rate,created_at,updated_at)")
+      .select("id,user_id,entry_date,employee_id,employee_name,position_id,position_name,installation_tickets,repair_tickets,installation_rate,repair_rate,created_at,updated_at,details:daily_ticket_entry_items(id,user_id,daily_ticket_entry_id,position_ticket_category_id,category_name,ticket_count,rate,ticket_type,created_at,updated_at)")
       .order("entry_date", { ascending: false }),
   );
 }
@@ -265,7 +283,7 @@ export async function loadAttendanceEntries(supabase: SupabaseClient) {
     "Attendance",
     supabase
       .from("attendance_entries")
-      .select("id,user_id,employee_id,employee_name,position_id,position_name,entry_date,status,created_at,updated_at")
+      .select("id,user_id,employee_id,employee_name,position_id,position_name,entry_date,status,time_in,time_out,created_at,updated_at")
       .order("entry_date", { ascending: false }),
   );
 }
@@ -275,7 +293,7 @@ export async function loadPositions(supabase: SupabaseClient) {
     "Positions",
     supabase
       .from("positions")
-      .select("id,user_id,name,department,description,status,pay_mode,monthly_base_salary,daily_rate,created_at,updated_at,categories:position_ticket_categories(id,user_id,position_id,name,rate,display_order,status,created_at,updated_at)")
+      .select("id,user_id,name,department,description,status,pay_mode,monthly_base_salary,daily_rate,created_at,updated_at,categories:position_ticket_categories(id,user_id,position_id,name,rate,ticket_type,display_order,status,created_at,updated_at)")
       .order("name"),
   );
 }
@@ -285,101 +303,36 @@ export async function loadEmployees(supabase: SupabaseClient) {
     "Employees",
     supabase
       .from("employees")
-      .select("id,user_id,full_name,role,position_id,department,contact_number,email,address,profile_photo_url,hire_date,status,wage_category,installation_rate,repair_rate,monthly_salary,sss_number,philhealth_number,pagibig_number,tin_number,emergency_contact_name,emergency_contact_number,emergency_contact_relation,notes,created_at,updated_at")
+      .select("id,user_id,full_name,role,position_id,department,contact_number,email,address,profile_photo_url,hire_date,status,wage_category,installation_rate,repair_rate,monthly_salary,gender,sss_number,philhealth_number,pagibig_number,tin_number,emergency_contact_name,emergency_contact_number,emergency_contact_relation,notes,created_at,updated_at")
       .order("full_name"),
   );
 }
 
 export async function loadPayrollRuns(supabase: SupabaseClient) {
-  const runResult = await settle<PayrollRun>(
-    "Payroll runs",
-    supabase
-      .from("payroll_runs")
-      .select("id,user_id,period_month,period_year,pay_period,generated_date,notes,created_at,updated_at")
-      .order("period_year", { ascending: false })
-      .order("period_month", { ascending: false })
-      .order("pay_period", { ascending: false })
-      .limit(100),
-  );
-
-  return {
-    data: runResult.data.map((run) => ({ ...run, items: [] })) as PayrollRunWithItems[],
-    error: runResult.error,
-    label: "Payroll",
-  };
+  try {
+    const result = await withTimeout(fetchPayrollRuns(supabase), "Payroll runs");
+    return { data: result.data, error: result.error, label: "Payroll" };
+  } catch (error) {
+    return { data: [] as PayrollRunWithItems[], error: error as AppErrorLike, label: "Payroll" };
+  }
 }
 
 export async function loadPayrollRunItems(supabase: SupabaseClient, payrollRunId: string) {
-  return settle<PayrollRunItem>(
-    "Payroll items",
-    supabase
-      .from("payroll_run_items")
-      .select("id,user_id,payroll_run_id,employee_id,employee_name,position_id,position_name,pay_mode,base_pay,ticket_pay,daily_rate,days_worked,total_working_days,installation_tickets,repair_tickets,installation_rate,repair_rate,gross_pay,allowances,deductions,net_pay,status,paid_date,notes,created_at,updated_at,ticket_details:payroll_run_item_ticket_details(id,user_id,payroll_run_item_id,position_ticket_category_id,category_name,ticket_count,rate,amount,created_at)")
-      .eq("payroll_run_id", payrollRunId)
-      .order("employee_name"),
-  );
+  try {
+    const result = await withTimeout(fetchPayrollRunItems(supabase, payrollRunId), "Payroll items");
+    return { data: result.data, error: result.error, label: "Payroll items" };
+  } catch (error) {
+    return { data: [] as PayrollRunItem[], error: error as AppErrorLike, label: "Payroll items" };
+  }
 }
 
 export async function loadPayrollHistoryRows(supabase: SupabaseClient, page = 0, pageSize = 100) {
-  const from = page * pageSize;
-  const to = from + pageSize - 1;
-  const result = await settle<any>(
-    "Payroll history",
-    supabase
-      .from("payroll_run_items")
-      .select(`
-        id,
-        employee_id,
-        employee_name,
-        position_id,
-        position_name,
-        pay_mode,
-        base_pay,
-        ticket_pay,
-        gross_pay,
-        deductions,
-        net_pay,
-        status,
-        paid_date,
-        payroll_runs!inner(period_month,period_year,pay_period,generated_date),
-        employees(department)
-      `)
-      .eq("status", "paid")
-      .order("paid_date", { ascending: false, nullsFirst: false })
-      .range(from, to),
-  );
-
-  const rows = result.data.map((item, index) => {
-    const run = Array.isArray(item.payroll_runs) ? item.payroll_runs[0] : item.payroll_runs;
-    const employee = Array.isArray(item.employees) ? item.employees[0] : item.employees;
-    const payPeriod = run
-      ? `${run.period_month}/${run.period_year} - ${payPeriodLabel(run.pay_period)}`
-      : "Unknown pay period";
-    const payrollNo = run
-      ? `${run.period_year}-${String(run.period_month).padStart(2, "0")}-${run.pay_period === "first_half" ? "1" : "2"}-${String(from + index + 1).padStart(3, "0")}`
-      : `PAY-${String(from + index + 1).padStart(3, "0")}`;
-    const department = employee?.department || "Unassigned";
-    const processedDate = item.paid_date || run?.generated_date || "";
-
-    return {
-      payrollNo,
-      payPeriod,
-      employeeName: item.employee_name,
-      department,
-      grossPay: toNumber(item.gross_pay),
-      deductions: toNumber(item.deductions),
-      netPay: toNumber(item.net_pay),
-      status: item.status,
-      processedDate,
-      searchText: `${payrollNo} ${payPeriod} ${item.employee_name} ${department} ${item.status} ${processedDate}`.toLowerCase(),
-    } satisfies PayrollHistoryRow;
-  });
-
-  return {
-    data: rows,
-    error: result.error,
-    label: result.label,
-  };
+  try {
+    const result = await withTimeout(fetchPayrollHistoryRows(supabase, page, pageSize), "Payroll history");
+    return { data: result.data, error: result.error, label: "Payroll history" };
+  } catch (error) {
+    return { data: [] as PayrollHistoryRow[], error: error as AppErrorLike, label: "Payroll history" };
+  }
 }
 
 export async function loadEmployeePayrollRuns(supabase: SupabaseClient, employeeId: string) {
@@ -477,7 +430,7 @@ export async function loadBillingRecords(supabase: SupabaseClient) {
     "Billing records",
     supabase
       .from("billing_records")
-      .select("id,user_id,billing_month,billing_year,total_tickets,disputed_tickets,billable_tickets,billing_rate,billing_amount,collections_pct,collections_amount,collectibles_amount,collection_id,notes,created_at,updated_at")
+      .select("id,user_id,billing_month,billing_year,billing_period,install_tickets,repair_tickets,disputed_install,disputed_repair,total_tickets,disputed_tickets,billable_tickets,billing_rate,billing_amount,collections_pct,collections_amount,collectibles_amount,collection_id,collectibles_collection_id,notes,created_at,updated_at,subcon_items:billing_subcon_items(id,user_id,billing_record_id,subcontractor_id,subcon_name,install_tickets,repair_tickets,disputed_install,disputed_repair,installation_rate,repair_rate,billable_tickets,billing_amount,payable_pct,payable_amount,collection_amount,created_at)")
       .order("billing_year", { ascending: false })
       .order("billing_month", { ascending: false }),
   );
@@ -488,7 +441,7 @@ export async function loadBillingSettings(supabase: SupabaseClient) {
     "Billing settings",
     supabase
       .from("billing_settings")
-      .select("id,user_id,billing_rate,collections_pct,client_name,created_at,updated_at")
+      .select("id,user_id,installation_rate,repair_rate,collections_pct,client_name,created_at,updated_at")
       .limit(1),
   );
   return {
@@ -496,4 +449,14 @@ export async function loadBillingSettings(supabase: SupabaseClient) {
     error: result.error,
     label: result.label,
   };
+}
+
+export async function loadSubcontractors(supabase: SupabaseClient) {
+  const result = await fetchSubcontractors(supabase);
+  return { data: result.data, error: result.error, label: "Subcontractors" };
+}
+
+export async function loadSubconDailyTickets(supabase: SupabaseClient) {
+  const result = await fetchSubconDailyTickets(supabase);
+  return { data: result.data as SubconDailyTicket[], error: result.error, label: "Subcon daily tickets" };
 }

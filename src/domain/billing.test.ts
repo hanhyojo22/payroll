@@ -10,8 +10,8 @@ describe("countTicketsForMonth", () => {
       installation_tickets: 3, repair_tickets: 2, installation_rate: 600,
       repair_rate: 200, created_at: "", updated_at: "",
       details: [
-        { id: "d1", user_id: "u1", daily_ticket_entry_id: "e1", position_ticket_category_id: "c1", category_name: "Install", ticket_count: 4, rate: 600, created_at: "", updated_at: "" },
-        { id: "d2", user_id: "u1", daily_ticket_entry_id: "e1", position_ticket_category_id: "c2", category_name: "Repair", ticket_count: 2, rate: 200, created_at: "", updated_at: "" },
+        { id: "d1", user_id: "u1", daily_ticket_entry_id: "e1", position_ticket_category_id: "c1", category_name: "Install", ticket_count: 4, rate: 600, ticket_type: "installation" as const, created_at: "", updated_at: "" },
+        { id: "d2", user_id: "u1", daily_ticket_entry_id: "e1", position_ticket_category_id: "c2", category_name: "Repair", ticket_count: 2, rate: 200, ticket_type: "repair" as const, created_at: "", updated_at: "" },
       ],
     },
     {

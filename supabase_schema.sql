@@ -11,6 +11,16 @@
     updated_at timestamptz not null default now()
   );
 
+  create table if not exists public.expense_categories (
+    id uuid primary key default gen_random_uuid(),
+    user_id uuid not null references auth.users(id) on delete cascade,
+    name text not null,
+    status text not null default 'active' check (status in ('active', 'archived')),
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    unique (user_id, name)
+  );
+
   create table if not exists public.collection_reminders (
     id uuid primary key default gen_random_uuid(),
     user_id uuid not null references auth.users(id) on delete cascade,
@@ -56,6 +66,21 @@
     philhealth_number text not null default '',
     pagibig_number text not null default '',
     tin_number text not null default '',
+    gender text not null default '' check (gender in ('', 'male', 'female', 'other')),
+    notes text not null default '',
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+  );
+
+  create table if not exists public.expenses (
+    id uuid primary key default gen_random_uuid(),
+    user_id uuid not null references auth.users(id) on delete cascade,
+    employee_id uuid not null references public.employees(id) on delete cascade,
+    employee_name text not null,
+    category_id uuid not null references public.expense_categories(id) on delete restrict,
+    category_name text not null,
+    amount numeric(12, 2) not null default 0 check (amount >= 0),
+    expense_date date not null,
     notes text not null default '',
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
@@ -357,6 +382,15 @@
   create index if not exists payment_reminders_user_status_due_date_idx
   on public.payment_reminders (user_id, status, due_date);
 
+  create index if not exists expense_categories_user_name_idx
+  on public.expense_categories (user_id, name);
+
+  create index if not exists expenses_user_date_idx
+  on public.expenses (user_id, expense_date desc);
+
+  create index if not exists expenses_employee_date_idx
+  on public.expenses (employee_id, expense_date desc);
+
   create index if not exists collection_reminders_user_due_date_idx
   on public.collection_reminders (user_id, due_date);
 
@@ -395,6 +429,16 @@
   before update on public.payment_reminders
   for each row execute function public.set_updated_at();
 
+  drop trigger if exists set_expense_categories_updated_at on public.expense_categories;
+  create trigger set_expense_categories_updated_at
+  before update on public.expense_categories
+  for each row execute function public.set_updated_at();
+
+  drop trigger if exists set_expenses_updated_at on public.expenses;
+  create trigger set_expenses_updated_at
+  before update on public.expenses
+  for each row execute function public.set_updated_at();
+
   drop trigger if exists set_collection_reminders_updated_at on public.collection_reminders;
   create trigger set_collection_reminders_updated_at
   before update on public.collection_reminders
@@ -431,6 +475,8 @@
   for each row execute function public.set_updated_at();
 
   alter table public.payment_reminders enable row level security;
+  alter table public.expense_categories enable row level security;
+  alter table public.expenses enable row level security;
   alter table public.collection_reminders enable row level security;
   alter table public.salary_bonds enable row level security;
   alter table public.payroll_records enable row level security;
@@ -442,6 +488,20 @@
   drop policy if exists "payment reminders are owned by their user" on public.payment_reminders;
   create policy "payment reminders are owned by their user"
   on public.payment_reminders
+  for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+  drop policy if exists "expense categories are owned by their user" on public.expense_categories;
+  create policy "expense categories are owned by their user"
+  on public.expense_categories
+  for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+  drop policy if exists "expenses are owned by their user" on public.expenses;
+  create policy "expenses are owned by their user"
+  on public.expenses
   for all
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
@@ -518,6 +578,7 @@
     rate numeric(12, 2) not null default 0 check (rate >= 0),
     display_order integer not null default 0 check (display_order >= 0),
     status text not null default 'active' check (status in ('active', 'archived')),
+    ticket_type text not null default 'installation' check (ticket_type in ('installation', 'repair')),
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
     unique (position_id, name)
@@ -540,6 +601,7 @@
     category_name text not null,
     ticket_count integer not null default 0 check (ticket_count >= 0),
     rate numeric(12, 2) not null default 0 check (rate >= 0),
+    ticket_type text not null default 'installation' check (ticket_type in ('installation', 'repair')),
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
     unique (daily_ticket_entry_id, category_name)
@@ -836,6 +898,8 @@ create table if not exists public.attendance_entries (
   position_name text not null default '',
   entry_date date not null,
   status text not null check (status in ('present', 'absent', 'half_day')),
+  time_in text default '08:00',
+  time_out text default '17:00',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (user_id, entry_date, employee_id)
@@ -1120,6 +1184,8 @@ create table if not exists public.billing_settings (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   billing_rate numeric(12, 2) not null default 0 check (billing_rate >= 0),
+  installation_rate numeric(12, 2) not null default 0 check (installation_rate >= 0),
+  repair_rate numeric(12, 2) not null default 0 check (repair_rate >= 0),
   collections_pct integer not null default 70 check (collections_pct >= 0 and collections_pct <= 100),
   client_name text not null default '',
   created_at timestamptz not null default now(),
@@ -1144,6 +1210,11 @@ create table if not exists public.billing_records (
   user_id uuid not null references auth.users(id) on delete cascade,
   billing_month integer not null check (billing_month between 1 and 12),
   billing_year integer not null check (billing_year between 1900 and 2200),
+  billing_period text not null default 'first_half' check (billing_period in ('first_half', 'second_half')),
+  install_tickets integer not null default 0 check (install_tickets >= 0),
+  repair_tickets integer not null default 0 check (repair_tickets >= 0),
+  disputed_install integer not null default 0 check (disputed_install >= 0),
+  disputed_repair integer not null default 0 check (disputed_repair >= 0),
   total_tickets integer not null default 0 check (total_tickets >= 0),
   disputed_tickets integer not null default 0 check (disputed_tickets >= 0),
   billable_tickets integer not null default 0 check (billable_tickets >= 0),
@@ -1153,10 +1224,11 @@ create table if not exists public.billing_records (
   collections_amount numeric(12, 2) not null default 0 check (collections_amount >= 0),
   collectibles_amount numeric(12, 2) not null default 0 check (collectibles_amount >= 0),
   collection_id uuid references public.collection_reminders(id) on delete set null,
+  collectibles_collection_id uuid references public.collection_reminders(id) on delete set null,
   notes text not null default '',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (user_id, billing_month, billing_year)
+  unique (user_id, billing_month, billing_year, billing_period)
 );
 
 create index if not exists billing_records_user_year_month_idx
@@ -1172,6 +1244,113 @@ alter table public.billing_records enable row level security;
 drop policy if exists "billing records are owned by their user" on public.billing_records;
 create policy "billing records are owned by their user"
 on public.billing_records for all
+using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+alter table public.billing_records
+  add column if not exists install_tickets integer not null default 0,
+  add column if not exists repair_tickets integer not null default 0,
+  add column if not exists disputed_install integer not null default 0,
+  add column if not exists disputed_repair integer not null default 0;
+
+update public.billing_records
+set
+  install_tickets = coalesce(install_tickets, greatest(total_tickets - disputed_tickets, 0)),
+  repair_tickets = coalesce(repair_tickets, 0),
+  disputed_install = coalesce(disputed_install, disputed_tickets),
+  disputed_repair = coalesce(disputed_repair, 0)
+where
+  install_tickets = 0
+  and repair_tickets = 0
+  and disputed_install = 0
+  and disputed_repair = 0
+  and (total_tickets <> 0 or disputed_tickets <> 0);
+
+-- Subcontractors
+create table if not exists public.subcontractors (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  name text not null,
+  installation_rate numeric(12, 2) not null default 0 check (installation_rate >= 0),
+  repair_rate numeric(12, 2) not null default 0 check (repair_rate >= 0),
+  payable_pct integer not null default 70 check (payable_pct >= 0 and payable_pct <= 100),
+  status text not null default 'active' check (status in ('active', 'archived')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, name)
+);
+
+drop trigger if exists set_subcontractors_updated_at on public.subcontractors;
+create trigger set_subcontractors_updated_at
+before update on public.subcontractors
+for each row execute function public.set_updated_at();
+
+alter table public.subcontractors enable row level security;
+
+drop policy if exists "subcontractors are owned by their user" on public.subcontractors;
+create policy "subcontractors are owned by their user"
+on public.subcontractors for all
+using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- Subcontractor daily tickets
+create table if not exists public.subcon_daily_tickets (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  entry_date date not null,
+  subcontractor_id uuid not null references public.subcontractors(id) on delete cascade,
+  subcon_name text not null,
+  install_tickets integer not null default 0 check (install_tickets >= 0),
+  repair_tickets integer not null default 0 check (repair_tickets >= 0),
+  installation_rate numeric(12, 2) not null default 0,
+  repair_rate numeric(12, 2) not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, entry_date, subcontractor_id)
+);
+
+create index if not exists subcon_daily_tickets_user_date_idx
+on public.subcon_daily_tickets (user_id, entry_date desc);
+
+drop trigger if exists set_subcon_daily_tickets_updated_at on public.subcon_daily_tickets;
+create trigger set_subcon_daily_tickets_updated_at
+before update on public.subcon_daily_tickets
+for each row execute function public.set_updated_at();
+
+alter table public.subcon_daily_tickets enable row level security;
+
+drop policy if exists "subcon daily tickets are owned by their user" on public.subcon_daily_tickets;
+create policy "subcon daily tickets are owned by their user"
+on public.subcon_daily_tickets for all
+using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- Billing subcontractor items
+create table if not exists public.billing_subcon_items (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  billing_record_id uuid not null references public.billing_records(id) on delete cascade,
+  subcontractor_id uuid not null references public.subcontractors(id) on delete cascade,
+  subcon_name text not null,
+  install_tickets integer not null default 0 check (install_tickets >= 0),
+  repair_tickets integer not null default 0 check (repair_tickets >= 0),
+  disputed_install integer not null default 0 check (disputed_install >= 0),
+  disputed_repair integer not null default 0 check (disputed_repair >= 0),
+  installation_rate numeric(12, 2) not null default 0,
+  repair_rate numeric(12, 2) not null default 0,
+  billable_tickets integer not null default 0,
+  billing_amount numeric(12, 2) not null default 0,
+  payable_pct integer not null default 70,
+  payable_amount numeric(12, 2) not null default 0,
+  collection_amount numeric(12, 2) not null default 0,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists billing_subcon_items_record_idx
+on public.billing_subcon_items (billing_record_id);
+
+alter table public.billing_subcon_items enable row level security;
+
+drop policy if exists "billing subcon items are owned by their user" on public.billing_subcon_items;
+create policy "billing subcon items are owned by their user"
+on public.billing_subcon_items for all
 using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 -- Emergency contact fields on employees

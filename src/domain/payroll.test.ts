@@ -20,6 +20,7 @@ const employee: Employee = {
   hire_date: "2026-01-01",
   status: "active",
   wage_category: "new",
+  gender: "",
   installation_rate: 600,
   repair_rate: 200,
   monthly_salary: 0,
@@ -73,6 +74,7 @@ const ticketEntry: DailyTicketEntry = {
       category_name: "Repair",
       ticket_count: 3,
       rate: 250,
+      ticket_type: "repair" as const,
       created_at: "2026-06-05T00:00:00Z",
       updated_at: "2026-06-05T00:00:00Z",
     },
@@ -112,6 +114,7 @@ describe("position-based payroll", () => {
       position_id: "position-1",
       name: "Repair",
       rate: 999,
+      ticket_type: "repair" as const,
       display_order: 0,
       status: "active",
       created_at: "2026-01-01T00:00:00Z",
@@ -145,11 +148,11 @@ describe("attendance-based daily wage", () => {
   });
 
   const attendanceEntries: AttendanceEntry[] = [
-    { id: "a1", user_id: "user-1", employee_id: "employee-1", employee_name: "Test", position_id: "position-1", position_name: "Guard", entry_date: "2026-06-01", status: "present", created_at: "", updated_at: "" },
-    { id: "a2", user_id: "user-1", employee_id: "employee-1", employee_name: "Test", position_id: "position-1", position_name: "Guard", entry_date: "2026-06-02", status: "half_day", created_at: "", updated_at: "" },
-    { id: "a3", user_id: "user-1", employee_id: "employee-1", employee_name: "Test", position_id: "position-1", position_name: "Guard", entry_date: "2026-06-03", status: "absent", created_at: "", updated_at: "" },
-    { id: "a4", user_id: "user-1", employee_id: "employee-1", employee_name: "Test", position_id: "position-1", position_name: "Guard", entry_date: "2026-06-04", status: "present", created_at: "", updated_at: "" },
-    { id: "a5", user_id: "user-1", employee_id: "other-emp", employee_name: "Other", position_id: "position-1", position_name: "Guard", entry_date: "2026-06-01", status: "present", created_at: "", updated_at: "" },
+    { id: "a1", user_id: "user-1", employee_id: "employee-1", employee_name: "Test", position_id: "position-1", position_name: "Guard", entry_date: "2026-06-01", status: "present", time_in: "08:00", time_out: "17:00", created_at: "", updated_at: "" },
+    { id: "a2", user_id: "user-1", employee_id: "employee-1", employee_name: "Test", position_id: "position-1", position_name: "Guard", entry_date: "2026-06-02", status: "half_day", time_in: "08:00", time_out: "17:00", created_at: "", updated_at: "" },
+    { id: "a3", user_id: "user-1", employee_id: "employee-1", employee_name: "Test", position_id: "position-1", position_name: "Guard", entry_date: "2026-06-03", status: "absent", time_in: null, time_out: null, created_at: "", updated_at: "" },
+    { id: "a4", user_id: "user-1", employee_id: "employee-1", employee_name: "Test", position_id: "position-1", position_name: "Guard", entry_date: "2026-06-04", status: "present", time_in: "08:00", time_out: "17:00", created_at: "", updated_at: "" },
+    { id: "a5", user_id: "user-1", employee_id: "other-emp", employee_name: "Other", position_id: "position-1", position_name: "Guard", entry_date: "2026-06-01", status: "present", time_in: "08:00", time_out: "17:00", created_at: "", updated_at: "" },
   ];
 
   it("computes attendance totals for an employee in a payroll period", () => {
