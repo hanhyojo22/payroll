@@ -6,7 +6,6 @@ import {
   ChevronDown,
   CreditCard,
   FileText,
-  HelpCircle,
   LayoutDashboard,
   LogOut,
   Settings,
@@ -57,12 +56,8 @@ export function Sidebar({
   return (
     <aside className={mobileNavOpen ? "sidebar mobile-open" : "sidebar"} id="primary-sidebar">
       <div className="brand-row sidebar-brand">
-        <div className="brand-mark">
-          <CalendarClock size={24} />
-        </div>
-        <div>
-          <h1>Payroll System</h1>
-        </div>
+        <img className="brand-logo sidebar-logo" src="/logo.png" alt="JMSolution Information Services" />
+        <h1 className="sr-only">Payroll System</h1>
       </div>
       <nav aria-label="Main navigation" className="nav-list">
         <p className="nav-section-label">Team</p>
@@ -102,14 +97,6 @@ export function Sidebar({
           )}
         </div>
       </nav>
-      <div className="help-card">
-        <HelpCircle size={24} />
-        <div>
-          <strong>Need Help?</strong>
-          <p>Check our documentation</p>
-        </div>
-        <ChevronDown size={16} />
-      </div>
       <div className="sidebar-footer">
         <p>{email}</p>
         <button className="icon-text-button" onClick={onSignOut} type="button">

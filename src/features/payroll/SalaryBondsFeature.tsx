@@ -151,6 +151,7 @@ export function SalaryBondsFeature({
               Bond Type <span>*</span>
               <select value={bondForm.bond_type} onChange={(event) => setBondForm({ ...bondForm, bond_type: event.target.value })}>
                 <option value="Salary Advance">Salary Advance</option>
+                <option value="Cash Advance">Cash Advance</option>
                 <option value="Emergency Loan">Emergency Loan</option>
                 <option value="Equipment Bond">Equipment Bond</option>
                 <option value="Other">Other</option>

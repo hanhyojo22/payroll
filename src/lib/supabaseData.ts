@@ -150,7 +150,7 @@ export async function loadDashboardSummary(supabase: SupabaseClient) {
       "Open payment reminders",
       supabase
         .from("payment_reminders")
-        .select("id,user_id,title,type,amount,due_date,status,notes,created_at,updated_at")
+        .select("id,user_id,title,type,amount,due_date,status,notes,subcontractor_id,billing_subcon_item_id,billing_month,billing_year,billing_period,created_at,updated_at")
         .neq("status", "paid")
         .lte("due_date", today)
         .order("due_date"),
@@ -235,7 +235,7 @@ export async function loadPayments(supabase: SupabaseClient) {
     "Payments",
     supabase
       .from("payment_reminders")
-      .select("id,user_id,title,type,amount,due_date,status,notes,created_at,updated_at")
+      .select("id,user_id,title,type,amount,due_date,status,notes,subcontractor_id,billing_subcon_item_id,billing_month,billing_year,billing_period,created_at,updated_at")
       .order("due_date"),
   );
 }
@@ -460,3 +460,4 @@ export async function loadSubconDailyTickets(supabase: SupabaseClient) {
   const result = await fetchSubconDailyTickets(supabase);
   return { data: result.data as SubconDailyTicket[], error: result.error, label: "Subcon daily tickets" };
 }
+

@@ -4,6 +4,7 @@ import { collectionAgingBucket, collectionStatus, validateCollectionPayment, wit
 import { isOfflineLikeError } from "../../lib/offlineSync";
 import { supabase } from "../../supabase";
 import { MoneyField } from "../../shared/components/MoneyField";
+import { PageHeader } from "../../shared/components/PageLayout";
 import type { Notice, QueueOfflineMutation } from "../../shared/types";
 import { currency, formatMoney } from "../../shared/utils/currency";
 import { todayKey } from "../../shared/utils/dates";
@@ -256,18 +257,16 @@ function CollectionWorkspace({
 
   return (
     <div className="collection-page-stack">
-      <header className="collection-page-header">
-        <div>
-          <p>Customer receivables</p>
-          <h1>{historyMode ? "Collection History" : "Collections"}</h1>
-          <span>{historyMode ? "Review collected and archived receivables." : "Track balances, partial payments, due dates, and aging."}</span>
-        </div>
-        {!historyMode && (
+      <PageHeader
+        action={!historyMode && (
           <button className="collection-primary" onClick={() => setFormOpen(true)} type="button">
             <Plus size={16} /> Add receivable
           </button>
         )}
-      </header>
+        eyebrow="Customer receivables"
+        title={historyMode ? "Collection History" : "Collections"}
+        text={historyMode ? "Review collected and archived receivables." : "Track balances, partial payments, due dates, and aging."}
+      />
 
       <section className="collection-summary-grid">
         <SummaryCard label="Outstanding" value={summary.outstanding} />

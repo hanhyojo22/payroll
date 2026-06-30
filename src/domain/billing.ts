@@ -1,4 +1,11 @@
-import type { BillingPeriod, DailyTicketEntry, SubconDailyTicket } from "../types";
+import type {
+  BillingPeriod,
+  BillingSubconItem,
+  DailyTicketEntry,
+  PaymentReminder,
+  SubconDailyTicket,
+  Subcontractor,
+} from "../types";
 
 function filterByPeriod(entries: DailyTicketEntry[], month: number, year: number, period?: BillingPeriod): DailyTicketEntry[] {
   return entries.filter((entry) => {
@@ -144,6 +151,143 @@ export function countSubconTickets(
       }),
       { install: 0, repair: 0 },
     );
+}
+
+export function billingPeriodLabel(period: BillingPeriod): string {
+  return period === "first_half" ? "1st - 15th" : "16th - End";
+}
+
+export function filterSubcontractorDailyTickets(
+  entries: SubconDailyTicket[],
+  subcontractorId: string,
+  startDate?: string,
+  endDate?: string,
+): SubconDailyTicket[] {
+  return entries.filter((entry) => {
+    if (entry.subcontractor_id !== subcontractorId) return false;
+    if (startDate && entry.entry_date < startDate) return false;
+    if (endDate && entry.entry_date > endDate) return false;
+    return true;
+  });
+}
+
+export function buildSubcontractorPaymentPayloads(args: {
+  billingMonth: number;
+  billingYear: number;
+  billingPeriod: BillingPeriod;
+  dueDate: string;
+  userId: string;
+  items: BillingSubconItem[];
+  existingPayments?: PaymentReminder[];
+  monthName: string;
+}): Array<Omit<PaymentReminder, "created_at" | "updated_at">> {
+  const paymentByItemId = new Map(
+    (args.existingPayments ?? [])
+      .filter((p) => p.billing_subcon_item_id !== null)
+      .map((payment) => [payment.billing_subcon_item_id!, payment]),
+  );
+  const periodLabel = billingPeriodLabel(args.billingPeriod);
+
+  return args.items.map((item) => {
+    const existing = paymentByItemId.get(item.id);
+    return {
+      id: existing?.id ?? crypto.randomUUID(),
+      user_id: args.userId,
+      title: item.subcon_name,
+      type: "subcontractor" as const,
+      amount: item.payable_amount,
+      due_date: existing?.due_date ?? args.dueDate,
+      status: (existing?.status === "paid" ? "paid" : "pending") as PaymentReminder["status"],
+      notes: `${args.monthName} ${args.billingYear} · ${periodLabel}`,
+      subcontractor_id: item.subcontractor_id,
+      billing_subcon_item_id: item.id,
+      billing_month: args.billingMonth,
+      billing_year: args.billingYear,
+      billing_period: args.billingPeriod,
+    };
+  });
+}
+
+export function buildSubcontractorAccountSummary(args: {
+  subcontractor: Subcontractor;
+  billingRecords: Array<{
+    billing_month: number;
+    billing_year: number;
+    billing_period: BillingPeriod;
+    subcon_items: BillingSubconItem[];
+  }>;
+  dailyTickets: SubconDailyTicket[];
+  payments: PaymentReminder[];
+  today?: Date;
+}) {
+  const today = args.today ?? new Date();
+  const billingRows = args.billingRecords.flatMap((record) =>
+    record.subcon_items
+      .filter((item) => item.subcontractor_id === args.subcontractor.id)
+      .map((item) => ({
+        ...item,
+        billing_month: record.billing_month,
+        billing_year: record.billing_year,
+        billing_period: record.billing_period,
+      })),
+  );
+  const payments = args.payments.filter(
+    (payment) => payment.type === "subcontractor" && payment.subcontractor_id === args.subcontractor.id,
+  );
+  const latestDailyTicket = [...args.dailyTickets]
+    .filter((entry) => entry.subcontractor_id === args.subcontractor.id)
+    .sort((a, b) => b.entry_date.localeCompare(a.entry_date))[0];
+  const latestBillingRow = [...billingRows]
+    .sort((a, b) =>
+      `${b.billing_year}-${String(b.billing_month).padStart(2, "0")}-${b.billing_period}`.localeCompare(
+        `${a.billing_year}-${String(a.billing_month).padStart(2, "0")}-${a.billing_period}`,
+      ),
+    )[0];
+  const latestPayment = [...payments]
+    .sort((a, b) =>
+      `${b.billing_year ?? 0}-${String(b.billing_month ?? 0).padStart(2, "0")}-${b.billing_period ?? ""}`.localeCompare(
+        `${a.billing_year ?? 0}-${String(a.billing_month ?? 0).padStart(2, "0")}-${a.billing_period ?? ""}`,
+      ),
+    )[0] ?? null;
+  const referenceDate = latestDailyTicket
+    ? new Date(`${latestDailyTicket.entry_date}T00:00:00`)
+    : latestPayment?.status === "paid"
+      ? new Date(`${latestPayment.updated_at.slice(0, 10)}T00:00:00`)
+      : latestPayment?.billing_month
+        ? new Date(latestPayment.billing_year!, latestPayment.billing_month - 1, latestPayment.billing_period === "first_half" ? 15 : 28)
+        : latestBillingRow
+          ? new Date(latestBillingRow.billing_year, latestBillingRow.billing_month - 1, latestBillingRow.billing_period === "first_half" ? 15 : 28)
+          : today;
+  const month = referenceDate.getMonth() + 1;
+  const year = referenceDate.getFullYear();
+  const period = referenceDate.getDate() <= 15 ? "first_half" : "second_half";
+  const ticketsThisPeriod = latestDailyTicket
+    ? countSubconTickets(args.dailyTickets, args.subcontractor.id, month, year, period)
+    : (latestBillingRow?.install_tickets ?? 0) + (latestBillingRow?.repair_tickets ?? 0);
+  const paymentByBillingItemId = new Map(
+    payments
+      .filter((p) => p.billing_subcon_item_id !== null)
+      .map((payment) => [payment.billing_subcon_item_id!, payment]),
+  );
+  const pendingFromPayments = payments
+    .filter((payment) => payment.status === "pending")
+    .reduce((sum, payment) => sum + payment.amount, 0);
+  const pendingFromUntrackedBilling = billingRows
+    .filter((row) => !paymentByBillingItemId.has(row.id))
+    .reduce((sum, row) => sum + row.payable_amount, 0);
+  const pending = pendingFromPayments + pendingFromUntrackedBilling;
+  const paidMonthKey = `${year}-${String(month).padStart(2, "0")}`;
+  const paidThisMonth = payments
+    .filter((payment) => payment.status === "paid" && payment.updated_at.startsWith(paidMonthKey))
+    .reduce((sum, payment) => sum + payment.amount, 0);
+
+  return {
+    billingRows,
+    lastPayoutStatus: latestPayment?.status ?? "none",
+    netPending: pending,
+    paidThisMonth,
+    ticketsThisPeriod: typeof ticketsThisPeriod === "number" ? ticketsThisPeriod : ticketsThisPeriod.install + ticketsThisPeriod.repair,
+  };
 }
 
 export function lastDayOfMonth(month: number, year: number): string {

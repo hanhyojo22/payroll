@@ -14,7 +14,7 @@ import { PageHeader, RecordTitle, Toolbar } from "../../shared/components/PageLa
 import { StatusBadge } from "../../shared/components/StatusBadge";
 import type { Notice, QueueOfflineMutation } from "../../shared/types";
 import { currency, toNumber } from "../../shared/utils/currency";
-import { currentMonth, currentYear, isBeforeToday, isToday, monthNames, todayKey } from "../../shared/utils/dates";
+import { isBeforeToday, isToday, todayKey } from "../../shared/utils/dates";
 import { friendlyError } from "../../shared/utils/errors";
 import type { PaymentFormValues, PaymentReminder } from "../../types";
 
@@ -27,15 +27,20 @@ const emptyPayment: PaymentFormValues = {
   notes: "",
 };
 
-export function PaymentHistoryFeature({ payments }: { payments: PaymentReminder[] }) {
-  const rows = payments
+export function PaymentHistoryFeature({
+  payments,
+}: {
+  payments: PaymentReminder[];
+}) {
+  const paidRows = payments
     .filter((payment) => payment.status === "paid")
-    .sort((a, b) => b.due_date.localeCompare(a.due_date))
+    .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
     .map((payment) => [
       <RecordTitle key="title" notes={payment.notes} title={payment.title} />,
       payment.type,
       currency.format(toNumber(payment.amount)),
       payment.due_date,
+      payment.updated_at.slice(0, 10),
       <StatusBadge key="status" status={payment.status} />,
     ]);
   const paidTotal = payments
@@ -45,21 +50,21 @@ export function PaymentHistoryFeature({ payments }: { payments: PaymentReminder[
   return (
     <div className="page-stack">
       <PageHeader
-        eyebrow="Completed reminders"
-        text="Review loan and bill reminders that were marked paid."
+        eyebrow="Completed payments"
+        text="All paid reminders — loans, bills, and subcontractor payouts."
         title="Payment History"
       />
       <section className="summary-band">
         <div>
-          <p className="eyebrow">Paid total</p>
+          <p className="eyebrow">Total paid</p>
           <h2>{currency.format(paidTotal)}</h2>
         </div>
-        <p>Only reminders marked paid appear here. Pending and overdue reminders stay in Payments.</p>
+        <p>Only payments marked paid appear here. Pending and overdue stay in Payments.</p>
       </section>
       <DataTable
-        empty="No paid payment reminders yet."
-        headers={["Title", "Type", "Amount", "Due date", "Status"]}
-        rows={rows}
+        empty="No paid payments yet."
+        headers={["Title / Subcontractor", "Type", "Amount", "Due date", "Paid date", "Status"]}
+        rows={paidRows}
       />
     </div>
   );
@@ -81,12 +86,13 @@ export function PaymentsFeature({
   userId: string;
 }) {
   const [query, setQuery] = useState("");
-  const [typeFilter, setTypeFilter] = useState<"all" | "loan" | "bill">("all");
+  const [typeFilter, setTypeFilter] = useState<"all" | "loan" | "bill" | "subcontractor">("all");
   const [editing, setEditing] = useState<PaymentReminder | null>(null);
   const [formOpen, setFormOpen] = useState(false);
 
   const rows = useMemo(() => {
     return payments.filter((payment) => {
+      if (payment.status === "paid") return false;
       const matchesQuery = `${payment.title} ${payment.notes}`.toLowerCase().includes(query.toLowerCase());
       const matchesType = typeFilter === "all" || payment.type === typeFilter;
       return matchesQuery && matchesType;
@@ -242,24 +248,38 @@ export function PaymentsFeature({
           <option value="all">All types</option>
           <option value="loan">Loans</option>
           <option value="bill">Bills</option>
+          <option value="subcontractor">Subcontractor</option>
         </select>
       </Toolbar>
       <DataTable
         empty="No payment reminders yet."
-        headers={["Title", "Type", "Amount", "Due date", "Status", "Actions"]}
+        headers={["Title / Subcontractor", "Type", "Amount", "Due date", "Status", "Actions"]}
         rows={rows.map((payment) => [
           <RecordTitle key="title" notes={payment.notes} title={payment.title} />,
           payment.type,
           currency.format(toNumber(payment.amount)),
           payment.due_date,
           <StatusBadge key="status" status={computedPaymentStatus(payment)} />,
-          <RowActions
-            key="actions"
-            canMarkPaid={payment.status !== "paid"}
-            onDelete={() => remove(payment.id)}
-            onEdit={() => { setEditing(payment); setFormOpen(true); }}
-            onMarkPaid={() => markPaid(payment.id)}
-          />,
+          payment.type === "subcontractor"
+            ? (
+              <button
+                className="secondary-button compact"
+                key="action"
+                onClick={() => void markPaid(payment.id)}
+                type="button"
+              >
+                Mark paid
+              </button>
+            )
+            : (
+              <RowActions
+                key="actions"
+                canMarkPaid={payment.status !== "paid"}
+                onDelete={() => remove(payment.id)}
+                onEdit={() => { setEditing(payment); setFormOpen(true); }}
+                onMarkPaid={() => markPaid(payment.id)}
+              />
+            ),
         ])}
       />
       {formOpen && (
@@ -293,7 +313,7 @@ function PaymentForm({
     initial
       ? {
           title: initial.title,
-          type: initial.type,
+          type: initial.type === "subcontractor" ? "loan" : initial.type,
           amount: String(initial.amount),
           due_date: initial.due_date,
           status: initial.status,

@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { BadgeDollarSign, CalendarClock, CheckCircle2, ChevronDown, Plus, Search, Users, X } from "lucide-react";
 import { Spinner } from "../../shared/components/Spinner";
 import {
   attendanceTotalsForEmployee,
   dailyTicketEntriesForPayrollPeriod,
-  payPeriodLabel,
   payrollItemPayloadForEmployee,
 } from "../../domain/payroll";
 import { netPay, normalizeTicketCount, ticketGrossPay } from "../../domain/tickets";
@@ -38,7 +37,7 @@ function initials(name: string) {
 
 function EmpAvatar({ employees, employeeId, employeeName }: { employees: Employee[]; employeeId: string | null; employeeName: string }) {
   const emp = employees.find((e) => e.id === employeeId);
-  const fallback = emp?.gender === "male" ? "♂" : emp?.gender === "female" ? "♀" : initials(employeeName);
+  const fallback = initials(employeeName);
   return (
     <div className="employee-list-avatar">
       {emp?.profile_photo_url
@@ -156,6 +155,7 @@ export function PayrollFeature({
   positions,
   salaryBonds,
   setNotice,
+  tabs,
   userId,
 }: {
   attendanceEntries: AttendanceEntry[];
@@ -169,6 +169,7 @@ export function PayrollFeature({
   positions: Position[];
   salaryBonds: SalaryBond[];
   setNotice: (notice: Notice) => void;
+  tabs?: ReactNode;
   userId: string;
 }) {
   const [formOpen, setFormOpen] = useState(false);
@@ -651,20 +652,6 @@ export function PayrollFeature({
         title="Payroll"
       />
 
-      <div className="payroll-period-bar">
-        <select value={selectedRun?.id ?? ""} onChange={(event) => setSelectedRunId(event.target.value)}>
-          {payrollRuns.length === 0 && <option value="">No payroll runs yet</option>}
-          {payrollRuns.map((run) => (
-            <option key={run.id} value={run.id}>
-              {monthNames[run.period_month - 1]} {run.period_year} – {payPeriodLabel(run.pay_period)}
-            </option>
-          ))}
-        </select>
-        {selectedRun && (
-          <span className="payroll-period-meta">Generated {selectedRun.generated_date}</span>
-        )}
-      </div>
-
       {selectedRun && (
         <section className="payroll-metrics">
           <div className="payroll-metric">
@@ -685,6 +672,8 @@ export function PayrollFeature({
           </div>
         </section>
       )}
+
+      {tabs}
 
       {selectedRun && missingEmployees.length > 0 && (
         <div className="payroll-missing-banner">
@@ -808,7 +797,7 @@ function PayrollItemsTable({
   );
 }
 
-export function PayrollHistoryFeature({ employees, rows }: { employees: Employee[]; rows: PayrollHistoryRow[] }) {
+export function PayrollHistoryFeature({ employees, rows, tabs }: { employees: Employee[]; rows: PayrollHistoryRow[]; tabs?: ReactNode }) {
   const [query, setQuery] = useState("");
   const [collapsedPeriods, setCollapsedPeriods] = useState<Set<string>>(new Set());
 
@@ -846,6 +835,7 @@ export function PayrollHistoryFeature({ employees, rows }: { employees: Employee
         text="Review every employee payroll record by pay period."
         title="Payroll History"
       />
+      {tabs}
       <Toolbar query={query} setQuery={setQuery} />
       {rows.length === 0 ? (
         <div className="panel"><p className="muted">No paid payroll history yet.</p></div>

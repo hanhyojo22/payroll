@@ -1272,7 +1272,7 @@ create table if not exists public.subcontractors (
   name text not null,
   installation_rate numeric(12, 2) not null default 0 check (installation_rate >= 0),
   repair_rate numeric(12, 2) not null default 0 check (repair_rate >= 0),
-  payable_pct integer not null default 70 check (payable_pct >= 0 and payable_pct <= 100),
+  payable_pct integer not null default 30 check (payable_pct >= 0 and payable_pct <= 100),
   status text not null default 'active' check (status in ('active', 'archived')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -1337,7 +1337,7 @@ create table if not exists public.billing_subcon_items (
   repair_rate numeric(12, 2) not null default 0,
   billable_tickets integer not null default 0,
   billing_amount numeric(12, 2) not null default 0,
-  payable_pct integer not null default 70,
+  payable_pct integer not null default 30,
   payable_amount numeric(12, 2) not null default 0,
   collection_amount numeric(12, 2) not null default 0,
   created_at timestamptz not null default now()
@@ -1351,6 +1351,44 @@ alter table public.billing_subcon_items enable row level security;
 drop policy if exists "billing subcon items are owned by their user" on public.billing_subcon_items;
 create policy "billing subcon items are owned by their user"
 on public.billing_subcon_items for all
+using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create table if not exists public.subcontractor_payments (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  subcontractor_id uuid not null references public.subcontractors(id) on delete cascade,
+  billing_record_id uuid not null references public.billing_records(id) on delete cascade,
+  billing_subcon_item_id uuid not null references public.billing_subcon_items(id) on delete cascade,
+  subcon_name text not null,
+  billing_month integer not null check (billing_month between 1 and 12),
+  billing_year integer not null check (billing_year between 1900 and 2200),
+  billing_period text not null default 'first_half' check (billing_period in ('first_half', 'second_half')),
+  net_amount numeric(12, 2) not null default 0 check (net_amount >= 0),
+  status text not null default 'pending' check (status in ('pending', 'paid')),
+  due_date date not null,
+  paid_date date,
+  notes text not null default '',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (billing_subcon_item_id)
+);
+
+create index if not exists subcontractor_payments_subcontractor_due_idx
+on public.subcontractor_payments (subcontractor_id, due_date desc);
+
+create index if not exists subcontractor_payments_billing_idx
+on public.subcontractor_payments (billing_record_id);
+
+drop trigger if exists set_subcontractor_payments_updated_at on public.subcontractor_payments;
+create trigger set_subcontractor_payments_updated_at
+before update on public.subcontractor_payments
+for each row execute function public.set_updated_at();
+
+alter table public.subcontractor_payments enable row level security;
+
+drop policy if exists "subcontractor payments are owned by their user" on public.subcontractor_payments;
+create policy "subcontractor payments are owned by their user"
+on public.subcontractor_payments for all
 using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 -- Emergency contact fields on employees

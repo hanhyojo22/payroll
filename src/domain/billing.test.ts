@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { computeBilling, countTicketsForMonth, lastDayOfMonth } from "./billing";
-import type { DailyTicketEntry } from "../types";
+import {
+  buildSubcontractorAccountSummary,
+  buildSubcontractorPaymentPayloads,
+  computeBilling,
+  countTicketsForMonth,
+  lastDayOfMonth,
+} from "./billing";
+import type { BillingSubconItem, DailyTicketEntry, PaymentReminder, SubconDailyTicket, Subcontractor } from "../types";
 
 describe("countTicketsForMonth", () => {
   const entries: DailyTicketEntry[] = [
@@ -98,5 +104,158 @@ describe("lastDayOfMonth", () => {
 
   it("returns last day of December", () => {
     expect(lastDayOfMonth(12, 2026)).toBe("2026-12-31");
+  });
+});
+
+describe("buildSubcontractorPaymentPayloads", () => {
+  it("creates one payout row per subcontractor billing item", () => {
+    const items: BillingSubconItem[] = [
+      {
+        id: "item-1",
+        user_id: "u1",
+        billing_record_id: "bill-1",
+        subcontractor_id: "sub-1",
+        subcon_name: "Alpha",
+        install_tickets: 4,
+        repair_tickets: 2,
+        disputed_install: 0,
+        disputed_repair: 0,
+        installation_rate: 1000,
+        repair_rate: 500,
+        billable_tickets: 6,
+        billing_amount: 5000,
+        payable_pct: 70,
+        payable_amount: 3500,
+        collection_amount: 1500,
+        created_at: "",
+      },
+    ];
+
+    const payloads = buildSubcontractorPaymentPayloads({
+      billingMonth: 6,
+      billingYear: 2026,
+      billingPeriod: "first_half",
+      dueDate: "2026-06-15",
+      items,
+      userId: "u1",
+      monthName: "June",
+    });
+
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0]).toMatchObject({
+      billing_subcon_item_id: "item-1",
+      subcontractor_id: "sub-1",
+      amount: 3500,
+      status: "pending",
+      type: "subcontractor",
+    });
+  });
+});
+
+describe("buildSubcontractorAccountSummary", () => {
+  it("computes pending, paid, and ticket totals for a subcontractor account", () => {
+    const subcontractor: Subcontractor = {
+      id: "sub-1",
+      user_id: "u1",
+      name: "Alpha",
+      installation_rate: 1000,
+      repair_rate: 500,
+      payable_pct: 70,
+      status: "active",
+      created_at: "",
+      updated_at: "",
+    };
+    const dailyTickets: SubconDailyTicket[] = [
+      {
+        id: "t1",
+        user_id: "u1",
+        entry_date: "2026-06-05",
+        subcontractor_id: "sub-1",
+        subcon_name: "Alpha",
+        install_tickets: 3,
+        repair_tickets: 2,
+        installation_rate: 1000,
+        repair_rate: 500,
+        created_at: "",
+        updated_at: "",
+      },
+    ];
+    const payments: PaymentReminder[] = [
+      {
+        id: "p1",
+        user_id: "u1",
+        title: "Alpha",
+        type: "subcontractor",
+        amount: 3500,
+        due_date: "2026-06-15",
+        status: "pending",
+        notes: "June 2026 · 1st - 15th",
+        subcontractor_id: "sub-1",
+        billing_subcon_item_id: "item-1",
+        billing_month: 6,
+        billing_year: 2026,
+        billing_period: "first_half",
+        created_at: "",
+        updated_at: "",
+      },
+      {
+        id: "p2",
+        user_id: "u1",
+        title: "Alpha",
+        type: "subcontractor",
+        amount: 1200,
+        due_date: "2026-06-30",
+        status: "paid",
+        notes: "June 2026 · 16th - End",
+        subcontractor_id: "sub-1",
+        billing_subcon_item_id: "item-2",
+        billing_month: 6,
+        billing_year: 2026,
+        billing_period: "second_half",
+        created_at: "",
+        updated_at: "2026-06-29T00:00:00Z",
+      },
+    ];
+
+    const summary = buildSubcontractorAccountSummary({
+      subcontractor,
+      billingRecords: [
+        {
+          billing_month: 6,
+          billing_year: 2026,
+          billing_period: "first_half",
+          subcon_items: [
+            {
+              id: "item-1",
+              user_id: "u1",
+              billing_record_id: "bill-1",
+              subcontractor_id: "sub-1",
+              subcon_name: "Alpha",
+              install_tickets: 3,
+              repair_tickets: 2,
+              disputed_install: 0,
+              disputed_repair: 0,
+              installation_rate: 1000,
+              repair_rate: 500,
+              billable_tickets: 5,
+              billing_amount: 4000,
+              payable_pct: 70,
+              payable_amount: 2800,
+              collection_amount: 1200,
+              created_at: "",
+            },
+          ],
+        },
+      ],
+      dailyTickets,
+      payments,
+      today: new Date("2026-06-10T00:00:00"),
+    });
+
+    expect(summary.ticketsThisPeriod).toBe(5);
+    expect(summary.netPending).toBe(3500);
+    expect(summary.paidThisMonth).toBe(1200);
+    expect(summary.lastPayoutStatus).toBe("paid");
+    expect(summary.billingRows).toHaveLength(1);
   });
 });

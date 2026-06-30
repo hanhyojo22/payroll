@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react";
-import { Pencil, Plus, Settings, Trash2, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { CalendarClock, ChevronLeft, ChevronRight, Pencil, Plus, Settings, Trash2, X } from "lucide-react";
 import { supabase } from "../../supabase";
 import { isOfflineLikeError } from "../../lib/offlineSync";
+import { PageHeader } from "../../shared/components/PageLayout";
 import type { Notice, QueueOfflineMutation } from "../../shared/types";
 import { currency, toNumber } from "../../shared/utils/currency";
-import { currentMonth, currentYear, monthNames, todayKey } from "../../shared/utils/dates";
+import { monthNames, todayKey } from "../../shared/utils/dates";
 import type { Employee, Expense, ExpenseCategory } from "../../types";
 import { deleteExpense, saveExpense, saveExpenseCategory } from "./expenseRepository";
 
@@ -15,6 +16,31 @@ type ExpenseFormValues = {
   expense_date: string;
   notes: string;
 };
+
+function calendarDays(year: number, month: number) {
+  const first = new Date(year, month - 1, 1);
+  const startOffset = (first.getDay() + 6) % 7;
+  const start = new Date(year, month - 1, 1 - startOffset);
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    const dateMonth = date.getMonth() + 1;
+    const dateKey = `${date.getFullYear()}-${String(dateMonth).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    return {
+      currentMonth: dateMonth === month,
+      dateKey,
+      day: date.getDate(),
+    };
+  });
+}
+
+function displayDate(dateKey: string) {
+  return new Date(`${dateKey}T00:00:00`).toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+}
 
 export function ExpensesFeature({
   employees,
@@ -34,26 +60,63 @@ export function ExpensesFeature({
   userId: string;
 }) {
   const [employeeFilter, setEmployeeFilter] = useState("all");
-  const [monthFilter, setMonthFilter] = useState(String(currentMonth()));
-  const [yearFilter, setYearFilter] = useState(String(currentYear()));
+  const [selectedDate, setSelectedDate] = useState(todayKey());
+  const [calendarMonth, setCalendarMonth] = useState(() => Number(todayKey().split("-")[1]));
+  const [calendarYear, setCalendarYear] = useState(() => Number(todayKey().split("-")[0]));
+  const [calendarOpen, setCalendarOpen] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const calendarRef = useRef<HTMLDivElement | null>(null);
 
   const activeEmployees = employees.filter((employee) => employee.status === "active");
   const activeCategories = expenseCategories.filter((category) => category.status === "active");
+  const datesWithExpenses = useMemo(() => new Set(expenses.map((expense) => expense.expense_date)), [expenses]);
 
   const filteredExpenses = useMemo(() => {
     return expenses.filter((expense) => {
-      const [year, month] = expense.expense_date.split("-").map(Number);
       const matchesEmployee = employeeFilter === "all" || expense.employee_id === employeeFilter;
-      const matchesMonth = month === Number(monthFilter);
-      const matchesYear = year === Number(yearFilter);
-      return matchesEmployee && matchesMonth && matchesYear;
+      const matchesDate = expense.expense_date === selectedDate;
+      return matchesEmployee && matchesDate;
     });
-  }, [employeeFilter, expenses, monthFilter, yearFilter]);
+  }, [employeeFilter, expenses, selectedDate]);
 
   const totalExpenses = filteredExpenses.reduce((sum, expense) => sum + toNumber(expense.amount), 0);
+
+  useEffect(() => {
+    function handleClick(event: MouseEvent) {
+      if (calendarRef.current && !calendarRef.current.contains(event.target as Node)) {
+        setCalendarOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  function previousCalendarMonth() {
+    if (calendarMonth === 1) {
+      setCalendarMonth(12);
+      setCalendarYear((year) => year - 1);
+      return;
+    }
+    setCalendarMonth((month) => month - 1);
+  }
+
+  function nextCalendarMonth() {
+    if (calendarMonth === 12) {
+      setCalendarMonth(1);
+      setCalendarYear((year) => year + 1);
+      return;
+    }
+    setCalendarMonth((month) => month + 1);
+  }
+
+  function chooseDate(dateKey: string) {
+    setSelectedDate(dateKey);
+    setCalendarMonth(Number(dateKey.split("-")[1]));
+    setCalendarYear(Number(dateKey.split("-")[0]));
+    setCalendarOpen(false);
+  }
 
   async function handleSaveExpense(values: ExpenseFormValues) {
     if (!supabase) return;
@@ -143,46 +206,87 @@ export function ExpensesFeature({
 
   return (
     <div className="billing-page">
-      <header className="billing-header">
-        <div>
-          <p className="eyebrow">Finance visibility</p>
-          <h2>Expenses</h2>
-        </div>
-        <div className="billing-header-actions">
-          <button className="billing-btn outline" onClick={() => setSettingsOpen(true)} type="button">
-            <Settings size={15} /> Categories
-          </button>
-          <button className="billing-btn primary" onClick={() => { setEditingExpense(null); setFormOpen(true); }} type="button">
-            <Plus size={15} /> Add expense
-          </button>
-        </div>
-      </header>
+      <PageHeader
+        action={(
+          <div className="billing-header-actions">
+            <button className="billing-btn outline" onClick={() => setSettingsOpen(true)} type="button">
+              <Settings size={15} /> Categories
+            </button>
+            <button className="billing-btn primary" onClick={() => { setEditingExpense(null); setFormOpen(true); }} type="button">
+              <Plus size={15} /> Add expense
+            </button>
+          </div>
+        )}
+        eyebrow="Finance visibility"
+        title="Expenses"
+        text="Track reimbursable costs, filter expenses by employee and period, and manage expense categories."
+      />
 
       <section className="billing-summary expense-summary">
-        <label>
-          Employee
+        <label className="expense-filter-card">
+          <span className="expense-filter-label">Employee</span>
           <select value={employeeFilter} onChange={(event) => setEmployeeFilter(event.target.value)}>
             <option value="all">All employees</option>
             {activeEmployees.map((employee) => (
               <option key={employee.id} value={employee.id}>{employee.full_name}</option>
             ))}
           </select>
+          <small>Filter reimbursements by staff member.</small>
         </label>
-        <label>
-          Month
-          <select value={monthFilter} onChange={(event) => setMonthFilter(event.target.value)}>
-            {monthNames.map((name, index) => (
-              <option key={name} value={String(index + 1)}>{name}</option>
-            ))}
-          </select>
+        <label className="expense-filter-card expense-date-card">
+          <span className="expense-filter-label">Date</span>
+          <div className="att-cal-wrap" ref={calendarRef}>
+            <button
+              className="attendance-date-field att-cal-trigger"
+              onClick={() => setCalendarOpen((open) => !open)}
+              type="button"
+            >
+              <CalendarClock size={15} />
+              <span>{displayDate(selectedDate)}</span>
+            </button>
+            {calendarOpen && (
+              <div className="att-cal">
+                <div className="att-cal-header">
+                  <button onClick={previousCalendarMonth} type="button"><ChevronLeft size={14} /></button>
+                  <span>{monthNames[calendarMonth - 1]} {calendarYear}</span>
+                  <button onClick={nextCalendarMonth} type="button"><ChevronRight size={14} /></button>
+                </div>
+                <div className="att-cal-grid">
+                  {["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map((day) => (
+                    <span className="att-cal-day-name" key={day}>{day}</span>
+                  ))}
+                  {calendarDays(calendarYear, calendarMonth).map(({ currentMonth, dateKey, day }) => (
+                    <button
+                      className={[
+                        "att-cal-day",
+                        !currentMonth ? "other-month" : "",
+                        dateKey === selectedDate ? "selected" : "",
+                        dateKey === todayKey() ? "today" : "",
+                        datesWithExpenses.has(dateKey) ? "has-entry" : "",
+                      ].filter(Boolean).join(" ")}
+                      key={dateKey}
+                      onClick={() => chooseDate(dateKey)}
+                      type="button"
+                    >
+                      {day}
+                    </button>
+                  ))}
+                </div>
+                <div className="att-cal-footer">
+                  <span>Today: {displayDate(todayKey())}</span>
+                  <button onClick={() => chooseDate(todayKey())} type="button">Go to today</button>
+                </div>
+              </div>
+            )}
+          </div>
+          <small>Pick a day from the calendar.</small>
         </label>
-        <label>
-          Year
-          <input type="number" min="2020" max="2200" value={yearFilter} onChange={(event) => setYearFilter(event.target.value)} />
-        </label>
-        <div className="billing-stat accent">
-          <span className="billing-stat-label">Total expenses</span>
-          <strong className="billing-stat-value">{currency.format(totalExpenses)}</strong>
+        <div className="billing-stat accent expense-total-card">
+          <div className="expense-total-copy">
+            <span className="billing-stat-label">Total expenses</span>
+            <strong className="billing-stat-value">{currency.format(totalExpenses)}</strong>
+            <small>{filteredExpenses.length} record{filteredExpenses.length === 1 ? "" : "s"} on {displayDate(selectedDate)}</small>
+          </div>
         </div>
       </section>
 

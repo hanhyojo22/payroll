@@ -82,6 +82,8 @@ async function applyMutation(supabase: SupabaseClient, mutation: PendingMutation
         billingPayload: Record<string, unknown>;
         collectionPayload: Record<string, unknown>;
         collectiblesCollectionPayload?: Record<string, unknown>;
+        subconItemPayloads?: Record<string, unknown>[];
+        subcontractorPaymentPayloads?: Record<string, unknown>[];
       };
       const collectionResult = await supabase.from("collection_reminders").insert(payload.collectionPayload);
       if (collectionResult.error) return collectionResult;
@@ -91,6 +93,14 @@ async function applyMutation(supabase: SupabaseClient, mutation: PendingMutation
       }
       const billingResult = await supabase.from("billing_records").insert(payload.billingPayload);
       if (billingResult.error) return billingResult;
+      if ((payload.subconItemPayloads?.length ?? 0) > 0) {
+        const subconResult = await supabase.from("billing_subcon_items").insert(payload.subconItemPayloads!);
+        if (subconResult.error) return subconResult;
+      }
+      if ((payload.subcontractorPaymentPayloads?.length ?? 0) > 0) {
+        const paymentResult = await supabase.from("subcontractor_payments").insert(payload.subcontractorPaymentPayloads!);
+        if (paymentResult.error) return paymentResult;
+      }
       return { error: null };
     }
     case "collection_payment":

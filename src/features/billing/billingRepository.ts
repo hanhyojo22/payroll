@@ -1,9 +1,15 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { BillingRecord, BillingSettings, Subcontractor } from "../../types";
+import type {
+  BillingRecord,
+  BillingSettings,
+  PaymentReminder,
+  Subcontractor,
+} from "../../types";
 
 const BILLING_RECORDS_SELECT = "id,user_id,billing_month,billing_year,billing_period,install_tickets,repair_tickets,disputed_install,disputed_repair,total_tickets,disputed_tickets,billable_tickets,billing_rate,billing_amount,collections_pct,collections_amount,collectibles_amount,collection_id,collectibles_collection_id,notes,created_at,updated_at,subcon_items:billing_subcon_items(id,user_id,billing_record_id,subcontractor_id,subcon_name,install_tickets,repair_tickets,disputed_install,disputed_repair,installation_rate,repair_rate,billable_tickets,billing_amount,payable_pct,payable_amount,collection_amount,created_at)";
 const SUBCONTRACTOR_SELECT = "id,user_id,name,installation_rate,repair_rate,payable_pct,status,created_at,updated_at";
 const BILLING_SETTINGS_SELECT = "id,user_id,installation_rate,repair_rate,collections_pct,client_name,created_at,updated_at";
+const PAYMENT_REMINDER_SUBCON_SELECT = "id,user_id,title,type,amount,due_date,status,notes,subcontractor_id,billing_subcon_item_id,billing_month,billing_year,billing_period,created_at,updated_at";
 
 export async function fetchBillingRecords(supabase: SupabaseClient) {
   const result = await supabase
@@ -57,9 +63,10 @@ export async function saveBillingRecord(
   supabase: SupabaseClient,
   record: Omit<BillingRecord, "created_at" | "updated_at">,
 ) {
+  const { subcon_items: _, ...row } = record;
   return supabase
     .from("billing_records")
-    .upsert(record, { onConflict: "user_id,billing_month,billing_year,billing_period" })
+    .upsert(row, { onConflict: "user_id,billing_month,billing_year,billing_period" })
     .select(BILLING_RECORDS_SELECT)
     .single();
 }
@@ -87,6 +94,7 @@ export async function fetchSubcontractors(supabase: SupabaseClient) {
   return { data: (result.data ?? []) as Subcontractor[], error: result.error };
 }
 
+
 export async function saveSubcontractor(
   supabase: SupabaseClient,
   userId: string,
@@ -101,9 +109,52 @@ export async function saveSubcontractor(
 export async function saveBillingSubconItems(
   supabase: SupabaseClient,
   billingRecordId: string,
-  items: Array<Omit<import("../../types").BillingSubconItem, "id" | "created_at">>,
+  items: Array<Omit<import("../../types").BillingSubconItem, "created_at">>,
 ) {
-  await supabase.from("billing_subcon_items").delete().eq("billing_record_id", billingRecordId);
-  if (items.length === 0) return { error: null };
-  return supabase.from("billing_subcon_items").insert(items.map((item) => ({ ...item, billing_record_id: billingRecordId })));
+  const existing = await supabase
+    .from("billing_subcon_items")
+    .select("id")
+    .eq("billing_record_id", billingRecordId);
+
+  if (existing.error) return { data: [] as import("../../types").BillingSubconItem[], error: existing.error };
+
+  const existingIds = new Set((existing.data ?? []).map((row) => row.id as string));
+  const nextIds = new Set(items.map((item) => item.id));
+  const idsToDelete = Array.from(existingIds).filter((id) => !nextIds.has(id));
+
+  if (idsToDelete.length > 0) {
+    const deleteResult = await supabase.from("billing_subcon_items").delete().in("id", idsToDelete);
+    if (deleteResult.error) return { data: [] as import("../../types").BillingSubconItem[], error: deleteResult.error };
+  }
+
+  if (items.length === 0) return { data: [] as import("../../types").BillingSubconItem[], error: null };
+
+  const result = await supabase
+    .from("billing_subcon_items")
+    .upsert(items.map(({ created_at: _ca, ...item }: typeof items[number] & { created_at?: string }) => ({ ...item, billing_record_id: billingRecordId })))
+    .select("id,user_id,billing_record_id,subcontractor_id,subcon_name,install_tickets,repair_tickets,disputed_install,disputed_repair,installation_rate,repair_rate,billable_tickets,billing_amount,payable_pct,payable_amount,collection_amount,created_at");
+
+  return {
+    data: (result.data ?? []) as import("../../types").BillingSubconItem[],
+    error: result.error,
+  };
+}
+
+export async function saveSubconPaymentReminders(
+  supabase: SupabaseClient,
+  payments: Array<Omit<PaymentReminder, "created_at" | "updated_at">>,
+) {
+  if (payments.length === 0) return { error: null };
+  const result = await supabase
+    .from("payment_reminders")
+    .upsert(payments, { onConflict: "billing_subcon_item_id" })
+    .select(PAYMENT_REMINDER_SUBCON_SELECT);
+  return { data: (result.data ?? []) as PaymentReminder[], error: result.error };
+}
+
+export async function markSubconPaymentReminderPaid(supabase: SupabaseClient, paymentId: string) {
+  return supabase
+    .from("payment_reminders")
+    .update({ status: "paid" })
+    .eq("id", paymentId);
 }

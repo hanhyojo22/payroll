@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent, ReactNode } from "react";
+import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import {
   BadgeDollarSign,
   ArrowLeft,
@@ -23,6 +23,7 @@ import {
   LogOut,
   Mail,
   MapPin,
+  Maximize2,
   Menu,
   MoreVertical,
   Pencil,
@@ -84,6 +85,7 @@ import { ExpensesFeature } from "./features/expenses/ExpensesFeature";
 import { PaymentHistoryFeature, PaymentsFeature } from "./features/payments/PaymentsFeature";
 import { PayrollFeature, PayrollHistoryFeature } from "./features/payroll/PayrollFeature";
 import { SalaryBondsFeature } from "./features/payroll/SalaryBondsFeature";
+import { SubcontractorsFeature } from "./features/subcontractors/SubcontractorsFeature";
 import { Sidebar } from "./Sidebar";
 import { MoneyField as MoneyInput } from "./shared/components/MoneyField";
 import { NoticeBanner } from "./shared/components/NoticeBanner";
@@ -213,7 +215,7 @@ const viewPaths: Record<View, string> = {
 
 const viewResources: Record<View, ResourceKey[]> = {
   attendance: ["positions", "employees", "attendanceEntries"],
-  billing: ["billingRecords", "billingSettings", "dailyTicketEntries", "collections", "subcontractors", "subconDailyTickets"],
+  billing: ["billingRecords", "billingSettings", "dailyTicketEntries", "collections", "subcontractors", "subconDailyTickets", "payments"],
   dashboard: ["dashboardSummary"],
   employees: ["employees", "positions", "payrollRuns", "salaryBonds"],
   "employee-add": ["employees", "positions", "payrollRuns", "salaryBonds"],
@@ -228,7 +230,39 @@ const viewResources: Record<View, ResourceKey[]> = {
   "payment-history": ["payments"],
   collections: ["collections"],
   "collection-history": ["collections"],
-  subcontractors: ["subcontractors"],
+  subcontractors: ["subcontractors", "subconDailyTickets", "billingRecords", "payments"],
+};
+
+type BreadcrumbItem = {
+  label: string;
+  view?: View;
+};
+
+type GlobalSearchResult = {
+  id: string;
+  label: string;
+  detail: string;
+  type: "employee" | "subcontractor";
+};
+
+const viewBreadcrumbs: Record<View, BreadcrumbItem[]> = {
+  attendance: [{ label: "Dashboard", view: "dashboard" }, { label: "Attendance", view: "attendance" }],
+  billing: [{ label: "Dashboard", view: "dashboard" }, { label: "Billing", view: "billing" }],
+  dashboard: [{ label: "Dashboard", view: "dashboard" }],
+  employees: [{ label: "Dashboard", view: "dashboard" }, { label: "Employees", view: "employees" }],
+  "employee-add": [{ label: "Dashboard", view: "dashboard" }, { label: "Employees", view: "employees" }, { label: "Add employee", view: "employee-add" }],
+  expenses: [{ label: "Dashboard", view: "dashboard" }, { label: "Expenses", view: "expenses" }],
+  compensation: [{ label: "Dashboard", view: "dashboard" }, { label: "Settings" }, { label: "Positions", view: "compensation" }],
+  "daily-tickets": [{ label: "Dashboard", view: "dashboard" }, { label: "Daily Tickets", view: "daily-tickets" }, { label: "Employees", view: "daily-tickets" }],
+  "daily-tickets-subcon": [{ label: "Dashboard", view: "dashboard" }, { label: "Daily Tickets", view: "daily-tickets" }, { label: "Subcontractors", view: "daily-tickets-subcon" }],
+  "salary-bonds": [{ label: "Dashboard", view: "dashboard" }, { label: "Salary Bond", view: "salary-bonds" }],
+  payroll: [{ label: "Dashboard", view: "dashboard" }, { label: "Payroll", view: "payroll" }],
+  "payroll-history": [{ label: "Dashboard", view: "dashboard" }, { label: "Payroll", view: "payroll" }, { label: "History", view: "payroll-history" }],
+  payments: [{ label: "Dashboard", view: "dashboard" }, { label: "Payments", view: "payments" }],
+  "payment-history": [{ label: "Dashboard", view: "dashboard" }, { label: "Payments", view: "payments" }, { label: "History", view: "payment-history" }],
+  collections: [{ label: "Dashboard", view: "dashboard" }, { label: "Collections", view: "collections" }],
+  "collection-history": [{ label: "Dashboard", view: "dashboard" }, { label: "Collections", view: "collections" }, { label: "History", view: "collection-history" }],
+  subcontractors: [{ label: "Dashboard", view: "dashboard" }, { label: "Subcontractors", view: "subcontractors" }],
 };
 
 const emptyDashboardSummary: DashboardSummary = {
@@ -252,6 +286,54 @@ const viewFromPath = (path: string): View => {
   const match = Object.entries(viewPaths).find(([, routePath]) => routePath === path);
   return (match?.[0] as View | undefined) ?? "dashboard";
 };
+
+function AppBreadcrumbs({
+  navigate,
+  view,
+}: {
+  navigate: (view: View) => void;
+  view: View;
+}) {
+  const items = viewBreadcrumbs[view];
+  const backTarget = [...items]
+    .slice(0, -1)
+    .reverse()
+    .find((item) => item.view)?.view;
+  const canGoBack = Boolean(backTarget);
+
+  return (
+    <nav aria-label="Breadcrumb" className="app-breadcrumb-bar">
+      <button
+        className="breadcrumb-back-button"
+        disabled={!canGoBack}
+        onClick={() => {
+          if (backTarget) navigate(backTarget);
+        }}
+        type="button"
+      >
+        <ArrowLeft size={16} />
+        Back
+      </button>
+      <ol className="breadcrumb-list">
+        {items.map((item, index) => {
+          const isCurrent = index === items.length - 1;
+          return (
+            <li key={`${item.label}-${index}`}>
+              {index > 0 && <ChevronRight aria-hidden="true" size={14} />}
+              {item.view && !isCurrent ? (
+                <button onClick={() => navigate(item.view!)} type="button">
+                  {item.label}
+                </button>
+              ) : (
+                <span aria-current={isCurrent ? "page" : undefined}>{item.label}</span>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+    </nav>
+  );
+}
 
 const emptyPayment: PaymentFormValues = {
   title: "",
@@ -335,7 +417,9 @@ function FullPageMessage({ title, text }: { title: string; text: string }) {
     <main className="center-screen">
       <section className="auth-panel">
         <div className="brand-mark">
-          {title.toLowerCase().includes("loading") ? <Spinner /> : <CalendarClock size={30} />}
+          {title.toLowerCase().includes("loading")
+            ? <Spinner />
+            : <img className="brand-logo mark-logo" src="/logo.png" alt="JMSolution Information Services" />}
         </div>
         <h1>{title}</h1>
         <p>{text}</p>
@@ -376,8 +460,8 @@ function Login() {
     <main className="center-screen login-screen">
       <section className="auth-panel">
         <div className="brand-row">
-          <div className="brand-mark">
-            <CalendarClock size={28} />
+          <div className="brand-mark logo-brand-mark">
+            <img className="brand-logo mark-logo" src="/logo.png" alt="JMSolution Information Services" />
           </div>
           <div>
             <p className="eyebrow">Payroll workspace</p>
@@ -443,9 +527,17 @@ function Workspace({ session }: { session: Session }) {
   const [billingRecords, setBillingRecords] = useState<BillingRecord[]>([]);
   const [billingSettings, setBillingSettings] = useState<BillingSettings | null>(null);
   const [subcontractors, setSubcontractors] = useState<Subcontractor[]>([]);
+  const [selectedEmployeeDetailId, setSelectedEmployeeDetailId] = useState<string | null>(null);
+  const [selectedSubcontractorId, setSelectedSubcontractorId] = useState<string | null>(null);
+  const [subcontractorAccountTab, setSubcontractorAccountTab] = useState<"daily" | "billing" | "payouts">("daily");
   const [resourceStatuses, setResourceStatuses] = useState(initialResourceStatuses);
   const [resourceHydration, setResourceHydration] = useState(initialResourceHydration);
   const [notice, setNotice] = useState<Notice>(null);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const accountMenuRef = useRef<HTMLDivElement | null>(null);
+  const [globalSearchQuery, setGlobalSearchQuery] = useState("");
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+  const globalSearchRef = useRef<HTMLDivElement | null>(null);
 
   const resourceSetters: Record<ResourceKey, (data: unknown) => void> = {
     attendanceEntries: (data) => setAttendanceEntries(data as AttendanceEntry[]),
@@ -643,6 +735,7 @@ function Workspace({ session }: { session: Session }) {
       loadResource("collections", true),
       loadResource("subcontractors", true),
       loadResource("subconDailyTickets", true),
+      loadResource("payments", true),
     ]);
   }
 
@@ -676,6 +769,32 @@ function Workspace({ session }: { session: Session }) {
   }, [mobileNavOpen]);
 
   useEffect(() => {
+    if (!accountMenuOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!accountMenuRef.current?.contains(event.target as Node)) {
+        setAccountMenuOpen(false);
+      }
+    };
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
+  }, [accountMenuOpen]);
+
+  useEffect(() => {
+    if (!globalSearchOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!globalSearchRef.current?.contains(event.target as Node)) {
+        setGlobalSearchOpen(false);
+      }
+    };
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
+  }, [globalSearchOpen]);
+
+  useEffect(() => {
     void loadPageData(view);
   }, [view]);
 
@@ -697,12 +816,102 @@ function Workspace({ session }: { session: Session }) {
     await supabase?.auth.signOut();
   }
 
+  async function toggleFullscreen() {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+        return;
+      }
+
+      await document.documentElement.requestFullscreen();
+    } catch {
+      setNotice({ type: "error", text: "Fullscreen is not available in this browser." });
+    }
+  }
+
   const currentViewResources = viewResources[view];
   const pageLoading = currentViewResources.some((resource) => resourceStatuses[resource] === "loading");
   const pageHydrated = currentViewResources.length === 0 ||
     currentViewResources.every((resource) => resourceHydration[resource]);
   const showPageSkeleton = pageLoading && !pageHydrated;
   const showSyncIndicator = pageLoading && pageHydrated;
+  const accountName =
+    typeof session.user.user_metadata?.full_name === "string" && session.user.user_metadata.full_name.trim()
+      ? session.user.user_metadata.full_name.trim()
+      : session.user.email ?? "Admin account";
+  const accountInitial = accountName.trim().charAt(0).toUpperCase() || "A";
+  const normalizedGlobalSearch = globalSearchQuery.trim().toLowerCase();
+  const globalSearchResults = useMemo<GlobalSearchResult[]>(() => {
+    if (!normalizedGlobalSearch) return [];
+
+    const employeeResults = employees
+      .filter((employee) =>
+        [
+          employee.full_name,
+          employee.role,
+          employee.department,
+          employee.email,
+        ].some((value) => value.toLowerCase().includes(normalizedGlobalSearch)),
+      )
+      .slice(0, 6)
+      .map((employee) => ({
+        id: employee.id,
+        label: employee.full_name,
+        detail: employee.role || employee.department || employee.email || "Employee",
+        type: "employee" as const,
+      }));
+
+    const subcontractorResults = subcontractors
+      .filter((subcontractor) =>
+        [
+          subcontractor.name,
+          subcontractor.status,
+        ].some((value) => value.toLowerCase().includes(normalizedGlobalSearch)),
+      )
+      .slice(0, 6)
+      .map((subcontractor) => ({
+        id: subcontractor.id,
+        label: subcontractor.name,
+        detail: `${subcontractor.status === "archived" ? "Archived" : "Active"} subcontractor`,
+        type: "subcontractor" as const,
+      }));
+
+    return [...employeeResults, ...subcontractorResults].slice(0, 8);
+  }, [employees, normalizedGlobalSearch, subcontractors]);
+
+  function prepareGlobalSearch() {
+    setGlobalSearchOpen(true);
+    void Promise.all([
+      loadResource("employees"),
+      loadResource("subcontractors"),
+    ]);
+  }
+
+  function openGlobalSearchResult(result: GlobalSearchResult) {
+    setGlobalSearchQuery("");
+    setGlobalSearchOpen(false);
+    if (result.type === "subcontractor") {
+      setSelectedSubcontractorId(result.id);
+      setSubcontractorAccountTab("daily");
+      navigate("subcontractors");
+      return;
+    }
+
+    navigate("employees");
+    setSelectedEmployeeDetailId(result.id);
+  }
+
+  function handleGlobalSearchKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Escape") {
+      setGlobalSearchOpen(false);
+      return;
+    }
+
+    if (event.key === "Enter" && globalSearchResults[0]) {
+      event.preventDefault();
+      openGlobalSearchResult(globalSearchResults[0]);
+    }
+  }
 
   return (
     <main className="app-shell">
@@ -718,18 +927,112 @@ function Workspace({ session }: { session: Session }) {
 
       <div className="main-area">
         <header className="topbar">
-          <button
-            aria-controls="primary-sidebar"
-            aria-expanded={mobileNavOpen}
-            aria-label={mobileNavOpen ? "Close navigation" : "Open navigation"}
-            className="topbar-icon nav-toggle"
-            onClick={() => setMobileNavOpen((open) => !open)}
-            type="button"
-          >
-            {mobileNavOpen ? <X size={21} /> : <Menu size={21} />}
-          </button>
+          <div className="topbar-left">
+            <button
+              aria-controls="primary-sidebar"
+              aria-expanded={mobileNavOpen}
+              aria-label={mobileNavOpen ? "Close navigation" : "Open navigation"}
+              className="topbar-icon nav-toggle"
+              onClick={() => setMobileNavOpen((open) => !open)}
+              type="button"
+            >
+              {mobileNavOpen ? <X size={21} /> : <Menu size={21} />}
+            </button>
+            <div className="topbar-search-wrap" ref={globalSearchRef}>
+              <label className="topbar-search">
+                <span className="sr-only">Search workspace</span>
+                <Search aria-hidden="true" size={17} />
+                <input
+                  aria-label="Search employee or subcontractor"
+                  autoComplete="off"
+                  onChange={(event) => {
+                    setGlobalSearchQuery(event.target.value);
+                    setGlobalSearchOpen(true);
+                  }}
+                  onFocus={prepareGlobalSearch}
+                  onKeyDown={handleGlobalSearchKeyDown}
+                  placeholder="Search employee or subcon..."
+                  type="search"
+                  value={globalSearchQuery}
+                />
+              </label>
+              {globalSearchOpen && (
+                <div className="global-search-dropdown">
+                  {!normalizedGlobalSearch ? (
+                    <p className="global-search-empty">Search employee name or subcontractor name.</p>
+                  ) : globalSearchResults.length > 0 ? (
+                    globalSearchResults.map((result) => (
+                      <button
+                        className="global-search-result"
+                        key={`${result.type}-${result.id}`}
+                        onClick={() => openGlobalSearchResult(result)}
+                        type="button"
+                      >
+                        <span className={`global-search-icon ${result.type}`}>
+                          {result.type === "employee" ? <UserRound size={15} /> : <Briefcase size={15} />}
+                        </span>
+                        <span>
+                          <strong>{result.label}</strong>
+                          <small>{result.detail}</small>
+                        </span>
+                        <em>{result.type === "employee" ? "Employee" : "Subcon"}</em>
+                      </button>
+                    ))
+                  ) : (
+                    <p className="global-search-empty">No employee or subcontractor found.</p>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="topbar-actions">
+            <button className="topbar-icon notification-button" aria-label="Notifications" type="button">
+              <Bell size={19} />
+              <span>3</span>
+            </button>
+            <button className="topbar-icon" aria-label="Fullscreen" onClick={toggleFullscreen} type="button">
+              <Maximize2 size={18} />
+            </button>
+            <div className="account-menu" ref={accountMenuRef}>
+              <button
+                aria-expanded={accountMenuOpen}
+                aria-haspopup="menu"
+                className="admin-chip"
+                onClick={() => setAccountMenuOpen((open) => !open)}
+                type="button"
+              >
+                <span className="avatar">{accountInitial}</span>
+                <span className="admin-chip-copy">
+                  <strong>{accountName}</strong>
+                  <span>Administrator</span>
+                </span>
+                <ChevronDown className={accountMenuOpen ? "rotate-chevron" : undefined} size={15} />
+              </button>
+              {accountMenuOpen && (
+                <div className="account-dropdown" role="menu">
+                  <div className="account-dropdown-header">
+                    <strong>{accountName}</strong>
+                    <span>{session.user.email ?? "Administrator"}</span>
+                  </div>
+                  <button
+                    className="account-dropdown-item danger"
+                    onClick={() => {
+                      setAccountMenuOpen(false);
+                      void signOut();
+                    }}
+                    role="menuitem"
+                    type="button"
+                  >
+                    <LogOut size={16} />
+                    Logout
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
         </header>
         <section className="content">
+          {view !== "dashboard" && <AppBreadcrumbs navigate={navigate} view={view} />}
           <NoticeBanner notice={notice} onDismiss={() => setNotice(null)} />
           {showSyncIndicator && <SyncIndicator text="Syncing latest data..." />}
           {showPageSkeleton ? (
@@ -742,7 +1045,9 @@ function Workspace({ session }: { session: Session }) {
               {view === "employees" && (
                 <EmployeesView
                   employees={employees}
+                  initialDetailsEmployeeId={selectedEmployeeDetailId}
                   onChange={refreshEmployeesPage}
+                  onClearInitialDetailsEmployee={() => setSelectedEmployeeDetailId(null)}
                   onLocalEmployeesChange={setEmployees}
                   onQueueOfflineMutation={queueOfflineMutation}
                   payrollRuns={payrollRuns}
@@ -755,8 +1060,10 @@ function Workspace({ session }: { session: Session }) {
             {view === "employee-add" && (
               <EmployeesView
                 employees={employees}
+                initialDetailsEmployeeId={selectedEmployeeDetailId}
                 mode="add"
                 onChange={refreshEmployeesPage}
+                onClearInitialDetailsEmployee={() => setSelectedEmployeeDetailId(null)}
                 onExitForm={() => navigate("employees")}
                 onLocalEmployeesChange={setEmployees}
                 onQueueOfflineMutation={queueOfflineMutation}
@@ -780,6 +1087,15 @@ function Workspace({ session }: { session: Session }) {
               )}
               {(view === "daily-tickets" || view === "daily-tickets-subcon") && (
                 <>
+                  <PageHeader
+                    eyebrow="Daily operations"
+                    title={view === "daily-tickets" ? "Daily closed tickets" : "Subcontractor daily tickets"}
+                    text={
+                      view === "daily-tickets"
+                        ? "Record closed ticket counts per employee. Tab across rows, then Save All."
+                        : "Record closed ticket counts per subcontractor. Tab across rows, then Save All."
+                    }
+                  />
                   <div className="page-tabs" role="tablist">
                     <button className={view === "daily-tickets" ? "active" : ""} onClick={() => navigate("daily-tickets")} role="tab" type="button"><Users size={14} />Employees</button>
                     <button className={view === "daily-tickets-subcon" ? "active" : ""} onClick={() => navigate("daily-tickets-subcon")} role="tab" type="button"><Wrench size={14} />Subcontractors</button>
@@ -829,10 +1145,6 @@ function Workspace({ session }: { session: Session }) {
               )}
               {(view === "payroll" || view === "payroll-history") && (
                 <>
-                  <div className="page-tabs" role="tablist">
-                    <button className={view === "payroll" ? "active" : ""} onClick={() => navigate("payroll")} role="tab" type="button">Payroll</button>
-                    <button className={view === "payroll-history" ? "active" : ""} onClick={() => navigate("payroll-history")} role="tab" type="button">History</button>
-                  </div>
                   {view === "payroll" ? (
                     <PayrollFeature
                       attendanceEntries={attendanceEntries}
@@ -846,10 +1158,25 @@ function Workspace({ session }: { session: Session }) {
                       positions={positions}
                       salaryBonds={salaryBonds}
                       setNotice={setNotice}
+                      tabs={(
+                        <div className="page-tabs" role="tablist">
+                          <button className="active" onClick={() => navigate("payroll")} role="tab" type="button">Payroll</button>
+                          <button onClick={() => navigate("payroll-history")} role="tab" type="button">History</button>
+                        </div>
+                      )}
                       userId={session.user.id}
                     />
                   ) : (
-                    <PayrollHistoryFeature employees={employees} rows={payrollHistoryRows} />
+                    <PayrollHistoryFeature
+                      employees={employees}
+                      rows={payrollHistoryRows}
+                      tabs={(
+                        <div className="page-tabs" role="tablist">
+                          <button onClick={() => navigate("payroll")} role="tab" type="button">Payroll</button>
+                          <button className="active" onClick={() => navigate("payroll-history")} role="tab" type="button">History</button>
+                        </div>
+                      )}
+                    />
                   )}
                 </>
               )}
@@ -879,9 +1206,15 @@ function Workspace({ session }: { session: Session }) {
                   billingSettings={billingSettings}
                   collections={collections}
                   dailyTicketEntries={dailyTicketEntries}
+                  onOpenSubcontractorAccount={(subcontractorId) => {
+                    setSelectedSubcontractorId(subcontractorId);
+                    setSubcontractorAccountTab("billing");
+                    navigate("subcontractors");
+                  }}
                   onChange={refreshBillingPage}
                   onLocalBillingRecordsChange={setBillingRecords}
                   onQueueOfflineMutation={queueOfflineMutation}
+                  payments={payments}
                   setNotice={setNotice}
                   subconDailyTickets={subconDailyTickets}
                   subcontractors={subcontractors}
@@ -900,9 +1233,24 @@ function Workspace({ session }: { session: Session }) {
                 />
               )}
               {view === "subcontractors" && (
-                <SubcontractorsView
-                  onChange={async () => { await loadResource("subcontractors", true); }}
+                <SubcontractorsFeature
+                  billingRecords={billingRecords}
+                  initialTab={subcontractorAccountTab}
+                  onChange={async () => {
+                    await Promise.all([
+                      loadResource("subcontractors", true),
+                      loadResource("subconDailyTickets", true),
+                      loadResource("billingRecords", true),
+                      loadResource("payments", true),
+                    ]);
+                  }}
+                  onSelectSubcontractor={(subcontractorId) => {
+                    setSelectedSubcontractorId(subcontractorId);
+                  }}
+                  payments={payments}
+                  selectedSubcontractorId={selectedSubcontractorId}
                   setNotice={setNotice}
+                  subconDailyTickets={subconDailyTickets}
                   subcontractors={subcontractors}
                   userId={session.user.id}
                 />
@@ -988,10 +1336,11 @@ function Dashboard({ summary }: { summary: DashboardSummary }) {
 
   return (
     <div className="page-stack dash">
-      <header className="dash-header">
-        <p className="dash-greeting">{greeting}</p>
-        <h1 className="dash-date">{dateStr}</h1>
-      </header>
+      <PageHeader
+        eyebrow="Dashboard"
+        title={greeting}
+        text={dateStr}
+      />
 
       <section className="dash-pulse">
         <div className="dash-pulse-card receivables">
@@ -2138,7 +2487,6 @@ export function DailyTicketEntryView({
 
   return (
     <div className="page-stack">
-      <PageHeader eyebrow="Daily operations" title="Daily closed tickets" text="Record closed ticket counts per employee. Tab across rows, then Save All." />
       {employees.some((employee) => employee.status === "active" && !employee.position_id) && <NoticeBanner notice={{ type: "error", text: "Some active employees have no position and cannot receive ticket entries." }} onDismiss={() => undefined} />}
       <div className="ticket-toolbar">
         <div className="att-cal-wrap" ref={calendarRef}>
@@ -2177,6 +2525,24 @@ export function DailyTicketEntryView({
                     {day}
                   </button>
                 ))}
+              </div>
+              <div className="att-cal-footer">
+                <span>Today: {new Date(`${todayKey()}T00:00:00`).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const today = todayKey();
+                    const [year, month] = today.split("-").map(Number);
+                    setCalendarYear(year);
+                    setCalendarMonth(month);
+                    setEntryDate(today);
+                    setDraftCounts({});
+                    setSavedIds(new Set());
+                    setShowCalendar(false);
+                  }}
+                >
+                  Go to today
+                </button>
               </div>
             </div>
           )}
@@ -2273,7 +2639,7 @@ export function DailyTicketEntryView({
                                 <div className="employee-list-avatar">
                                   {draft.employee.profile_photo_url
                                     ? <img alt="" src={draft.employee.profile_photo_url} />
-                                    : <span>{draft.employee.gender === "male" ? "♂" : draft.employee.gender === "female" ? "♀" : draft.employee.full_name.split(" ").filter(Boolean).slice(0, 2).map((p) => p[0]).join("").toUpperCase() || "E"}</span>}
+                                    : <span>{draft.employee.full_name.split(" ").filter(Boolean).slice(0, 2).map((p) => p[0]).join("").toUpperCase() || "E"}</span>}
                                 </div>
                                 <RecordTitle title={draft.employee.full_name} notes={draft.employee.email || "No email"} />
                               </div>
@@ -2456,6 +2822,62 @@ function SubconDailyTicketView({
   const [query, setQuery] = useState("");
   const [savingAll, setSavingAll] = useState(false);
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
+  const [showCalendar, setShowCalendar] = useState(false);
+  const [calendarYear, setCalendarYear] = useState(() => Number(entryDate.split("-")[0]));
+  const [calendarMonth, setCalendarMonth] = useState(() => Number(entryDate.split("-")[1]));
+  const calendarRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showCalendar) return;
+    function handleClick(e: MouseEvent) {
+      if (calendarRef.current && !calendarRef.current.contains(e.target as Node)) setShowCalendar(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [showCalendar]);
+
+  useEffect(() => {
+    const [y, m] = entryDate.split("-").map(Number);
+    setCalendarYear(y);
+    setCalendarMonth(m);
+  }, [entryDate]);
+
+  const datesWithEntries = useMemo(
+    () => new Set(subconDailyTickets.map((e) => e.entry_date)),
+    [subconDailyTickets],
+  );
+
+  function getCalendarDays(year: number, month: number) {
+    const firstDow = new Date(year, month - 1, 1).getDay();
+    const startOffset = (firstDow + 6) % 7;
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const days: Array<{ dateKey: string; day: number; currentMonth: boolean }> = [];
+    const pad = (n: number) => String(n).padStart(2, "0");
+    for (let i = startOffset; i > 0; i--) {
+      const d = new Date(year, month - 1, 1 - i);
+      days.push({ dateKey: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`, day: d.getDate(), currentMonth: false });
+    }
+    for (let d = 1; d <= daysInMonth; d++) {
+      days.push({ dateKey: `${year}-${pad(month)}-${pad(d)}`, day: d, currentMonth: true });
+    }
+    const remaining = (7 - (days.length % 7)) % 7;
+    for (let d = 1; d <= remaining; d++) {
+      const nextMonth = month === 12 ? 1 : month + 1;
+      const nextYear = month === 12 ? year + 1 : year;
+      days.push({ dateKey: `${nextYear}-${pad(nextMonth)}-${pad(d)}`, day: d, currentMonth: false });
+    }
+    return days;
+  }
+
+  function prevCalendarMonth() {
+    if (calendarMonth === 1) { setCalendarMonth(12); setCalendarYear((y) => y - 1); }
+    else setCalendarMonth((m) => m - 1);
+  }
+
+  function nextCalendarMonth() {
+    if (calendarMonth === 12) { setCalendarMonth(1); setCalendarYear((y) => y + 1); }
+    else setCalendarMonth((m) => m + 1);
+  }
 
   const activeSubcons = subcontractors.filter((s) => s.status === "active");
   const filteredSubcons = query.trim()
@@ -2558,17 +2980,65 @@ function SubconDailyTicketView({
 
   return (
     <div className="page-stack">
-      <PageHeader eyebrow="Daily operations" title="Subcontractor daily tickets" text="Record closed ticket counts per subcontractor. Tab across rows, then Save All." />
       <div className="ticket-toolbar">
-        <label className="ticket-date-field">
-          <CalendarClock size={15} />
-          <input
-            type="date"
-            value={entryDate}
-            onChange={(e) => { setEntryDate(e.target.value); setDrafts({}); setSavedIds(new Set()); }}
-          />
-          <span>{new Date(`${entryDate}T00:00:00`).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}</span>
-        </label>
+        <div className="att-cal-wrap" ref={calendarRef}>
+          <button
+            className="ticket-date-field att-cal-trigger"
+            type="button"
+            onClick={() => setShowCalendar((s) => !s)}
+          >
+            <CalendarClock size={15} />
+            <span>{new Date(`${entryDate}T00:00:00`).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}</span>
+          </button>
+          {showCalendar && (
+            <div className="att-cal">
+              <div className="att-cal-header">
+                <button type="button" onClick={prevCalendarMonth}><ChevronLeft size={14} /></button>
+                <span>{monthNames[calendarMonth - 1]} {calendarYear}</span>
+                <button type="button" onClick={nextCalendarMonth}><ChevronRight size={14} /></button>
+              </div>
+              <div className="att-cal-grid">
+                {["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map((d) => (
+                  <span key={d} className="att-cal-day-name">{d}</span>
+                ))}
+                {getCalendarDays(calendarYear, calendarMonth).map(({ dateKey, day, currentMonth }) => (
+                  <button
+                    key={dateKey}
+                    type="button"
+                    className={[
+                      "att-cal-day",
+                      !currentMonth ? "other-month" : "",
+                      dateKey === entryDate ? "selected" : "",
+                      dateKey === todayKey() ? "today" : "",
+                      datesWithEntries.has(dateKey) ? "has-entry" : "",
+                    ].filter(Boolean).join(" ")}
+                    onClick={() => { setEntryDate(dateKey); setDrafts({}); setSavedIds(new Set()); setShowCalendar(false); }}
+                  >
+                    {day}
+                  </button>
+                ))}
+              </div>
+              <div className="att-cal-footer">
+                <span>Today: {new Date(`${todayKey()}T00:00:00`).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const today = todayKey();
+                    const [year, month] = today.split("-").map(Number);
+                    setCalendarYear(year);
+                    setCalendarMonth(month);
+                    setEntryDate(today);
+                    setDrafts({});
+                    setSavedIds(new Set());
+                    setShowCalendar(false);
+                  }}
+                >
+                  Go to today
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
         <label className="ticket-search-field">
           <Search size={15} />
           <input placeholder="Search subcontractors…" value={query} onChange={(e) => setQuery(e.target.value)} />
@@ -2969,6 +3439,12 @@ export function AttendanceView({
 
   return (
     <div className="attendance-page">
+      <PageHeader
+        eyebrow="Workforce"
+        title="Attendance"
+        text="Track daily employee attendance, filter records, and save updates in one place."
+      />
+
       <section className="attendance-top-grid">
         <div className="attendance-stat-card">
           <span className="attendance-stat-icon present"><CheckCircle2 size={21} /></span>
@@ -3002,67 +3478,95 @@ export function AttendanceView({
 
       <section className="attendance-shell">
         <div className="attendance-toolbar">
-          <div className="att-cal-wrap" ref={calendarRef}>
-            <button
-              className="attendance-date-field att-cal-trigger"
-              type="button"
-              onClick={() => setShowCalendar((s) => !s)}
-            >
-              <CalendarClock size={16} />
-              <span>{displayDate(entryDate)}</span>
-            </button>
-            {showCalendar && (
-              <div className="att-cal">
-                <div className="att-cal-header">
-                  <button type="button" onClick={prevCalendarMonth}><ChevronLeft size={14} /></button>
-                  <span>{monthNames[calendarMonth - 1]} {calendarYear}</span>
-                  <button type="button" onClick={nextCalendarMonth}><ChevronRight size={14} /></button>
-                </div>
-                <div className="att-cal-grid">
-                  {["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map((d) => (
-                    <span key={d} className="att-cal-day-name">{d}</span>
-                  ))}
-                  {getCalendarDays(calendarYear, calendarMonth).map(({ dateKey, day, currentMonth }) => (
+          <div className="attendance-field-group">
+            <span className="attendance-field-label">Date</span>
+            <div className="att-cal-wrap" ref={calendarRef}>
+              <button
+                className="attendance-date-field att-cal-trigger"
+                type="button"
+                onClick={() => setShowCalendar((s) => !s)}
+              >
+                <CalendarClock size={16} />
+                <span>{displayDate(entryDate)}</span>
+              </button>
+              {showCalendar && (
+                <div className="att-cal">
+                  <div className="att-cal-header">
+                    <button type="button" onClick={prevCalendarMonth}><ChevronLeft size={14} /></button>
+                    <span>{monthNames[calendarMonth - 1]} {calendarYear}</span>
+                    <button type="button" onClick={nextCalendarMonth}><ChevronRight size={14} /></button>
+                  </div>
+                  <div className="att-cal-grid">
+                    {["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map((d) => (
+                      <span key={d} className="att-cal-day-name">{d}</span>
+                    ))}
+                    {getCalendarDays(calendarYear, calendarMonth).map(({ dateKey, day, currentMonth }) => (
+                      <button
+                        key={dateKey}
+                        type="button"
+                        className={[
+                          "att-cal-day",
+                          !currentMonth ? "other-month" : "",
+                          dateKey === entryDate ? "selected" : "",
+                          dateKey === todayKey() ? "today" : "",
+                          datesWithEntries.has(dateKey) ? "has-entry" : "",
+                        ].filter(Boolean).join(" ")}
+                        onClick={() => { setEntryDate(dateKey); setShowCalendar(false); }}
+                        >
+                          {day}
+                        </button>
+                      ))}
+                  </div>
+                  <div className="att-cal-footer">
+                    <span>Today: {new Date(`${todayKey()}T00:00:00`).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}</span>
                     <button
-                      key={dateKey}
                       type="button"
-                      className={[
-                        "att-cal-day",
-                        !currentMonth ? "other-month" : "",
-                        dateKey === entryDate ? "selected" : "",
-                        dateKey === todayKey() ? "today" : "",
-                        datesWithEntries.has(dateKey) ? "has-entry" : "",
-                      ].filter(Boolean).join(" ")}
-                      onClick={() => { setEntryDate(dateKey); setShowCalendar(false); }}
+                      onClick={() => {
+                        const today = todayKey();
+                        const [year, month] = today.split("-").map(Number);
+                        setCalendarYear(year);
+                        setCalendarMonth(month);
+                        setEntryDate(today);
+                        setShowCalendar(false);
+                      }}
                     >
-                      {day}
+                      Go to today
                     </button>
-                  ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
-          <label className="attendance-search-field">
-            <Search size={16} />
-            <input
-              placeholder="Search by name, employee ID or position..."
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-            />
+          <div className="attendance-field-group">
+            <span className="attendance-field-label">Search employee</span>
+            <label className="attendance-search-field">
+              <Search size={16} />
+              <input
+                placeholder="Search by name, employee ID or position..."
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+            </label>
+          </div>
+          <label className="attendance-field-group">
+            <span className="attendance-field-label">Status</span>
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}>
+              <option value="all">All Status</option>
+              <option value="present">Present</option>
+              <option value="half_day">On Leave</option>
+              <option value="absent">Absent</option>
+              <option value="unmarked">No Entry</option>
+            </select>
           </label>
-          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}>
-            <option value="all">All Status</option>
-            <option value="present">Present</option>
-            <option value="half_day">On Leave</option>
-            <option value="absent">Absent</option>
-            <option value="unmarked">No Entry</option>
-          </select>
-          <select value={departmentFilter} onChange={(event) => setDepartmentFilter(event.target.value)}>
-            <option value="all">All Departments</option>
-            {departments.map((department) => (
-              <option key={department} value={department}>{department}</option>
-            ))}
-          </select>
+          <label className="attendance-field-group">
+            <span className="attendance-field-label">Department</span>
+            <select value={departmentFilter} onChange={(event) => setDepartmentFilter(event.target.value)}>
+              <option value="all">All Departments</option>
+              {departments.map((department) => (
+                <option key={department} value={department}>{department}</option>
+              ))}
+            </select>
+          </label>
           <button className="attendance-tool-button" type="button">
             <Filter size={15} /> More Filters
           </button>
@@ -3179,7 +3683,7 @@ export function AttendanceView({
                       <td>
                         <div className="employee-list-identity">
                           <div className="employee-list-avatar">
-                            {emp.profile_photo_url ? <img src={emp.profile_photo_url} alt="" /> : <span>{emp.gender === "male" ? "♂" : emp.gender === "female" ? "♀" : initials(emp.full_name)}</span>}
+                            {emp.profile_photo_url ? <img src={emp.profile_photo_url} alt="" /> : <span>{initials(emp.full_name)}</span>}
                           </div>
                           <div className="record-title">
                             <strong>{emp.full_name}</strong>
@@ -3837,8 +4341,10 @@ function DailySummaryMetric({
 
 export function EmployeesView({
   employees,
+  initialDetailsEmployeeId,
   mode = "list",
   onChange,
+  onClearInitialDetailsEmployee,
   onExitForm,
   onLocalEmployeesChange,
   onQueueOfflineMutation,
@@ -3849,8 +4355,10 @@ export function EmployeesView({
   userId,
 }: {
   employees: Employee[];
+  initialDetailsEmployeeId?: string | null;
   mode?: "list" | "add";
   onChange: () => Promise<void>;
+  onClearInitialDetailsEmployee?: () => void;
   onExitForm?: () => void;
   onLocalEmployeesChange: (employees: Employee[]) => void;
   onQueueOfflineMutation: QueueOfflineMutation;
@@ -3872,6 +4380,16 @@ export function EmployeesView({
       setFormOpen(true);
     }
   }, [mode]);
+
+  useEffect(() => {
+    if (!initialDetailsEmployeeId) return;
+    const employee = employees.find((item) => item.id === initialDetailsEmployeeId);
+    if (!employee) return;
+    setFormOpen(false);
+    setEditing(null);
+    setDetailsEmployee(employee);
+    onClearInitialDetailsEmployee?.();
+  }, [employees, initialDetailsEmployeeId, onClearInitialDetailsEmployee]);
 
   function closeForm() {
     setEditing(null);
@@ -4068,7 +4586,7 @@ export function EmployeesView({
             employeeCodeFor(employee),
             <div className="employee-list-identity" key="title">
               <div className="employee-list-avatar">
-                {employee.profile_photo_url ? <img alt="" src={employee.profile_photo_url} /> : <span>{employee.gender === "male" ? "♂" : employee.gender === "female" ? "♀" : employeeInitialsFor(employee)}</span>}
+                {employee.profile_photo_url ? <img alt="" src={employee.profile_photo_url} /> : <span>{employeeInitialsFor(employee)}</span>}
               </div>
               <RecordTitle title={employee.full_name} notes={employee.email || "No email"} />
             </div>,
@@ -4319,7 +4837,7 @@ export function EmployeeDetailsView({
                 {currentEmployee.profile_photo_url ? (
                   <img alt={`${currentEmployee.full_name} profile`} src={currentEmployee.profile_photo_url} />
                 ) : (
-                  <span>{currentEmployee.gender === "male" ? "♂" : currentEmployee.gender === "female" ? "♀" : initials}</span>
+                  <span>{initials}</span>
                 )}
               </div>
             </div>
@@ -4988,7 +5506,7 @@ function EmployeeForm({
               {values.profile_photo_url ? (
                 <img alt="Preview" src={values.profile_photo_url} />
               ) : (
-                <span>{values.gender === "male" ? "♂" : values.gender === "female" ? "♀" : initials || "?"}</span>
+                <span>{initials || "?"}</span>
               )}
             </div>
             <strong className="emp-preview-name">{values.full_name || "Employee name"}</strong>

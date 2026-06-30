@@ -1,4 +1,4 @@
-export type PaymentType = "loan" | "bill";
+export type PaymentType = "loan" | "bill" | "subcontractor";
 export type PaymentStatus = "pending" | "paid" | "overdue";
 export type CollectionStatus = "pending" | "partial" | "collected" | "overdue" | "archived";
 export type CollectionPaymentMethod = "cash" | "bank_transfer" | "check" | "e_wallet" | "card" | "other";
@@ -82,6 +82,11 @@ export type PaymentReminder = {
   due_date: string;
   status: PaymentStatus;
   notes: string;
+  subcontractor_id: string | null;
+  billing_subcon_item_id: string | null;
+  billing_month: number | null;
+  billing_year: number | null;
+  billing_period: BillingPeriod | null;
   created_at: string;
   updated_at: string;
 };
@@ -366,6 +371,7 @@ export type Subcontractor = {
   updated_at: string;
 };
 
+
 export type SubconDailyTicket = {
   id: string;
   user_id: string;
@@ -436,6 +442,18 @@ export type BillingFormValues = {
   repair_tickets: string;
   disputed_install: string;
   disputed_repair: string;
+  subcon_items: Array<{
+    id?: string;
+    subcontractor_id: string;
+    subcon_name: string;
+    install_tickets: string;
+    repair_tickets: string;
+    disputed_install: string;
+    disputed_repair: string;
+    installation_rate: string;
+    repair_rate: string;
+    payable_pct: string;
+  }>;
   notes: string;
 };
 
