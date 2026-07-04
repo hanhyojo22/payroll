@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { CheckCircle2, ChevronDown, FileText, Pencil, Plus, Settings, Trash2, X } from "lucide-react";
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { BadgeDollarSign, CheckCircle2, ChevronDown, Eye, FileText, Pencil, Plus, Send, Trash2, X } from "lucide-react";
 import {
   billingPeriodLabel,
-  buildSubcontractorPaymentPayloads,
+  buildSubcontractorPayoutArtifacts,
   computeSubconItem,
   countSubconTickets,
   countTicketsByType,
@@ -11,7 +11,7 @@ import {
 import { isOfflineLikeError } from "../../lib/offlineSync";
 import { supabase } from "../../supabase";
 import { MoneyField } from "../../shared/components/MoneyField";
-import { PageHeader } from "../../shared/components/PageLayout";
+import { PageHeader, Toolbar } from "../../shared/components/PageLayout";
 import type { Notice, QueueOfflineMutation } from "../../shared/types";
 import { currency } from "../../shared/utils/currency";
 import { currentMonth, currentYear, monthNames, todayKey } from "../../shared/utils/dates";
@@ -25,6 +25,7 @@ import type {
   CollectionReminder,
   DailyTicketEntry,
   PaymentReminder,
+  SubcontractorAdvance,
   SubconDailyTicket,
   Subcontractor,
 } from "../../types";
@@ -36,9 +37,15 @@ import {
   saveBillingSettings,
   saveBillingSubconItems,
   saveSubconPaymentReminders,
-  saveSubcontractor,
 } from "./billingRepository";
 import { recordReceivablePayment } from "../collections/collectionRepository";
+
+function collectionStatusForRecord(record: BillingRecord, collections: CollectionReminder[], collectionId: string | null): string {
+  if (!collectionId) return "-";
+  const collection = collections.find((item) => item.id === collectionId);
+  if (!collection) return "pending";
+  return collection.status === "legacy_pending" ? "pending" : collection.status;
+}
 
 export type BillingFeatureProps = {
   billingRecords: BillingRecord[];
@@ -52,7 +59,9 @@ export type BillingFeatureProps = {
   payments: PaymentReminder[];
   setNotice: (notice: Notice) => void;
   subconDailyTickets: SubconDailyTicket[];
+  subcontractorAdvances: SubcontractorAdvance[];
   subcontractors: Subcontractor[];
+  tabs?: ReactNode;
   userId: string;
 };
 
@@ -68,15 +77,17 @@ export function BillingFeature({
   payments,
   setNotice,
   subconDailyTickets,
+  tabs,
+  subcontractorAdvances,
   subcontractors,
   userId,
 }: BillingFeatureProps) {
   const [formOpen, setFormOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState<BillingRecord | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [settings, setSettings] = useState<BillingSettings | null>(billingSettings);
   const [quickCollecting, setQuickCollecting] = useState<{ record: BillingRecord; collection: CollectionReminder } | null>(null);
   const [expandedRecordId, setExpandedRecordId] = useState<string | null>(null);
+  const [detailsRecord, setDetailsRecord] = useState<BillingRecord | null>(null);
 
   useEffect(() => {
     setSettings(billingSettings);
@@ -99,17 +110,11 @@ export function BillingFeature({
   );
 
   function collectionStatusFor(record: BillingRecord): string {
-    if (!record.collection_id) return "-";
-    const collection = collections.find((item) => item.id === record.collection_id);
-    if (!collection) return "pending";
-    return collection.status === "legacy_pending" ? "pending" : collection.status;
+    return collectionStatusForRecord(record, collections, record.collection_id);
   }
 
   function collectiblesStatusFor(record: BillingRecord): string {
-    if (!record.collectibles_collection_id) return "-";
-    const collection = collections.find((item) => item.id === record.collectibles_collection_id);
-    if (!collection) return "pending";
-    return collection.status === "legacy_pending" ? "pending" : collection.status;
+    return collectionStatusForRecord(record, collections, record.collectibles_collection_id);
   }
 
   function openQuickCollect(record: BillingRecord, which: "collection" | "collectible") {
@@ -222,7 +227,7 @@ export function BillingFeature({
       };
     });
 
-    const billingPayload: Omit<BillingRecord, "created_at" | "updated_at"> = {
+    const billingPayload: Omit<BillingRecord, "created_at" | "updated_at" | "invoice_no"> = {
       id: ids.billingId,
       user_id: userId,
       billing_month: month,
@@ -273,7 +278,7 @@ export function BillingFeature({
     };
 
     const subconItemIds = new Set(subconItems.map((item) => item.id));
-    const payoutPayloads = buildSubcontractorPaymentPayloads({
+    const { payoutPayloads, advanceUpdates } = buildSubcontractorPayoutArtifacts({
       billingMonth: month,
       billingYear: year,
       billingPeriod: period,
@@ -284,16 +289,18 @@ export function BillingFeature({
       ),
       userId,
       monthName: monthNames[month - 1],
+      subcontractorAdvances,
     });
 
-    return { billingPayload, collectionPayload, collectiblesCollectionPayload, payoutPayloads };
+    return { billingPayload, collectionPayload, collectiblesCollectionPayload, payoutPayloads, advanceUpdates };
   }
 
   async function persistBillingArtifacts(
-    billingPayload: Omit<BillingRecord, "created_at" | "updated_at">,
+    billingPayload: Omit<BillingRecord, "created_at" | "updated_at" | "invoice_no">,
     collectionPayload: Record<string, unknown>,
     collectiblesCollectionPayload: Record<string, unknown>,
     payoutPayloads: Array<Omit<PaymentReminder, "created_at" | "updated_at">>,
+    advanceUpdates: Array<{ id: string; payload: Pick<SubcontractorAdvance, "balance" | "status"> }>,
     isUpdate: boolean,
   ) {
     if (!supabase) return { error: { message: "Supabase unavailable." } };
@@ -318,6 +325,11 @@ export function BillingFeature({
     const payoutResult = await saveSubconPaymentReminders(supabase, payoutPayloads);
     if (payoutResult.error) return payoutResult;
 
+    for (const update of advanceUpdates) {
+      const advanceResult = await supabase.from("subcontractor_advances").update(update.payload).eq("id", update.id);
+      if (advanceResult.error) return advanceResult;
+    }
+
     return { error: null };
   }
 
@@ -340,7 +352,7 @@ export function BillingFeature({
       collectionId: crypto.randomUUID(),
       collectiblesCollectionId: crypto.randomUUID(),
     };
-    const { billingPayload, collectionPayload, collectiblesCollectionPayload, payoutPayloads } = buildArtifacts(values, ids);
+    const { billingPayload, collectionPayload, collectiblesCollectionPayload, payoutPayloads, advanceUpdates } = buildArtifacts(values, ids);
 
     if (!navigator.onLine) {
       const optimistic = {
@@ -351,7 +363,7 @@ export function BillingFeature({
       onLocalBillingRecordsChange([optimistic, ...billingRecords]);
       await onQueueOfflineMutation({
         resource: "billingRecords",
-        affectedResources: ["billingRecords", "collections", "dashboardSummary", "payments"],
+        affectedResources: ["billingRecords", "collections", "dashboardSummary", "payments", "subcontractorAdvances"],
         operation: "billing_group",
         table: "billing_records",
         recordId: billingPayload.id,
@@ -361,6 +373,7 @@ export function BillingFeature({
           collectiblesCollectionPayload,
           subconItemPayloads: billingPayload.subcon_items,
           subcontractorPaymentPayloads: payoutPayloads,
+          subcontractorAdvanceUpdates: advanceUpdates,
         },
       });
       setFormOpen(false);
@@ -373,6 +386,7 @@ export function BillingFeature({
       collectionPayload,
       collectiblesCollectionPayload,
       payoutPayloads,
+      advanceUpdates,
       false,
     );
     if (result.error) {
@@ -385,7 +399,7 @@ export function BillingFeature({
         onLocalBillingRecordsChange([optimistic, ...billingRecords]);
         await onQueueOfflineMutation({
           resource: "billingRecords",
-          affectedResources: ["billingRecords", "collections", "dashboardSummary", "payments"],
+          affectedResources: ["billingRecords", "collections", "dashboardSummary", "payments", "subcontractorAdvances"],
           operation: "billing_group",
           table: "billing_records",
           recordId: billingPayload.id,
@@ -395,6 +409,7 @@ export function BillingFeature({
             collectiblesCollectionPayload,
             subconItemPayloads: billingPayload.subcon_items,
             subcontractorPaymentPayloads: payoutPayloads,
+            subcontractorAdvanceUpdates: advanceUpdates,
           },
         });
         setFormOpen(false);
@@ -412,7 +427,7 @@ export function BillingFeature({
   async function updateBilling(values: BillingFormValues) {
     if (!supabase || !settings || !editingRecord) return;
     const periodLabel = billingPeriodLabel(values.billing_period);
-    const { billingPayload, collectionPayload, collectiblesCollectionPayload, payoutPayloads } = buildArtifacts(values, {
+    const { billingPayload, collectionPayload, collectiblesCollectionPayload, payoutPayloads, advanceUpdates } = buildArtifacts(values, {
       billingId: editingRecord.id,
       collectionId: editingRecord.collection_id ?? crypto.randomUUID(),
       collectiblesCollectionId: editingRecord.collectibles_collection_id ?? crypto.randomUUID(),
@@ -427,6 +442,7 @@ export function BillingFeature({
       collectionPayload,
       collectiblesCollectionPayload,
       payoutPayloads,
+      advanceUpdates,
       true,
     );
     if (result.error) {
@@ -458,24 +474,6 @@ export function BillingFeature({
     await onChange();
   }
 
-  async function updateSettings(payload: {
-    installation_rate: number;
-    repair_rate: number;
-    collections_pct: number;
-    client_name: string;
-  }) {
-    if (!supabase) return;
-    const result = await saveBillingSettings(supabase, userId, payload);
-    if (result.error) {
-      setNotice({ type: "error", text: "Failed to save settings." });
-      return;
-    }
-    setSettings((current) => (current ? { ...current, ...payload } : current));
-    setSettingsOpen(false);
-    setNotice({ type: "success", text: "Billing settings saved." });
-    await onChange();
-  }
-
   const summary = useMemo(() => ({
     totalBilled: billingRecords.reduce((sum, record) => sum + record.billing_amount, 0),
     totalCollections: billingRecords.reduce((sum, record) => sum + record.collections_amount, 0),
@@ -487,9 +485,6 @@ export function BillingFeature({
       <PageHeader
         action={(
           <div className="billing-header-actions">
-            <button className="billing-btn outline" onClick={() => setSettingsOpen(true)} type="button">
-              <Settings size={15} /> Settings
-            </button>
             <button className="billing-btn primary" onClick={() => setFormOpen(true)} type="button">
               <Plus size={15} /> New billing
             </button>
@@ -500,19 +495,33 @@ export function BillingFeature({
         text="Generate billing by period, track collections, and connect subcontractor net pay to payouts."
       />
 
+      {tabs}
+
       <section className="billing-summary">
-        <div className="billing-stat">
-          <span className="billing-stat-label">Total billed</span>
-          <strong className="billing-stat-value">{currency.format(summary.totalBilled)}</strong>
+        <div className="billing-stat accent">
+          <div className="billing-stat-icon"><BadgeDollarSign size={21} /></div>
+          <div className="billing-stat-text">
+            <span className="billing-stat-label">Total billed</span>
+            <strong className="billing-stat-value">{currency.format(summary.totalBilled)}</strong>
+            <span className="billing-stat-helper">All billing periods</span>
+          </div>
         </div>
         <div className="billing-summary-split">
           <div className="billing-stat billing-stat-collection">
-            <span className="billing-stat-label">Collection - {settings?.collections_pct ?? 70}%</span>
-            <strong className="billing-stat-value">{currency.format(summary.totalCollections)}</strong>
+            <div className="billing-stat-icon"><CheckCircle2 size={21} /></div>
+            <div className="billing-stat-text">
+              <span className="billing-stat-label">Collection</span>
+              <strong className="billing-stat-value">{currency.format(summary.totalCollections)}</strong>
+              <span className="billing-stat-helper">First to collect from client</span>
+            </div>
           </div>
           <div className="billing-stat billing-stat-payable">
-            <span className="billing-stat-label">Payable - {100 - (settings?.collections_pct ?? 70)}%</span>
-            <strong className="billing-stat-value">{currency.format(summary.totalCollectibles)}</strong>
+            <div className="billing-stat-icon"><Send size={21} /></div>
+            <div className="billing-stat-text">
+              <span className="billing-stat-label">Collectibles</span>
+              <strong className="billing-stat-value">{currency.format(summary.totalCollectibles)}</strong>
+              <span className="billing-stat-helper">Retained from client, still to collect</span>
+            </div>
           </div>
         </div>
       </section>
@@ -528,26 +537,24 @@ export function BillingFeature({
           <table className="billing-table">
             <thead>
               <tr>
+                <th>Invoice No.</th>
                 <th>Period</th>
                 <th className="num">Tickets</th>
                 <th className="num">Disputed</th>
                 <th className="num">Billable</th>
                 <th className="num">Amount</th>
-                <th className="num">Payable</th>
                 <th className="num">Collection</th>
-                <th />
+                <th className="num">Collectibles</th>
+                <th>Action</th>
               </tr>
             </thead>
             <tbody>
               {billingRecords.map((record) => {
                 const expanded = expandedRecordId === record.id;
-                const colStatus = collectionStatusFor(record);
-                const payStatus = collectiblesStatusFor(record);
-                const canCollect70 = colStatus !== "-" && colStatus !== "collected" && colStatus !== "archived";
-                const canCollect30 = payStatus !== "-" && payStatus !== "collected" && payStatus !== "archived";
                 return (
                   <>
                     <tr className="expandable" key={record.id}>
+                      <td className="billing-invoice-no">{record.invoice_no}</td>
                       <td>
                         <div className="billing-period-cell">
                           <button
@@ -584,40 +591,25 @@ export function BillingFeature({
                         </div>
                       </td>
                       <td className="num">{currency.format(record.billing_amount)}</td>
-                      <td className="num">{currency.format(record.collectibles_amount)}</td>
                       <td className="num">{currency.format(record.collections_amount)}</td>
+                      <td className="num">{currency.format(record.collectibles_amount)}</td>
                       <td>
                         <div className="billing-row-actions">
-                          {canCollect30 && (
-                            <button
-                              className="billing-collect-btn billing-collect-30"
-                              onClick={() => openQuickCollect(record, "collectible")}
-                              title={`Mark ${100 - (settings?.collections_pct ?? 70)}% as collected`}
-                              type="button"
-                            >
-                              <CheckCircle2 size={14} />
-                              <span>{100 - (settings?.collections_pct ?? 70)}%</span>
-                            </button>
-                          )}
-                          {canCollect70 && (
-                            <button
-                              className="billing-collect-btn billing-collect-70"
-                              onClick={() => openQuickCollect(record, "collection")}
-                              title={`Mark ${settings?.collections_pct ?? 70}% as collected`}
-                              type="button"
-                            >
-                              <CheckCircle2 size={14} />
-                              <span>{settings?.collections_pct ?? 70}%</span>
-                            </button>
-                          )}
-                          <button onClick={() => setEditingRecord(record)} type="button" title="Edit"><Pencil size={14} /></button>
-                          <button onClick={() => void removeBilling(record)} type="button" title="Delete"><Trash2 size={14} /></button>
+                          <button aria-label="View details" onClick={() => setDetailsRecord(record)} type="button" title="View details">
+                            <Eye size={14} />
+                          </button>
+                          <button aria-label="Edit" onClick={() => setEditingRecord(record)} type="button" title="Edit">
+                            <Pencil size={14} />
+                          </button>
+                          <button aria-label="Delete" onClick={() => void removeBilling(record)} type="button" title="Delete">
+                            <Trash2 size={14} />
+                          </button>
                         </div>
                       </td>
                     </tr>
                     {expanded && (
                       <tr className="subcon-detail-row" key={`${record.id}-subcon`}>
-                        <td colSpan={8}>
+                        <td colSpan={9}>
                           <table className="billing-subcon-detail-table">
                             <thead>
                               <tr>
@@ -626,7 +618,7 @@ export function BillingFeature({
                                 <th className="num">Gross</th>
                                 <th className="num">Net payable</th>
                                 <th>Payout</th>
-                                <th />
+                                <th>Action</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -706,22 +698,124 @@ export function BillingFeature({
           onSubmit={updateBilling}
         />
       )}
-      {settingsOpen && settings && (
-        <SettingsPanel
-          settings={settings}
-          subcontractors={subcontractors}
-          onChange={onChange}
-          onClose={() => setSettingsOpen(false)}
-          onSubmit={updateSettings}
-          setNotice={setNotice}
-          userId={userId}
-        />
-      )}
       {quickCollecting && (
         <BillingQuickCollectModal
           collection={quickCollecting.collection}
           onClose={() => setQuickCollecting(null)}
           onConfirm={(method) => quickCollect(quickCollecting.collection, method)}
+        />
+      )}
+      {detailsRecord && settings && (
+        <BillingDetailsModal
+          dailyTicketEntries={dailyTicketEntries}
+          onClose={() => setDetailsRecord(null)}
+          payments={payments}
+          record={detailsRecord}
+          settings={settings}
+        />
+      )}
+    </div>
+  );
+}
+
+function billingPaidState(status: string): "paid" | "pending" {
+  return status === "collected" ? "paid" : "pending";
+}
+
+export function BillingHistoryFeature({
+  billingRecords,
+  billingSettings,
+  collections,
+  dailyTicketEntries,
+  payments,
+  tabs,
+}: {
+  billingRecords: BillingRecord[];
+  billingSettings: BillingSettings | null;
+  collections: CollectionReminder[];
+  dailyTicketEntries: DailyTicketEntry[];
+  payments: PaymentReminder[];
+  tabs?: ReactNode;
+}) {
+  const [query, setQuery] = useState("");
+  const [detailsRecord, setDetailsRecord] = useState<BillingRecord | null>(null);
+
+  const sorted = [...billingRecords].sort((a, b) => {
+    if (a.billing_year !== b.billing_year) return b.billing_year - a.billing_year;
+    if (a.billing_month !== b.billing_month) return b.billing_month - a.billing_month;
+    if (a.billing_period === b.billing_period) return 0;
+    return a.billing_period === "second_half" ? -1 : 1;
+  });
+
+  const rows = query.trim()
+    ? sorted.filter((record) => `${record.invoice_no} ${monthNames[record.billing_month - 1]} ${record.billing_year}`.toLowerCase().includes(query.trim().toLowerCase()))
+    : sorted;
+
+  return (
+    <div className="page-stack">
+      <PageHeader
+        eyebrow="Billing records"
+        text="Review every billing invoice and whether the client has paid."
+        title="Billing History"
+      />
+      {tabs}
+      <Toolbar query={query} setQuery={setQuery} />
+      {rows.length === 0 ? (
+        <div className="panel"><p className="muted">No billing history yet.</p></div>
+      ) : (
+        <div className="billing-table-wrap">
+          <table className="billing-table">
+            <thead>
+              <tr>
+                <th>Invoice No.</th>
+                <th>Period</th>
+                <th className="num">Billing Amount</th>
+                <th className="num">Collection</th>
+                <th className="num">Collectibles</th>
+                <th>Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((record) => {
+                const collectionStatus = collectionStatusForRecord(record, collections, record.collection_id);
+                const collectiblesStatus = collectionStatusForRecord(record, collections, record.collectibles_collection_id);
+                const isFullyPaid =
+                  billingPaidState(collectionStatus) === "paid" &&
+                  (!record.collectibles_collection_id || billingPaidState(collectiblesStatus) === "paid");
+                return (
+                  <tr key={record.id}>
+                    <td className="billing-invoice-no">{record.invoice_no}</td>
+                    <td>{monthNames[record.billing_month - 1]} {record.billing_year} · {billingPeriodLabel(record.billing_period)}</td>
+                    <td className="num">{currency.format(record.billing_amount)}</td>
+                    <td className="num">{currency.format(record.collections_amount)}</td>
+                    <td className="num">{currency.format(record.collectibles_amount)}</td>
+                    <td>
+                      <span className={`collection-status ${isFullyPaid ? "collected" : "pending"}`}>
+                        {isFullyPaid ? "Paid" : "Pending"}
+                      </span>
+                    </td>
+                    <td>
+                      <div className="billing-row-actions">
+                        <button aria-label="View details" onClick={() => setDetailsRecord(record)} title="View details" type="button">
+                          <Eye size={14} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {detailsRecord && billingSettings && (
+        <BillingDetailsModal
+          dailyTicketEntries={dailyTicketEntries}
+          onClose={() => setDetailsRecord(null)}
+          payments={payments}
+          record={detailsRecord}
+          settings={billingSettings}
         />
       )}
     </div>
@@ -741,6 +835,239 @@ async function markPayoutPaid(
   }
   setNotice({ type: "success", text: `${payment.title} payout marked paid.` });
   await onChange();
+}
+
+function BillingDetailsModal({
+  dailyTicketEntries,
+  onClose,
+  payments,
+  record,
+  settings,
+}: {
+  dailyTicketEntries: DailyTicketEntry[];
+  onClose: () => void;
+  payments: PaymentReminder[];
+  record: BillingRecord;
+  settings: BillingSettings;
+}) {
+  const employeeRows = employeeTicketRowsForBilling(record, dailyTicketEntries, settings);
+  const employeeTotals = employeeRows.reduce(
+    (sum, row) => ({
+      install: sum.install + row.install,
+      repair: sum.repair + row.repair,
+      tickets: sum.tickets + row.install + row.repair,
+      gross: sum.gross + row.gross,
+    }),
+    { install: 0, repair: 0, tickets: 0, gross: 0 },
+  );
+  const subconTotals = record.subcon_items.reduce(
+    (sum, item) => ({
+      install: sum.install + item.install_tickets,
+      repair: sum.repair + item.repair_tickets,
+      disputedInstall: sum.disputedInstall + item.disputed_install,
+      disputedRepair: sum.disputedRepair + item.disputed_repair,
+      billableTickets: sum.billableTickets + item.billable_tickets,
+      gross: sum.gross + item.billing_amount,
+      payable: sum.payable + item.payable_amount,
+    }),
+    { install: 0, repair: 0, disputedInstall: 0, disputedRepair: 0, billableTickets: 0, gross: 0, payable: 0 },
+  );
+  const paymentByItemId = new Map(
+    payments
+      .filter((payment) => payment.type === "subcontractor" && payment.billing_subcon_item_id)
+      .map((payment) => [payment.billing_subcon_item_id!, payment]),
+  );
+  const billingLevelDisputes = record.disputed_install + record.disputed_repair;
+  const subcontractorDisputes = subconTotals.disputedInstall + subconTotals.disputedRepair;
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal billing-details-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Billing details · {record.invoice_no}</p>
+            <h3>{monthNames[record.billing_month - 1]} {record.billing_year} · {billingPeriodLabel(record.billing_period)}</h3>
+          </div>
+          <button onClick={onClose} type="button" aria-label="Close"><X size={18} /></button>
+        </div>
+
+        <div className="billing-details-body">
+          <section className="billing-details-hero">
+            <div className="billing-details-hero-main">
+              <span>Total Billing Amount</span>
+              <strong>{currency.format(record.billing_amount)}</strong>
+            </div>
+            <div className="billing-details-hero-split">
+              <div>
+                <span>Collection</span>
+                <strong>{currency.format(record.collections_amount)}</strong>
+              </div>
+              <div>
+                <span>Collectibles</span>
+                <strong>{currency.format(record.collectibles_amount)}</strong>
+              </div>
+            </div>
+          </section>
+
+          <section className="billing-details-summary">
+            <div><span>Total tickets</span><strong>{record.total_tickets}</strong></div>
+            <div><span>Disputed</span><strong>{record.disputed_tickets}</strong></div>
+            <div><span>Billable</span><strong>{record.billable_tickets}</strong></div>
+          </section>
+
+          <section className="billing-details-section">
+            <div className="billing-details-section-head">
+              <div>
+                <h4>Employee Tickets</h4>
+                <p>Closed employee ticket entries included in this billing period.</p>
+              </div>
+              <strong>{employeeTotals.tickets} tickets · {currency.format(employeeTotals.gross)}</strong>
+            </div>
+            <div className="billing-details-table-wrap">
+              <table className="billing-details-table">
+                <thead>
+                  <tr>
+                    <th>Employee</th>
+                    <th className="num">Install</th>
+                    <th className="num">Repair</th>
+                    <th className="num">Total</th>
+                    <th className="num">Gross</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {employeeRows.length === 0 ? (
+                    <tr><td colSpan={5}>No employee ticket entries for this period.</td></tr>
+                  ) : employeeRows.map((row) => (
+                    <tr key={row.employeeId}>
+                      <td>{row.employeeName}</td>
+                      <td className="num">{row.install}</td>
+                      <td className="num">{row.repair}</td>
+                      <td className="num">{row.install + row.repair}</td>
+                      <td className="num">{currency.format(row.gross)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section className="billing-details-section">
+            <div className="billing-details-section-head">
+              <div>
+                <h4>Subcontractor Tickets</h4>
+                <p>Subcontractor rows include their own disputes, billable tickets, payable split, and payout status.</p>
+              </div>
+              <strong>{subconTotals.billableTickets} billable · {currency.format(subconTotals.payable)} payable</strong>
+            </div>
+            <div className="billing-details-table-wrap">
+              <table className="billing-details-table">
+                <thead>
+                  <tr>
+                    <th>Subcontractor</th>
+                    <th className="num">Tickets</th>
+                    <th className="num">Disputed</th>
+                    <th className="num">Billable</th>
+                    <th className="num">Gross</th>
+                    <th className="num">Collection</th>
+                    <th className="num">Collectibles</th>
+                    <th>Payout</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {record.subcon_items.length === 0 ? (
+                    <tr><td colSpan={7}>No subcontractor rows for this billing.</td></tr>
+                  ) : record.subcon_items.map((item) => {
+                    const payment = paymentByItemId.get(item.id);
+                    return (
+                      <tr key={item.id}>
+                        <td>{item.subcon_name}</td>
+                        <td className="num">{item.install_tickets + item.repair_tickets} <span>I:{item.install_tickets} R:{item.repair_tickets}</span></td>
+                        <td className="num">{item.disputed_install + item.disputed_repair} <span>I:{item.disputed_install} R:{item.disputed_repair}</span></td>
+                        <td className="num">{item.billable_tickets}</td>
+                        <td className="num">{currency.format(item.billing_amount)}</td>
+                        <td className="num">{currency.format(item.collection_amount)}</td>
+                        <td className="num">{currency.format(item.payable_amount)}</td>
+                        <td>
+                          {payment ? (
+                            <>
+                              <span className={`billing-payout-status ${payment.status}`}>{payment.status}</span>
+                              <span className="billing-payout-amount">{currency.format(payment.amount)}</span>
+                            </>
+                          ) : (
+                            <span className="billing-payout-status missing">Missing payout</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section className={`billing-details-section billing-details-disputes${billingLevelDisputes + subcontractorDisputes === 0 ? " clear" : ""}`}>
+            <div className="billing-details-section-head">
+              <div>
+                <h4>Dispute Details</h4>
+                <p>Billing-level disputes are stored as totals. Subcontractor disputes are stored per subcontractor row.</p>
+              </div>
+              {billingLevelDisputes + subcontractorDisputes === 0 ? (
+                <strong className="billing-details-dispute-badge clear">
+                  <CheckCircle2 size={14} /> No disputes
+                </strong>
+              ) : (
+                <strong className="billing-details-dispute-badge">{billingLevelDisputes + subcontractorDisputes} disputed</strong>
+              )}
+            </div>
+            <div className="billing-details-summary compact">
+              <div><span>Billing-level install disputes</span><strong>{record.disputed_install}</strong></div>
+              <div><span>Billing-level repair disputes</span><strong>{record.disputed_repair}</strong></div>
+              <div><span>Subcon install disputes</span><strong>{subconTotals.disputedInstall}</strong></div>
+              <div><span>Subcon repair disputes</span><strong>{subconTotals.disputedRepair}</strong></div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function employeeTicketRowsForBilling(
+  record: BillingRecord,
+  dailyTicketEntries: DailyTicketEntry[],
+  settings: BillingSettings,
+) {
+  const rows = new Map<string, { employeeId: string; employeeName: string; install: number; repair: number; gross: number }>();
+  const matchesPeriod = (entryDate: string) => {
+    const [year, month, day] = entryDate.split("-").map(Number);
+    if (year !== record.billing_year || month !== record.billing_month) return false;
+    return record.billing_period === "first_half" ? day <= 15 : day >= 16;
+  };
+
+  dailyTicketEntries.filter((entry) => matchesPeriod(entry.entry_date)).forEach((entry) => {
+    const details = entry.details ?? [];
+    const rawInstall = details.length > 0
+      ? details.filter((detail) => (detail.ticket_type ?? "installation") === "installation").reduce((sum, detail) => sum + detail.ticket_count, 0)
+      : entry.installation_tickets;
+    const rawRepair = details.length > 0
+      ? details.filter((detail) => detail.ticket_type === "repair").reduce((sum, detail) => sum + detail.ticket_count, 0)
+      : entry.repair_tickets;
+    const install = Math.max(0, rawInstall - Math.min(rawInstall, entry.disputed_install ?? 0));
+    const repair = Math.max(0, rawRepair - Math.min(rawRepair, entry.disputed_repair ?? 0));
+    const current = rows.get(entry.employee_id) ?? {
+      employeeId: entry.employee_id,
+      employeeName: entry.employee_name,
+      install: 0,
+      repair: 0,
+      gross: 0,
+    };
+    current.install += install;
+    current.repair += repair;
+    current.gross += install * settings.installation_rate + repair * settings.repair_rate;
+    rows.set(entry.employee_id, current);
+  });
+
+  return Array.from(rows.values()).sort((a, b) => a.employeeName.localeCompare(b.employeeName));
 }
 
 function BillingQuickCollectModal({
@@ -972,8 +1299,8 @@ function BillingForm({
       <div className="modal cbf-modal" onClick={(event) => event.stopPropagation()}>
         <div className="cbf-header">
           <div>
-            <p className="cbf-eyebrow">Semi-monthly invoicing</p>
             <h3 className="cbf-title">{initial ? "Edit Billing" : "New Billing"}</h3>
+            <p className="cbf-eyebrow">Semi-Monthly Invoicing</p>
           </div>
           <button className="cbf-close-btn" onClick={onClose} type="button" aria-label="Close"><X size={18} /></button>
         </div>
@@ -981,8 +1308,10 @@ function BillingForm({
         <form className="cbf-form" onSubmit={handleSubmit}>
           <div className="cbf-cols">
             <div className="cbf-left">
-              <div className="cbf-section">
-                <p className="cbf-section-label">Billing Period</p>
+              <section className="cbf-section cbf-section-card">
+                <div className="cbf-section-heading">
+                  <p className="cbf-section-label">Billing Period</p>
+                </div>
                 <div className="cbf-period-row">
                   <select className="cbf-select" value={values.billing_month} onChange={(event) => setValues({ ...values, billing_month: event.target.value })}>
                     {monthNames.map((name, index) => <option key={name} value={String(index + 1)}>{name}</option>)}
@@ -1013,53 +1342,75 @@ function BillingForm({
                     16th - End
                   </button>
                 </div>
-              </div>
+              </section>
 
-              <div className="cbf-section">
-                <p className="cbf-section-label">Ticket Sources</p>
+              <section className="cbf-section cbf-section-card">
+                <div className="cbf-section-heading">
+                  <p className="cbf-section-label">Ticket Sources</p>
+                  <span className="cbf-section-helper">Where this billing period gets its ticket counts</span>
+                </div>
                 <div className="billing-ticket-source-grid">
                   <div className="billing-ticket-source-card">
-                    <span>Employees</span>
-                    <strong>{employeeCounts.installation + employeeCounts.repair}</strong>
-                    <small>I:{employeeCounts.installation} R:{employeeCounts.repair}</small>
+                    <span className="billing-ticket-source-title">Employees</span>
+                    <strong className="billing-ticket-source-total">{employeeCounts.installation + employeeCounts.repair}</strong>
+                    <div className="billing-ticket-source-breakdown">
+                      <small>Install: {employeeCounts.installation}</small>
+                      <small>Repair: {employeeCounts.repair}</small>
+                    </div>
                   </div>
                   <div className="billing-ticket-source-card">
-                    <span>Subcontractors</span>
-                    <strong>{subconInstall + subconRepair}</strong>
-                    <small>I:{subconInstall} R:{subconRepair}</small>
+                    <span className="billing-ticket-source-title">Subcontractors</span>
+                    <strong className="billing-ticket-source-total">{subconInstall + subconRepair}</strong>
+                    <div className="billing-ticket-source-breakdown">
+                      <small>Install: {subconInstall}</small>
+                      <small>Repair: {subconRepair}</small>
+                    </div>
                   </div>
                   <div className="billing-ticket-source-card emphasis">
-                    <span>Combined</span>
-                    <strong>{installTickets + repairTickets}</strong>
-                    <small>I:{installTickets} R:{repairTickets}</small>
+                    <span className="billing-ticket-source-title">Combined</span>
+                    <strong className="billing-ticket-source-total">{installTickets + repairTickets}</strong>
+                    <div className="billing-ticket-source-breakdown">
+                      <small>Install: {installTickets}</small>
+                      <small>Repair: {repairTickets}</small>
+                    </div>
                   </div>
                 </div>
-              </div>
+              </section>
 
-              <div className="cbf-section cbf-section--dispute">
-                <p className="cbf-section-label">Disputed totals <span className="cbf-section-sub">deducted from billable</span></p>
+              <section className="cbf-section cbf-section-card cbf-section--dispute">
+                <div className="cbf-section-heading">
+                  <p className="cbf-section-label">Disputed Totals <span className="cbf-section-sub">deducted from billable</span></p>
+                  <span className="cbf-section-helper">Enter only the tickets that should not be billed this cutoff.</span>
+                </div>
                 <div className="cbf-ticket-pair">
                   <div className="cbf-ticket-card cbf-ticket-card--dispute">
                     <span className="cbf-ticket-type">Installation</span>
                     <input className="cbf-ticket-input cbf-ticket-input--dispute" min="0" type="number" value={values.disputed_install} onChange={(event) => setValues({ ...values, disputed_install: event.target.value })} />
-                    <span className="cbf-ticket-hint cbf-ticket-hint--dispute">max {installTickets}</span>
+                    <span className="cbf-ticket-hint">Available to dispute: <b>{installTickets}</b></span>
                   </div>
                   <div className="cbf-ticket-card cbf-ticket-card--dispute">
                     <span className="cbf-ticket-type">Repair</span>
                     <input className="cbf-ticket-input cbf-ticket-input--dispute" min="0" type="number" value={values.disputed_repair} onChange={(event) => setValues({ ...values, disputed_repair: event.target.value })} />
-                    <span className="cbf-ticket-hint cbf-ticket-hint--dispute">max {repairTickets}</span>
+                    <span className="cbf-ticket-hint">Available to dispute: <b>{repairTickets}</b></span>
                   </div>
                 </div>
-              </div>
+              </section>
 
-              <div className="cbf-section">
-                <p className="cbf-section-label">Subcontractor billing rows</p>
-                <div className="billing-subcon-form-table">
+              <section className="cbf-section cbf-section-card">
+                <div className="cbf-section-heading">
+                  <p className="cbf-section-label">Subcontractor Billing Rows</p>
+                  <span className="cbf-section-helper">Review counts, disputes, net amount, and collectibles amount for each subcontractor.</span>
+                </div>
+                <div className="billing-subcon-form-scroll">
+                  <div className="billing-subcon-form-table">
                   <div className="billing-subcon-form-head">
                     <span>Subcontractor</span>
-                    <span>Tickets</span>
-                    <span>Disputed</span>
-                    <span>Net</span>
+                    <span>Install</span>
+                    <span>Repair</span>
+                    <span>Disputed Install</span>
+                    <span>Disputed Repair</span>
+                    <span>Net Amount</span>
+                    <span>Collectibles Amount</span>
                   </div>
                   {values.subcon_items.length === 0 ? (
                     <div className="billing-subcon-form-empty">No active subcontractors yet.</div>
@@ -1076,18 +1427,24 @@ function BillingForm({
                       );
                       return (
                         <div className="billing-subcon-form-row" key={item.subcontractor_id}>
-                          <div>
+                          <div className="billing-subcon-name-cell">
                             <strong>{item.subcon_name}</strong>
-                            <span>I:{item.install_tickets} R:{item.repair_tickets}</span>
+                            <span>Install rate: {currency.format(Number(item.installation_rate) || 0)}</span>
+                            <span>Repair rate: {currency.format(Number(item.repair_rate) || 0)}</span>
                           </div>
-                          <div className="billing-subcon-inline-values">
-                            <span>{(Number(item.install_tickets) || 0) + (Number(item.repair_tickets) || 0)}</span>
-                          </div>
-                          <div className="billing-subcon-dispute-inputs">
+                          <div className="billing-subcon-inline-values"><span>{item.install_tickets}</span></div>
+                          <div className="billing-subcon-inline-values"><span>{item.repair_tickets}</span></div>
+                          <div className="billing-subcon-dispute-cell">
                             <input min="0" type="number" value={item.disputed_install} onChange={(event) => updateSubconItem(index, { disputed_install: event.target.value })} />
+                          </div>
+                          <div className="billing-subcon-dispute-cell">
                             <input min="0" type="number" value={item.disputed_repair} onChange={(event) => updateSubconItem(index, { disputed_repair: event.target.value })} />
                           </div>
-                          <div className="billing-subcon-net">
+                          <div className="billing-subcon-amount">
+                            <strong>{currency.format(computed.billingAmount)}</strong>
+                            <span>{computed.billableTickets} billable tickets</span>
+                          </div>
+                          <div className="billing-subcon-amount billing-subcon-amount-payable">
                             <strong>{currency.format(computed.payableAmount)}</strong>
                             <span>{item.payable_pct}% payable</span>
                           </div>
@@ -1096,14 +1453,15 @@ function BillingForm({
                     })
                   )}
                 </div>
-              </div>
+                </div>
+              </section>
 
-              <div className="cbf-section">
+              <section className="cbf-section cbf-section-card">
                 <label className="cbf-section-label">
                   Notes <span className="cbf-section-sub">optional</span>
                   <textarea className="cbf-textarea" rows={3} value={values.notes} onChange={(event) => setValues({ ...values, notes: event.target.value })} />
                 </label>
-              </div>
+              </section>
             </div>
 
             <div className="cbf-right">
@@ -1116,34 +1474,35 @@ function BillingForm({
                   <span className="cbf-draft-badge">Draft</span>
                 </div>
                 <div className="cbf-stmt-body">
+                  <div className="cbf-stmt-hero">
+                    <span className="cbf-stmt-hero-label">Total Billable</span>
+                    <strong className="cbf-stmt-hero-amount">{currency.format(billingAmount)}</strong>
+                  </div>
                   <div className="cbf-stmt-group">
-                    <p className="cbf-stmt-group-label">Billable totals</p>
-                    <div className="cbf-stmt-row"><span>Install ({billableInstall})</span><span>{currency.format(billableInstall * settings.installation_rate)}</span></div>
-                    <div className="cbf-stmt-row"><span>Repair ({billableRepair})</span><span>{currency.format(billableRepair * settings.repair_rate)}</span></div>
-                    <div className="cbf-stmt-row cbf-stmt-row--total"><span>{billableTickets} tickets</span><span /></div>
+                    <p className="cbf-stmt-group-label">Billable Breakdown</p>
+                    <div className="cbf-stmt-row"><span>Install: {billableInstall} tickets</span><span>{currency.format(billableInstall * settings.installation_rate)}</span></div>
+                    <div className="cbf-stmt-row"><span>Repair: {billableRepair} tickets</span><span>{currency.format(billableRepair * settings.repair_rate)}</span></div>
+                    <div className="cbf-stmt-row cbf-stmt-row--total"><span>Total tickets</span><span>{billableTickets}</span></div>
                   </div>
                   <div className="cbf-stmt-group">
                     <p className="cbf-stmt-group-label">Subcontractor payout</p>
-                    <div className="cbf-stmt-row"><span>Pending payable total</span><span>{currency.format(totalSubconNet)}</span></div>
                     <div className="cbf-stmt-row"><span>Rows</span><span>{values.subcon_items.length}</span></div>
+                    <div className="cbf-stmt-row"><span>Pending payable total</span><span>{currency.format(totalSubconNet)}</span></div>
                   </div>
-                </div>
-                <div className="cbf-stmt-total">
-                  <span>Total Amount</span>
-                  <strong>{currency.format(billingAmount)}</strong>
-                </div>
-                <div className="cbf-split-wrap">
-                  <div className="cbf-split-labels">
-                    <div className="cbf-split-item cbf-split-item--collection">
+                  <div className="cbf-stmt-group">
+                    <p className="cbf-stmt-group-label">Split</p>
+                    <div className="cbf-split-labels">
+                      <div className="cbf-split-item cbf-split-item--collection">
                       <div>
-                        <p className="cbf-split-label">Collection {settings.collections_pct}%</p>
+                        <p className="cbf-split-label">Collection</p>
                         <strong className="cbf-split-amount">{currency.format(collectionsAmount)}</strong>
                       </div>
-                    </div>
-                    <div className="cbf-split-item cbf-split-item--payable">
+                      </div>
+                      <div className="cbf-split-item cbf-split-item--payable">
                       <div>
-                        <p className="cbf-split-label">Payable {100 - settings.collections_pct}%</p>
+                        <p className="cbf-split-label">Collectibles</p>
                         <strong className="cbf-split-amount">{currency.format(collectiblesAmount)}</strong>
+                      </div>
                       </div>
                     </div>
                   </div>
@@ -1162,165 +1521,123 @@ function BillingForm({
   );
 }
 
-function SettingsPanel({
-  settings,
-  subcontractors,
-  onClose,
-  onSubmit,
+export function BillingSettingsManager({
+  billingSettings,
   onChange,
   setNotice,
   userId,
 }: {
-  settings: BillingSettings;
-  subcontractors: Subcontractor[];
-  onClose: () => void;
-  onSubmit: (payload: { installation_rate: number; repair_rate: number; collections_pct: number; client_name: string }) => Promise<void>;
+  billingSettings: BillingSettings | null;
   onChange: () => Promise<void>;
   setNotice: (notice: Notice) => void;
   userId: string;
+}) {
+  const [settings, setSettings] = useState<BillingSettings | null>(billingSettings);
+
+  useEffect(() => {
+    setSettings(billingSettings);
+  }, [billingSettings]);
+
+  useEffect(() => {
+    if (!supabase || settings) return;
+    void ensureBillingSettings(supabase, userId).then(({ data }) => {
+      if (data) setSettings(data);
+    });
+  }, [settings, userId]);
+
+  async function updateSettings(payload: {
+    installation_rate: number;
+    repair_rate: number;
+    collections_pct: number;
+    client_name: string;
+  }) {
+    if (!supabase) return;
+    const result = await saveBillingSettings(supabase, userId, payload);
+    if (result.error) {
+      setNotice({ type: "error", text: "Failed to save settings." });
+      return;
+    }
+    setSettings((current) => (current ? { ...current, ...payload } : current));
+    setNotice({ type: "success", text: "Billing settings saved." });
+    await onChange();
+  }
+
+  if (!settings) {
+    return (
+      <div className="page-stack">
+        <PageHeader
+          eyebrow="Settings"
+          title="Billing Settings"
+          text="Configure ticket rates, collection split, and client defaults."
+        />
+        <div className="billing-empty">
+          <FileText size={32} />
+          <p>Loading billing settings</p>
+          <span>Please wait while your billing configuration is prepared.</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="page-stack">
+      <PageHeader
+        eyebrow="Settings"
+        title="Billing Settings"
+        text="Configure ticket rates, collection split, client defaults, and subcontractor billing setup."
+      />
+      <BillingSettingsContent
+        onSubmit={updateSettings}
+        settings={settings}
+      />
+    </div>
+  );
+}
+
+function BillingSettingsContent({
+  settings,
+  onSubmit,
+}: {
+  settings: BillingSettings;
+  onSubmit: (payload: { installation_rate: number; repair_rate: number; collections_pct: number; client_name: string }) => Promise<void>;
 }) {
   const [installationRate, setInstallationRate] = useState(String(settings.installation_rate));
   const [repairRate, setRepairRate] = useState(String(settings.repair_rate));
   const [pct, setPct] = useState(String(settings.collections_pct));
   const [clientName, setClientName] = useState(settings.client_name);
   const [busy, setBusy] = useState(false);
-  const [subconForm, setSubconForm] = useState<{ id?: string; name: string; installation_rate: string; repair_rate: string; payable_pct: string } | null>(null);
-  const [subconBusy, setSubconBusy] = useState(false);
-
-  async function saveSubcon() {
-    if (!supabase || !subconForm) return;
-    setSubconBusy(true);
-    const result = await saveSubcontractor(supabase, userId, {
-      id: subconForm.id,
-      name: subconForm.name.trim(),
-      installation_rate: Number(subconForm.installation_rate) || 0,
-      repair_rate: Number(subconForm.repair_rate) || 0,
-      payable_pct: Number(subconForm.payable_pct) || 30,
-      status: "active",
-    });
-    setSubconBusy(false);
-    if (result.error) {
-      setNotice({ type: "error", text: (result.error as { message?: string }).message ?? "Failed to save subcontractor." });
-      return;
-    }
-    setSubconForm(null);
-    setNotice({ type: "success", text: "Subcontractor saved." });
-    await onChange();
-  }
-
-  async function toggleSubconArchive(subcontractor: Subcontractor) {
-    if (!supabase) return;
-    const nextStatus = subcontractor.status === "active" ? "archived" : "active";
-    const result = await saveSubcontractor(supabase, userId, {
-      id: subcontractor.id,
-      name: subcontractor.name,
-      installation_rate: subcontractor.installation_rate,
-      repair_rate: subcontractor.repair_rate,
-      payable_pct: subcontractor.payable_pct,
-      status: nextStatus,
-    });
-    if (result.error) {
-      setNotice({ type: "error", text: (result.error as { message?: string }).message ?? "Failed to update subcontractor." });
-      return;
-    }
-    await onChange();
-  }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal billing-settings-modal" onClick={(event) => event.stopPropagation()}>
-        <div className="modal-header">
-          <h3>Billing Settings</h3>
-          <button onClick={onClose} type="button" aria-label="Close"><X size={18} /></button>
-        </div>
-        <div className="billing-settings-body">
-          <form
-            className="form-grid"
-            onSubmit={async (event) => {
-              event.preventDefault();
-              setBusy(true);
-              await onSubmit({
-                installation_rate: Number(installationRate) || 0,
-                repair_rate: Number(repairRate) || 0,
-                collections_pct: Number(pct) || 0,
-                client_name: clientName,
-              });
-              setBusy(false);
-            }}
-          >
-            <MoneyField label="Installation rate (PHP per ticket)" value={installationRate} onChange={setInstallationRate} required />
-            <MoneyField label="Repair rate (PHP per ticket)" value={repairRate} onChange={setRepairRate} required />
-            <label>
-              Collections %
-              <input max="100" min="0" type="number" value={pct} onChange={(event) => setPct(event.target.value)} required />
-            </label>
-            <label className="full">
-              Client name
-              <input type="text" value={clientName} onChange={(event) => setClientName(event.target.value)} />
-            </label>
-            <div className="form-actions full">
-              <button className="billing-btn outline" onClick={onClose} type="button">Cancel</button>
-              <button className="billing-btn primary" disabled={busy} type="submit">{busy ? "Saving..." : "Save Settings"}</button>
-            </div>
-          </form>
-
-          <section className="billing-subcon-settings">
-            <div className="billing-subcon-settings-header">
-              <h4>Subcontractors</h4>
-              <button className="billing-btn outline" onClick={() => setSubconForm({ name: "", installation_rate: "0", repair_rate: "0", payable_pct: "30" })} type="button">
-                <Plus size={14} /> Add
-              </button>
-            </div>
-
-            {subcontractors.length === 0 && !subconForm && <p className="billing-no-subcons">No subcontractors yet.</p>}
-
-            {subcontractors.map((subcontractor) => (
-              <div className="billing-subcon-row" key={subcontractor.id}>
-                <div className="billing-subcon-info">
-                  <strong>{subcontractor.name}</strong>
-                </div>
-                <div className="billing-row-actions">
-                  <button
-                    onClick={() => setSubconForm({
-                      id: subcontractor.id,
-                      name: subcontractor.name,
-                      installation_rate: String(subcontractor.installation_rate),
-                      repair_rate: String(subcontractor.repair_rate),
-                      payable_pct: String(subcontractor.payable_pct),
-                    })}
-                    type="button"
-                    title="Edit"
-                  >
-                    <Pencil size={14} />
-                  </button>
-                  <button onClick={() => void toggleSubconArchive(subcontractor)} type="button" title={subcontractor.status === "active" ? "Archive" : "Restore"}>
-                    {subcontractor.status === "active" ? <Trash2 size={14} /> : <Plus size={14} />}
-                  </button>
-                </div>
-              </div>
-            ))}
-
-            {subconForm && (
-              <div className="billing-subcon-form">
-                <label>Name <input type="text" value={subconForm.name} onChange={(event) => setSubconForm({ ...subconForm, name: event.target.value })} required /></label>
-                <MoneyField label="Install rate" value={subconForm.installation_rate} onChange={(value) => setSubconForm({ ...subconForm, installation_rate: value })} required />
-                <MoneyField label="Repair rate" value={subconForm.repair_rate} onChange={(value) => setSubconForm({ ...subconForm, repair_rate: value })} required />
-                <label>
-                  Payable % (default 30)
-                  <input max="100" min="0" type="number" value={subconForm.payable_pct} onChange={(event) => setSubconForm({ ...subconForm, payable_pct: event.target.value })} required />
-                </label>
-                <label>
-                  Collection % (derived)
-                  <input disabled type="number" value={100 - (Number(subconForm.payable_pct) || 0)} />
-                </label>
-                <div className="billing-subcon-form-actions">
-                  <button className="billing-btn outline" onClick={() => setSubconForm(null)} type="button">Cancel</button>
-                  <button className="billing-btn primary" disabled={subconBusy || !subconForm.name.trim()} onClick={() => void saveSubcon()} type="button">{subconBusy ? "Saving..." : "Save"}</button>
-                </div>
-              </div>
-            )}
-          </section>
-        </div>
+    <div className="billing-settings-page">
+      <div className="billing-settings-body">
+        <form
+          className="form-grid"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            setBusy(true);
+            await onSubmit({
+              installation_rate: Number(installationRate) || 0,
+              repair_rate: Number(repairRate) || 0,
+              collections_pct: Number(pct) || 0,
+              client_name: clientName,
+            });
+            setBusy(false);
+          }}
+        >
+          <MoneyField label="Installation rate (PHP per ticket)" value={installationRate} onChange={setInstallationRate} required />
+          <MoneyField label="Repair rate (PHP per ticket)" value={repairRate} onChange={setRepairRate} required />
+          <label>
+            Collections %
+            <input max="100" min="0" type="number" value={pct} onChange={(event) => setPct(event.target.value)} required />
+          </label>
+          <label className="full">
+            Client name
+            <input type="text" value={clientName} onChange={(event) => setClientName(event.target.value)} />
+          </label>
+          <div className="form-actions full">
+            <button className="billing-btn primary" disabled={busy} type="submit">{busy ? "Saving..." : "Save Settings"}</button>
+          </div>
+        </form>
       </div>
     </div>
   );

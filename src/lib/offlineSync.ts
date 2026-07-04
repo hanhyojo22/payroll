@@ -45,7 +45,7 @@ async function applyMutation(supabase: SupabaseClient, mutation: PendingMutation
         runPayload: Record<string, unknown>;
         itemPayloads: Record<string, unknown>[];
         detailPayloads?: Record<string, unknown>[];
-        salaryBondUpdates: Array<{ id: string; payload: Record<string, unknown> }>;
+        employeeAdvanceUpdates: Array<{ id: string; payload: Record<string, unknown> }>;
       };
       const runResult = await supabase.from("payroll_runs").insert(payload.runPayload);
       if (runResult.error) return runResult;
@@ -58,9 +58,9 @@ async function applyMutation(supabase: SupabaseClient, mutation: PendingMutation
         if (detailResult.error) return detailResult;
       }
 
-      for (const update of payload.salaryBondUpdates) {
-        const bondResult = await supabase.from("salary_bonds").update(update.payload).eq("id", update.id);
-        if (bondResult.error) return bondResult;
+      for (const update of payload.employeeAdvanceUpdates) {
+        const advanceResult = await supabase.from("employee_advances").update(update.payload).eq("id", update.id);
+        if (advanceResult.error) return advanceResult;
       }
 
       return { error: null };
@@ -69,11 +69,17 @@ async function applyMutation(supabase: SupabaseClient, mutation: PendingMutation
       const payload = mutation.payload as {
         itemPayloads: Record<string, unknown>[];
         detailPayloads: Record<string, unknown>[];
+        employeeAdvanceUpdates?: Array<{ id: string; payload: Record<string, unknown> }>;
       };
       const itemResult = await supabase.from("payroll_run_items").insert(payload.itemPayloads);
       if (itemResult.error) return itemResult;
       if (payload.detailPayloads.length > 0) {
-        return supabase.from("payroll_run_item_ticket_details").insert(payload.detailPayloads);
+        const detailResult = await supabase.from("payroll_run_item_ticket_details").insert(payload.detailPayloads);
+        if (detailResult.error) return detailResult;
+      }
+      for (const update of payload.employeeAdvanceUpdates ?? []) {
+        const advanceResult = await supabase.from("employee_advances").update(update.payload).eq("id", update.id);
+        if (advanceResult.error) return advanceResult;
       }
       return { error: null };
     }
@@ -84,6 +90,7 @@ async function applyMutation(supabase: SupabaseClient, mutation: PendingMutation
         collectiblesCollectionPayload?: Record<string, unknown>;
         subconItemPayloads?: Record<string, unknown>[];
         subcontractorPaymentPayloads?: Record<string, unknown>[];
+        subcontractorAdvanceUpdates?: Array<{ id: string; payload: Record<string, unknown> }>;
       };
       const collectionResult = await supabase.from("collection_reminders").insert(payload.collectionPayload);
       if (collectionResult.error) return collectionResult;
@@ -98,9 +105,26 @@ async function applyMutation(supabase: SupabaseClient, mutation: PendingMutation
         if (subconResult.error) return subconResult;
       }
       if ((payload.subcontractorPaymentPayloads?.length ?? 0) > 0) {
-        const paymentResult = await supabase.from("subcontractor_payments").insert(payload.subcontractorPaymentPayloads!);
+        const paymentResult = await supabase
+          .from("payment_reminders")
+          .upsert(payload.subcontractorPaymentPayloads!, { onConflict: "billing_subcon_item_id" });
         if (paymentResult.error) return paymentResult;
       }
+      for (const update of payload.subcontractorAdvanceUpdates ?? []) {
+        const advanceResult = await supabase.from("subcontractor_advances").update(update.payload).eq("id", update.id);
+        if (advanceResult.error) return advanceResult;
+      }
+      return { error: null };
+    }
+    case "expense_payment_group": {
+      const payload = mutation.payload as {
+        paymentPayload: Record<string, unknown>;
+        expenseUpdate: { id: string; payload: Record<string, unknown> };
+      };
+      const paymentResult = await supabase.from("expense_installment_payments").insert(payload.paymentPayload);
+      if (paymentResult.error) return paymentResult;
+      const expenseResult = await supabase.from("expenses").update(payload.expenseUpdate.payload).eq("id", payload.expenseUpdate.id);
+      if (expenseResult.error) return expenseResult;
       return { error: null };
     }
     case "collection_payment":

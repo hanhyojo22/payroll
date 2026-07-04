@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   buildSubcontractorAccountSummary,
   buildSubcontractorPaymentPayloads,
+  buildSubcontractorPayoutArtifacts,
   computeBilling,
+  countTicketsByType,
   countTicketsForMonth,
   lastDayOfMonth,
 } from "./billing";
-import type { BillingSubconItem, DailyTicketEntry, PaymentReminder, SubconDailyTicket, Subcontractor } from "../types";
+import type { BillingSubconItem, DailyTicketEntry, PaymentReminder, SubconDailyTicket, Subcontractor, SubcontractorAdvance } from "../types";
 
 describe("countTicketsForMonth", () => {
   const entries: DailyTicketEntry[] = [
@@ -50,6 +52,27 @@ describe("countTicketsForMonth", () => {
 
   it("returns 0 for empty entries array", () => {
     expect(countTicketsForMonth([], 6, 2026)).toBe(0);
+  });
+
+  it("subtracts disputed install and repair tickets from monthly totals", () => {
+    const disputedEntries: DailyTicketEntry[] = [
+      {
+        ...entries[0],
+        disputed_install: 1,
+        disputed_repair: 1,
+      },
+      {
+        ...entries[1],
+        disputed_install: 2,
+        disputed_repair: 0,
+      },
+    ];
+
+    expect(countTicketsForMonth(disputedEntries, 6, 2026)).toBe(8);
+    expect(countTicketsByType(disputedEntries, 6, 2026)).toEqual({
+      installation: 6,
+      repair: 2,
+    });
   });
 });
 
@@ -149,6 +172,241 @@ describe("buildSubcontractorPaymentPayloads", () => {
       status: "pending",
       type: "subcontractor",
     });
+  });
+
+  it("preserves paid payout amounts when billing is recalculated", () => {
+    const items: BillingSubconItem[] = [
+      {
+        id: "item-1",
+        user_id: "u1",
+        billing_record_id: "bill-1",
+        subcontractor_id: "sub-1",
+        subcon_name: "Alpha",
+        install_tickets: 6,
+        repair_tickets: 0,
+        disputed_install: 0,
+        disputed_repair: 0,
+        installation_rate: 1000,
+        repair_rate: 500,
+        billable_tickets: 6,
+        billing_amount: 6000,
+        payable_pct: 70,
+        payable_amount: 4200,
+        collection_amount: 1800,
+        created_at: "",
+      },
+    ];
+    const existingPayments: PaymentReminder[] = [
+      {
+        id: "payment-1",
+        user_id: "u1",
+        title: "Alpha",
+        type: "subcontractor",
+        amount: 3500,
+        due_date: "2026-06-15",
+        status: "paid",
+        notes: "",
+        subcontractor_id: "sub-1",
+        billing_subcon_item_id: "item-1",
+        billing_month: 6,
+        billing_year: 2026,
+        billing_period: "first_half",
+        created_at: "",
+        updated_at: "",
+      },
+    ];
+
+    const payloads = buildSubcontractorPaymentPayloads({
+      billingMonth: 6,
+      billingYear: 2026,
+      billingPeriod: "first_half",
+      dueDate: "2026-06-15",
+      items,
+      existingPayments,
+      userId: "u1",
+      monthName: "June",
+    });
+
+    expect(payloads[0]).toMatchObject({
+      id: "payment-1",
+      amount: 3500,
+      status: "paid",
+    });
+  });
+
+  it("deducts active subcontractor cash advances from new payouts", () => {
+    const items: BillingSubconItem[] = [
+      {
+        id: "item-1",
+        user_id: "u1",
+        billing_record_id: "bill-1",
+        subcontractor_id: "sub-1",
+        subcon_name: "Alpha",
+        install_tickets: 5,
+        repair_tickets: 0,
+        disputed_install: 0,
+        disputed_repair: 0,
+        installation_rate: 1000,
+        repair_rate: 500,
+        billable_tickets: 5,
+        billing_amount: 5000,
+        payable_pct: 70,
+        payable_amount: 3500,
+        collection_amount: 1500,
+        created_at: "",
+      },
+    ];
+    const advances: SubcontractorAdvance[] = [
+      {
+        id: "advance-1",
+        user_id: "u1",
+        subcontractor_id: "sub-1",
+        subcon_name: "Alpha",
+        advance_id: "SCA-1",
+        date_granted: "2026-06-01",
+        amount: 1000,
+        balance: 1000,
+        deduction_mode: "full_payout",
+        deduction_per_billing: 0,
+        status: "active",
+        notes: "",
+        created_at: "2026-06-01T00:00:00Z",
+        updated_at: "",
+      },
+    ];
+
+    const result = buildSubcontractorPayoutArtifacts({
+      billingMonth: 6,
+      billingYear: 2026,
+      billingPeriod: "first_half",
+      dueDate: "2026-06-15",
+      items,
+      subcontractorAdvances: advances,
+      userId: "u1",
+      monthName: "June",
+    });
+
+    expect(result.payoutPayloads[0].amount).toBe(2500);
+    expect(result.payoutPayloads[0].notes).toContain("Cash advance PHP 1000.00");
+    expect(result.advanceUpdates).toEqual([
+      { id: "advance-1", payload: { balance: 0, status: "completed" } },
+    ]);
+  });
+
+  it("caps cash advance deduction so payout never becomes negative", () => {
+    const items: BillingSubconItem[] = [
+      {
+        id: "item-1",
+        user_id: "u1",
+        billing_record_id: "bill-1",
+        subcontractor_id: "sub-1",
+        subcon_name: "Alpha",
+        install_tickets: 2,
+        repair_tickets: 0,
+        disputed_install: 0,
+        disputed_repair: 0,
+        installation_rate: 1000,
+        repair_rate: 500,
+        billable_tickets: 2,
+        billing_amount: 2000,
+        payable_pct: 70,
+        payable_amount: 1400,
+        collection_amount: 600,
+        created_at: "",
+      },
+    ];
+    const advances: SubcontractorAdvance[] = [
+      {
+        id: "advance-1",
+        user_id: "u1",
+        subcontractor_id: "sub-1",
+        subcon_name: "Alpha",
+        advance_id: "SCA-1",
+        date_granted: "2026-06-01",
+        amount: 5000,
+        balance: 5000,
+        deduction_mode: "full_payout",
+        deduction_per_billing: 0,
+        status: "active",
+        notes: "",
+        created_at: "2026-06-01T00:00:00Z",
+        updated_at: "",
+      },
+    ];
+
+    const result = buildSubcontractorPayoutArtifacts({
+      billingMonth: 6,
+      billingYear: 2026,
+      billingPeriod: "first_half",
+      dueDate: "2026-06-15",
+      items,
+      subcontractorAdvances: advances,
+      userId: "u1",
+      monthName: "June",
+    });
+
+    expect(result.payoutPayloads[0].amount).toBe(0);
+    expect(result.advanceUpdates).toEqual([
+      { id: "advance-1", payload: { balance: 3600, status: "active" } },
+    ]);
+  });
+
+  it("uses fixed per-billing deduction when configured", () => {
+    const items: BillingSubconItem[] = [
+      {
+        id: "item-1",
+        user_id: "u1",
+        billing_record_id: "bill-1",
+        subcontractor_id: "sub-1",
+        subcon_name: "Alpha",
+        install_tickets: 5,
+        repair_tickets: 0,
+        disputed_install: 0,
+        disputed_repair: 0,
+        installation_rate: 1000,
+        repair_rate: 500,
+        billable_tickets: 5,
+        billing_amount: 5000,
+        payable_pct: 70,
+        payable_amount: 3500,
+        collection_amount: 1500,
+        created_at: "",
+      },
+    ];
+    const advances: SubcontractorAdvance[] = [
+      {
+        id: "advance-1",
+        user_id: "u1",
+        subcontractor_id: "sub-1",
+        subcon_name: "Alpha",
+        advance_id: "SCA-1",
+        date_granted: "2026-06-01",
+        amount: 5000,
+        balance: 5000,
+        deduction_mode: "per_billing",
+        deduction_per_billing: 1000,
+        status: "active",
+        notes: "",
+        created_at: "2026-06-01T00:00:00Z",
+        updated_at: "",
+      },
+    ];
+
+    const result = buildSubcontractorPayoutArtifacts({
+      billingMonth: 6,
+      billingYear: 2026,
+      billingPeriod: "first_half",
+      dueDate: "2026-06-15",
+      items,
+      subcontractorAdvances: advances,
+      userId: "u1",
+      monthName: "June",
+    });
+
+    expect(result.payoutPayloads[0].amount).toBe(2500);
+    expect(result.advanceUpdates).toEqual([
+      { id: "advance-1", payload: { balance: 4000, status: "active" } },
+    ]);
   });
 });
 

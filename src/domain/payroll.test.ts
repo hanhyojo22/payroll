@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  dailyTicketTotalsForEmployee,
+  governmentDeductionForEmployee,
   payrollItemPayloadForEmployee,
   workingDaysInPeriod,
   attendanceTotalsForEmployee,
 } from "./payroll";
-import type { AttendanceEntry, DailyTicketEntry, Employee, Position } from "../types";
+import type { AttendanceEntry, DailyTicketEntry, Employee, PayrollSettings, Position } from "../types";
 
 const employee: Employee = {
   id: "employee-1",
@@ -27,6 +29,10 @@ const employee: Employee = {
   sss_number: "",
   philhealth_number: "",
   pagibig_number: "",
+  sss_deduction: 0,
+  philhealth_deduction: 0,
+  pagibig_deduction: 0,
+  withholding_tax: 0,
   tin_number: "",
   emergency_contact_name: "",
   emergency_contact_number: "",
@@ -83,6 +89,15 @@ const ticketEntry: DailyTicketEntry = {
   updated_at: "2026-06-05T00:00:00Z",
 };
 
+const payrollSettings: PayrollSettings = {
+  id: "settings-1",
+  user_id: "user-1",
+  government_deduction_enabled: true,
+  government_deduction_cutoff: "second_half",
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+};
+
 describe("position-based payroll", () => {
   it("splits a fixed monthly salary equally across the two payroll periods", () => {
     const item = payrollItemPayloadForEmployee(employee, "run-1", "user-1", [ticketEntry], position("fixed", 20_000));
@@ -123,6 +138,91 @@ describe("position-based payroll", () => {
     const item = payrollItemPayloadForEmployee(employee, "run-1", "user-1", [ticketEntry], changedPosition);
     expect(item.ticket_pay).toBe(750);
     expect(item.ticket_details[0].rate).toBe(250);
+  });
+
+  it("reduces detail-based payroll totals by disputed install and repair tickets", () => {
+    const disputedEntry: DailyTicketEntry = {
+      ...ticketEntry,
+      disputed_install: 1,
+      disputed_repair: 1,
+      details: [
+        {
+          id: "detail-install",
+          user_id: "user-1",
+          daily_ticket_entry_id: "entry-1",
+          position_ticket_category_id: "category-install",
+          category_name: "Install",
+          ticket_count: 2,
+          rate: 600,
+          ticket_type: "installation",
+          created_at: "2026-06-05T00:00:00Z",
+          updated_at: "2026-06-05T00:00:00Z",
+        },
+        {
+          id: "detail-repair",
+          user_id: "user-1",
+          daily_ticket_entry_id: "entry-1",
+          position_ticket_category_id: "category-repair",
+          category_name: "Repair",
+          ticket_count: 3,
+          rate: 250,
+          ticket_type: "repair",
+          created_at: "2026-06-05T00:00:00Z",
+          updated_at: "2026-06-05T00:00:00Z",
+        },
+      ],
+    };
+
+    const totals = dailyTicketTotalsForEmployee([disputedEntry], employee);
+    expect(totals.installationTickets).toBe(1);
+    expect(totals.repairTickets).toBe(2);
+    expect(totals.gross).toBe(1_100);
+
+    const item = payrollItemPayloadForEmployee(employee, "run-1", "user-1", [disputedEntry], position("ticket"));
+    expect(item.ticket_pay).toBe(1_100);
+    expect(item.installation_tickets).toBe(1);
+    expect(item.repair_tickets).toBe(2);
+  });
+
+  it("reduces legacy header-based payroll totals by disputed install and repair tickets", () => {
+    const legacyEntry: DailyTicketEntry = {
+      ...ticketEntry,
+      details: [],
+      installation_tickets: 4,
+      repair_tickets: 3,
+      disputed_install: 2,
+      disputed_repair: 1,
+      installation_rate: 600,
+      repair_rate: 200,
+    };
+
+    const item = payrollItemPayloadForEmployee(employee, "run-1", "user-1", [legacyEntry], position("ticket"));
+    expect(item.ticket_pay).toBe(1_600);
+    expect(item.installation_tickets).toBe(2);
+    expect(item.repair_tickets).toBe(2);
+  });
+});
+
+describe("government deductions", () => {
+  it("returns zero when the cutoff does not match the payroll period", () => {
+    expect(governmentDeductionForEmployee(employee, payrollSettings, "first_half")).toBe(0);
+  });
+
+  it("sums the employee statutory deductions when the cutoff matches", () => {
+    const configuredEmployee = {
+      ...employee,
+      sss_deduction: 500,
+      philhealth_deduction: 250,
+      pagibig_deduction: 100,
+      withholding_tax: 300,
+    };
+    expect(governmentDeductionForEmployee(configuredEmployee, payrollSettings, "second_half")).toBe(1_150);
+  });
+
+  it("returns zero when government deductions are disabled, even on a matching cutoff", () => {
+    const configuredEmployee = { ...employee, sss_deduction: 500 };
+    const disabledSettings = { ...payrollSettings, government_deduction_enabled: false };
+    expect(governmentDeductionForEmployee(configuredEmployee, disabledSettings, "second_half")).toBe(0);
   });
 });
 

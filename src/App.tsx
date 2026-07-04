@@ -7,6 +7,7 @@ import {
   Bell,
   Briefcase,
   CalendarClock,
+  CalendarOff,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -24,7 +25,6 @@ import {
   Mail,
   MapPin,
   Maximize2,
-  Menu,
   MoreVertical,
   Pencil,
   Phone,
@@ -36,8 +36,10 @@ import {
   Settings,
   Trash2,
   Upload,
+  UserCheck,
   UserRound,
   Users,
+  UserX,
   Wrench,
   X,
 } from "lucide-react";
@@ -54,12 +56,14 @@ import {
   normalizeTicketCount,
   ticketGrossPay,
 } from "./domain/tickets";
+import { expenseOverdueReferenceDate } from "./domain/expenses";
 import {
   loadAttendanceEntries,
   loadBillingRecords,
   loadBillingSettings,
   loadSubconDailyTickets,
   loadSubcontractors,
+  loadSubcontractorAdvances,
   loadDashboardSummary,
   loadCollections,
   loadDailyTicketEntries,
@@ -71,20 +75,21 @@ import {
   loadPayrollHistoryRows,
   loadPayrollRunItems,
   loadPayrollRuns,
+  loadPayrollSettings,
   loadPositions,
-  loadSalaryBonds,
+  loadEmployeeAdvances,
 } from "./lib/supabaseData";
 import { queueMutation, readCachedResource, writeCachedResource } from "./lib/offlineDb";
 import { flushPendingMutations, isOfflineLikeError } from "./lib/offlineSync";
-import { BillingFeature } from "./features/billing/BillingFeature";
+import { BillingFeature, BillingHistoryFeature, BillingSettingsManager } from "./features/billing/BillingFeature";
 import { saveSubcontractor } from "./features/billing/billingRepository";
 import { saveSubconDailyTicket } from "./features/billing/subconTicketRepository";
 import { CollectionHistoryFeature, CollectionsFeature } from "./features/collections/CollectionsFeature";
 import { normalizeReceivable } from "./features/collections/collectionRepository";
-import { ExpensesFeature } from "./features/expenses/ExpensesFeature";
-import { PaymentHistoryFeature, PaymentsFeature } from "./features/payments/PaymentsFeature";
-import { PayrollFeature, PayrollHistoryFeature } from "./features/payroll/PayrollFeature";
-import { SalaryBondsFeature } from "./features/payroll/SalaryBondsFeature";
+import { ExpenseCategoriesManager, ExpensesFeature } from "./features/expenses/ExpensesFeature";
+import { PaymentsFeature } from "./features/payments/PaymentsFeature";
+import { EmployeeAdvancesFeature } from "./features/payroll/EmployeeAdvancesFeature";
+import { PayrollFeature, PayrollHistoryFeature, PayrollSettingsManager } from "./features/payroll/PayrollFeature";
 import { SubcontractorsFeature } from "./features/subcontractors/SubcontractorsFeature";
 import { Sidebar } from "./Sidebar";
 import { MoneyField as MoneyInput } from "./shared/components/MoneyField";
@@ -105,9 +110,11 @@ import type {
   BillingRecord,
   BillingSettings,
   Subcontractor,
+  SubcontractorAdvance,
   CollectionReminder,
   DashboardSummary,
   DailyTicketEntry,
+  EmployeeAdvance,
   Expense,
   ExpenseCategory,
   SubconDailyTicket,
@@ -121,28 +128,30 @@ import type {
   PayrollRunItem,
   PayrollPayPeriod,
   PayrollRunWithItems,
+  PayrollSettings,
   Position,
   PositionFormValues,
   ResourceKey,
-  SalaryBond,
-  SalaryBondFormValues,
 } from "./types";
 
 type View =
   | "attendance"
   | "billing"
+  | "billing-history"
+  | "billing-settings"
   | "dashboard"
   | "employees"
   | "employee-add"
   | "expenses"
+  | "personal-expenses"
+  | "expense-categories"
   | "compensation"
   | "daily-tickets"
   | "daily-tickets-subcon"
-  | "salary-bonds"
   | "payroll"
+  | "payroll-settings"
   | "payroll-history"
   | "payments"
-  | "payment-history"
   | "collections"
   | "collection-history"
   | "subcontractors";
@@ -162,8 +171,10 @@ const initialResourceStatuses: Record<ResourceKey, ResourceStatus> = {
   payments: "idle",
   payrollHistory: "idle",
   payrollRuns: "idle",
+  payrollSettings: "idle",
   positions: "idle",
-  salaryBonds: "idle",
+  employeeAdvances: "idle",
+  subcontractorAdvances: "idle",
   subcontractors: "idle",
 };
 
@@ -181,8 +192,10 @@ const initialResourceHydration: Record<ResourceKey, boolean> = {
   payments: false,
   payrollHistory: false,
   payrollRuns: false,
+  payrollSettings: false,
   positions: false,
-  salaryBonds: false,
+  employeeAdvances: false,
+  subcontractorAdvances: false,
   subcontractors: false,
 };
 
@@ -193,21 +206,41 @@ function formatTime(hhmm: string): string {
   return `${hour}:${String(m).padStart(2, "0")} ${period}`;
 }
 
+const STANDARD_WORK_HOURS = 8;
+
+function hoursBetween(timeIn: string, timeOut: string): number {
+  if (!timeIn || !timeOut) return 0;
+  const [inH, inM] = timeIn.split(":").map(Number);
+  const [outH, outM] = timeOut.split(":").map(Number);
+  const minutes = (outH * 60 + outM) - (inH * 60 + inM);
+  return minutes > 0 ? minutes / 60 : 0;
+}
+
+function computeDailyEarnings(dailyRate: number, status: AttendanceStatus | "", timeIn: string, timeOut: string): number {
+  if (status !== "present" && status !== "half_day") return 0;
+  const hoursWorked = hoursBetween(timeIn, timeOut);
+  if (hoursWorked <= 0) return 0;
+  return dailyRate * Math.min(hoursWorked / STANDARD_WORK_HOURS, 1);
+}
+
 const viewPaths: Record<View, string> = {
   attendance: "/attendance",
   billing: "/billing",
+  "billing-history": "/billing/history",
+  "billing-settings": "/settings/billing",
   dashboard: "/dashboard",
   employees: "/employees",
   "employee-add": "/employees/new",
   expenses: "/expenses",
+  "personal-expenses": "/personal/expenses",
+  "expense-categories": "/settings/expense-categories",
   compensation: "/positions",
   "daily-tickets": "/daily-tickets",
   "daily-tickets-subcon": "/daily-tickets/subcontractors",
-  "salary-bonds": "/salary-bonds",
   payroll: "/payroll",
+  "payroll-settings": "/settings/payroll",
   "payroll-history": "/payroll/history",
   payments: "/payments",
-  "payment-history": "/payments/history",
   collections: "/collections",
   "collection-history": "/collections/history",
   subcontractors: "/subcontractors",
@@ -215,22 +248,25 @@ const viewPaths: Record<View, string> = {
 
 const viewResources: Record<View, ResourceKey[]> = {
   attendance: ["positions", "employees", "attendanceEntries"],
-  billing: ["billingRecords", "billingSettings", "dailyTicketEntries", "collections", "subcontractors", "subconDailyTickets", "payments"],
+  billing: ["billingRecords", "billingSettings", "dailyTicketEntries", "collections", "subcontractors", "subcontractorAdvances", "subconDailyTickets", "payments"],
+  "billing-history": ["billingRecords", "billingSettings", "dailyTicketEntries", "collections", "subcontractors", "subcontractorAdvances", "subconDailyTickets", "payments"],
+  "billing-settings": ["billingSettings", "subcontractors"],
   dashboard: ["dashboardSummary"],
-  employees: ["employees", "positions", "payrollRuns", "salaryBonds"],
-  "employee-add": ["employees", "positions", "payrollRuns", "salaryBonds"],
+  employees: ["employees", "positions", "payrollRuns", "employeeAdvances"],
+  "employee-add": ["employees", "positions", "payrollRuns", "employeeAdvances"],
   expenses: ["employees", "expenses", "expenseCategories"],
+  "personal-expenses": ["employees", "expenses", "expenseCategories"],
+  "expense-categories": ["expenseCategories"],
   compensation: ["positions", "employees"],
   "daily-tickets": ["positions", "employees", "dailyTicketEntries", "subcontractors", "subconDailyTickets", "payrollRuns"],
   "daily-tickets-subcon": ["positions", "employees", "dailyTicketEntries", "subcontractors", "subconDailyTickets", "payrollRuns"],
-  "salary-bonds": ["employees", "salaryBonds"],
-  payroll: ["positions", "employees", "attendanceEntries", "dailyTicketEntries", "payrollRuns", "salaryBonds", "payrollHistory"],
-  "payroll-history": ["positions", "employees", "attendanceEntries", "dailyTicketEntries", "payrollRuns", "salaryBonds", "payrollHistory"],
-  payments: ["payments"],
-  "payment-history": ["payments"],
+  payroll: ["positions", "employees", "attendanceEntries", "dailyTicketEntries", "payrollRuns", "employeeAdvances", "payrollHistory", "payrollSettings"],
+  "payroll-settings": ["payrollSettings"],
+  "payroll-history": ["positions", "employees", "attendanceEntries", "dailyTicketEntries", "payrollRuns", "employeeAdvances", "payrollHistory", "payrollSettings"],
+  payments: ["expenses", "expenseCategories"],
   collections: ["collections"],
   "collection-history": ["collections"],
-  subcontractors: ["subcontractors", "subconDailyTickets", "billingRecords", "payments"],
+  subcontractors: ["subcontractors", "subcontractorAdvances", "subconDailyTickets", "billingRecords", "payments"],
 };
 
 type BreadcrumbItem = {
@@ -248,18 +284,21 @@ type GlobalSearchResult = {
 const viewBreadcrumbs: Record<View, BreadcrumbItem[]> = {
   attendance: [{ label: "Dashboard", view: "dashboard" }, { label: "Attendance", view: "attendance" }],
   billing: [{ label: "Dashboard", view: "dashboard" }, { label: "Billing", view: "billing" }],
+  "billing-history": [{ label: "Dashboard", view: "dashboard" }, { label: "Billing", view: "billing" }, { label: "History", view: "billing-history" }],
+  "billing-settings": [{ label: "Dashboard", view: "dashboard" }, { label: "Settings" }, { label: "Billing Settings", view: "billing-settings" }],
   dashboard: [{ label: "Dashboard", view: "dashboard" }],
   employees: [{ label: "Dashboard", view: "dashboard" }, { label: "Employees", view: "employees" }],
   "employee-add": [{ label: "Dashboard", view: "dashboard" }, { label: "Employees", view: "employees" }, { label: "Add employee", view: "employee-add" }],
   expenses: [{ label: "Dashboard", view: "dashboard" }, { label: "Expenses", view: "expenses" }],
+  "personal-expenses": [{ label: "Dashboard", view: "dashboard" }, { label: "Personal", view: "personal-expenses" }, { label: "Expenses", view: "personal-expenses" }],
+  "expense-categories": [{ label: "Dashboard", view: "dashboard" }, { label: "Settings" }, { label: "Expense Categories", view: "expense-categories" }],
   compensation: [{ label: "Dashboard", view: "dashboard" }, { label: "Settings" }, { label: "Positions", view: "compensation" }],
   "daily-tickets": [{ label: "Dashboard", view: "dashboard" }, { label: "Daily Tickets", view: "daily-tickets" }, { label: "Employees", view: "daily-tickets" }],
   "daily-tickets-subcon": [{ label: "Dashboard", view: "dashboard" }, { label: "Daily Tickets", view: "daily-tickets" }, { label: "Subcontractors", view: "daily-tickets-subcon" }],
-  "salary-bonds": [{ label: "Dashboard", view: "dashboard" }, { label: "Salary Bond", view: "salary-bonds" }],
   payroll: [{ label: "Dashboard", view: "dashboard" }, { label: "Payroll", view: "payroll" }],
+  "payroll-settings": [{ label: "Dashboard", view: "dashboard" }, { label: "Settings" }, { label: "Payroll Settings", view: "payroll-settings" }],
   "payroll-history": [{ label: "Dashboard", view: "dashboard" }, { label: "Payroll", view: "payroll" }, { label: "History", view: "payroll-history" }],
-  payments: [{ label: "Dashboard", view: "dashboard" }, { label: "Payments", view: "payments" }],
-  "payment-history": [{ label: "Dashboard", view: "dashboard" }, { label: "Payments", view: "payments" }, { label: "History", view: "payment-history" }],
+  payments: [{ label: "Dashboard", view: "dashboard" }, { label: "Payment History", view: "payments" }],
   collections: [{ label: "Dashboard", view: "dashboard" }, { label: "Collections", view: "collections" }],
   "collection-history": [{ label: "Dashboard", view: "dashboard" }, { label: "Collections", view: "collections" }, { label: "History", view: "collection-history" }],
   subcontractors: [{ label: "Dashboard", view: "dashboard" }, { label: "Subcontractors", view: "subcontractors" }],
@@ -280,6 +319,8 @@ const emptyDashboardSummary: DashboardSummary = {
   overduePayments: [],
   dueTodayCollections: [],
   overdueCollections: [],
+  dueTodayExpenses: [],
+  overdueExpenses: [],
 };
 
 const viewFromPath = (path: string): View => {
@@ -361,6 +402,10 @@ const emptyEmployee: EmployeeFormValues = {
   sss_number: "",
   philhealth_number: "",
   pagibig_number: "",
+  sss_deduction: "",
+  philhealth_deduction: "",
+  pagibig_deduction: "",
+  withholding_tax: "",
   tin_number: "",
   emergency_contact_name: "",
   emergency_contact_number: "",
@@ -459,11 +504,11 @@ function Login() {
   return (
     <main className="center-screen login-screen">
       <section className="auth-panel">
-        <div className="brand-row">
+        <div className="brand-row auth-brand-row">
           <div className="brand-mark logo-brand-mark">
             <img className="brand-logo mark-logo" src="/logo.png" alt="JMSolution Information Services" />
           </div>
-          <div>
+          <div className="auth-brand-copy">
             <p className="eyebrow">Payroll workspace</p>
             <h1>Payroll System</h1>
           </div>
@@ -511,6 +556,7 @@ function Login() {
 function Workspace({ session }: { session: Session }) {
   const [view, setView] = useState<View>(() => viewFromPath(window.location.pathname));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary>(emptyDashboardSummary);
   const [payments, setPayments] = useState<PaymentReminder[]>([]);
   const [collections, setCollections] = useState<CollectionReminder[]>([]);
@@ -521,15 +567,18 @@ function Workspace({ session }: { session: Session }) {
   const [subconDailyTickets, setSubconDailyTickets] = useState<SubconDailyTicket[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [payrollRuns, setPayrollRuns] = useState<PayrollRunWithItems[]>([]);
+  const [payrollSettings, setPayrollSettings] = useState<PayrollSettings | null>(null);
   const [positions, setPositions] = useState<Position[]>([]);
   const [payrollHistoryRows, setPayrollHistoryRows] = useState<PayrollHistoryRow[]>([]);
-  const [salaryBonds, setSalaryBonds] = useState<SalaryBond[]>([]);
+  const [employeeAdvances, setEmployeeAdvances] = useState<EmployeeAdvance[]>([]);
+  const [subcontractorAdvances, setSubcontractorAdvances] = useState<SubcontractorAdvance[]>([]);
   const [billingRecords, setBillingRecords] = useState<BillingRecord[]>([]);
   const [billingSettings, setBillingSettings] = useState<BillingSettings | null>(null);
   const [subcontractors, setSubcontractors] = useState<Subcontractor[]>([]);
   const [selectedEmployeeDetailId, setSelectedEmployeeDetailId] = useState<string | null>(null);
+  const [selectedEmployeeDetailNonce, setSelectedEmployeeDetailNonce] = useState(0);
   const [selectedSubcontractorId, setSelectedSubcontractorId] = useState<string | null>(null);
-  const [subcontractorAccountTab, setSubcontractorAccountTab] = useState<"daily" | "billing" | "payouts">("daily");
+  const [subcontractorAccountTab, setSubcontractorAccountTab] = useState<"daily" | "billing" | "payouts" | "advances">("daily");
   const [resourceStatuses, setResourceStatuses] = useState(initialResourceStatuses);
   const [resourceHydration, setResourceHydration] = useState(initialResourceHydration);
   const [notice, setNotice] = useState<Notice>(null);
@@ -559,8 +608,10 @@ function Workspace({ session }: { session: Session }) {
     payments: (data) => setPayments(data as PaymentReminder[]),
     payrollHistory: (data) => setPayrollHistoryRows(data as PayrollHistoryRow[]),
     payrollRuns: (data) => setPayrollRuns(data as PayrollRunWithItems[]),
+    payrollSettings: (data) => setPayrollSettings(data as PayrollSettings | null),
     positions: (data) => setPositions(data as Position[]),
-    salaryBonds: (data) => setSalaryBonds(data as SalaryBond[]),
+    employeeAdvances: (data) => setEmployeeAdvances(data as EmployeeAdvance[]),
+    subcontractorAdvances: (data) => setSubcontractorAdvances(data as SubcontractorAdvance[]),
     subconDailyTickets: (data) => setSubconDailyTickets(data as SubconDailyTicket[]),
     subcontractors: (data) => setSubcontractors(data as Subcontractor[]),
   };
@@ -578,8 +629,10 @@ function Workspace({ session }: { session: Session }) {
     payments: async () => loadPayments(supabase!),
     payrollHistory: async () => loadPayrollHistoryRows(supabase!),
     payrollRuns: async () => loadPayrollRuns(supabase!),
+    payrollSettings: async () => loadPayrollSettings(supabase!),
     positions: async () => loadPositions(supabase!),
-    salaryBonds: async () => loadSalaryBonds(supabase!),
+    employeeAdvances: async () => loadEmployeeAdvances(supabase!),
+    subcontractorAdvances: async () => loadSubcontractorAdvances(supabase!),
     subconDailyTickets: async () => loadSubconDailyTickets(supabase!),
     subcontractors: async () => loadSubcontractors(supabase!),
   };
@@ -605,7 +658,10 @@ function Workspace({ session }: { session: Session }) {
 
   function navigate(nextView: View) {
     setView(nextView);
-    setMobileNavOpen(false);
+    if (window.innerWidth <= 900) {
+      setSidebarCollapsed(true);
+      setMobileNavOpen(false);
+    }
     const nextPath = viewPaths[nextView];
     if (window.location.pathname !== nextPath) {
       window.history.pushState(null, "", nextPath);
@@ -672,7 +728,7 @@ function Workspace({ session }: { session: Session }) {
       loadResource("employees", true),
       loadResource("positions", true),
       loadResource("payrollRuns", true),
-      loadResource("salaryBonds", true),
+      loadResource("employeeAdvances", true),
       loadResource("dashboardSummary", true),
     ]);
   }
@@ -700,15 +756,9 @@ function Workspace({ session }: { session: Session }) {
   async function refreshPayrollPage() {
     await Promise.all([
       loadResource("payrollRuns", true),
-      loadResource("salaryBonds", true),
+      loadResource("employeeAdvances", true),
       loadResource("payrollHistory", true),
-      loadResource("dashboardSummary", true),
-    ]);
-  }
-
-  async function refreshPaymentsPage() {
-    await Promise.all([
-      loadResource("payments", true),
+      loadResource("payrollSettings", true),
       loadResource("dashboardSummary", true),
     ]);
   }
@@ -718,6 +768,7 @@ function Workspace({ session }: { session: Session }) {
       loadResource("employees", true),
       loadResource("expenses", true),
       loadResource("expenseCategories", true),
+      loadResource("dashboardSummary", true),
     ]);
   }
 
@@ -734,14 +785,15 @@ function Workspace({ session }: { session: Session }) {
       loadResource("billingSettings", true),
       loadResource("collections", true),
       loadResource("subcontractors", true),
+      loadResource("subcontractorAdvances", true),
       loadResource("subconDailyTickets", true),
       loadResource("payments", true),
     ]);
   }
 
-  async function refreshSalaryBonds() {
+  async function refreshEmployeeAdvances() {
     await Promise.all([
-      loadResource("salaryBonds", true),
+      loadResource("employeeAdvances", true),
       loadResource("dashboardSummary", true),
     ]);
   }
@@ -749,24 +801,28 @@ function Workspace({ session }: { session: Session }) {
   useEffect(() => {
     const handlePopState = () => {
       setView(viewFromPath(window.location.pathname));
-      setMobileNavOpen(false);
+      if (window.innerWidth <= 900) {
+        setSidebarCollapsed(true);
+        setMobileNavOpen(false);
+      }
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
   useEffect(() => {
-    if (!mobileNavOpen) return;
+    if (sidebarCollapsed) return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        setSidebarCollapsed(true);
         setMobileNavOpen(false);
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [mobileNavOpen]);
+  }, [sidebarCollapsed]);
 
   useEffect(() => {
     if (!accountMenuOpen) return;
@@ -899,6 +955,7 @@ function Workspace({ session }: { session: Session }) {
 
     navigate("employees");
     setSelectedEmployeeDetailId(result.id);
+    setSelectedEmployeeDetailNonce((current) => current + 1);
   }
 
   function handleGlobalSearchKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
@@ -914,30 +971,31 @@ function Workspace({ session }: { session: Session }) {
   }
 
   return (
-    <main className="app-shell">
+    <main className={sidebarCollapsed ? "app-shell sidebar-collapsed-shell" : "app-shell"}>
       <Sidebar
+        collapsed={sidebarCollapsed}
         email={session.user.email ?? ""}
         mobileNavOpen={mobileNavOpen}
         navigate={navigate}
         onCloseMobile={() => setMobileNavOpen(false)}
         onSignOut={signOut}
+        onToggleMobileNav={() => {
+          setSidebarCollapsed((collapsed) => {
+            const nextCollapsed = !collapsed;
+            setMobileNavOpen(!nextCollapsed);
+            return nextCollapsed;
+          });
+        }}
         view={view}
       />
-      {mobileNavOpen && <button aria-label="Close navigation" className="sidebar-backdrop" onClick={() => setMobileNavOpen(false)} type="button" />}
+      {!sidebarCollapsed && <button aria-label="Close navigation" className="sidebar-backdrop" onClick={() => {
+        setSidebarCollapsed(true);
+        setMobileNavOpen(false);
+      }} type="button" />}
 
       <div className="main-area">
         <header className="topbar">
           <div className="topbar-left">
-            <button
-              aria-controls="primary-sidebar"
-              aria-expanded={mobileNavOpen}
-              aria-label={mobileNavOpen ? "Close navigation" : "Open navigation"}
-              className="topbar-icon nav-toggle"
-              onClick={() => setMobileNavOpen((open) => !open)}
-              type="button"
-            >
-              {mobileNavOpen ? <X size={21} /> : <Menu size={21} />}
-            </button>
             <div className="topbar-search-wrap" ref={globalSearchRef}>
               <label className="topbar-search">
                 <span className="sr-only">Search workspace</span>
@@ -1046,13 +1104,14 @@ function Workspace({ session }: { session: Session }) {
                 <EmployeesView
                   employees={employees}
                   initialDetailsEmployeeId={selectedEmployeeDetailId}
+                  initialDetailsEmployeeNonce={selectedEmployeeDetailNonce}
                   onChange={refreshEmployeesPage}
                   onClearInitialDetailsEmployee={() => setSelectedEmployeeDetailId(null)}
                   onLocalEmployeesChange={setEmployees}
                   onQueueOfflineMutation={queueOfflineMutation}
                   payrollRuns={payrollRuns}
                   positions={positions}
-                  salaryBonds={salaryBonds}
+                  employeeAdvances={employeeAdvances}
                   setNotice={setNotice}
                   userId={session.user.id}
                 />
@@ -1061,6 +1120,7 @@ function Workspace({ session }: { session: Session }) {
               <EmployeesView
                 employees={employees}
                 initialDetailsEmployeeId={selectedEmployeeDetailId}
+                initialDetailsEmployeeNonce={selectedEmployeeDetailNonce}
                 mode="add"
                 onChange={refreshEmployeesPage}
                 onClearInitialDetailsEmployee={() => setSelectedEmployeeDetailId(null)}
@@ -1069,7 +1129,7 @@ function Workspace({ session }: { session: Session }) {
                 onQueueOfflineMutation={queueOfflineMutation}
                 payrollRuns={payrollRuns}
                 positions={positions}
-                salaryBonds={salaryBonds}
+                employeeAdvances={employeeAdvances}
                 setNotice={setNotice}
                 userId={session.user.id}
               />
@@ -1134,15 +1194,6 @@ function Workspace({ session }: { session: Session }) {
                   userId={session.user.id}
                 />
               )}
-              {view === "salary-bonds" && (
-                <SalaryBondsFeature
-                  employees={employees}
-                  onChange={refreshSalaryBonds}
-                  onQueueOfflineMutation={queueOfflineMutation}
-                  setNotice={setNotice}
-                  userId={session.user.id}
-                />
-              )}
               {(view === "payroll" || view === "payroll-history") && (
                 <>
                   {view === "payroll" ? (
@@ -1154,9 +1205,10 @@ function Workspace({ session }: { session: Session }) {
                       onLocalPayrollRunsChange={setPayrollRuns}
                       onChange={refreshPayrollPage}
                       onQueueOfflineMutation={queueOfflineMutation}
+                      payrollSettings={payrollSettings}
                       payrollRuns={payrollRuns}
                       positions={positions}
-                      salaryBonds={salaryBonds}
+                      employeeAdvances={employeeAdvances}
                       setNotice={setNotice}
                       tabs={(
                         <div className="page-tabs" role="tablist">
@@ -1180,52 +1232,95 @@ function Workspace({ session }: { session: Session }) {
                   )}
                 </>
               )}
-              {(view === "payments" || view === "payment-history") && (
-                <>
-                  <div className="page-tabs" role="tablist">
-                    <button className={view === "payments" ? "active" : ""} onClick={() => navigate("payments")} role="tab" type="button">Payments</button>
-                    <button className={view === "payment-history" ? "active" : ""} onClick={() => navigate("payment-history")} role="tab" type="button">History</button>
-                  </div>
-                  {view === "payments" ? (
-                    <PaymentsFeature
-                      onChange={refreshPaymentsPage}
-                      onLocalPaymentsChange={setPayments}
-                      onQueueOfflineMutation={queueOfflineMutation}
-                      payments={payments}
-                      setNotice={setNotice}
-                      userId={session.user.id}
-                    />
-                  ) : (
-                    <PaymentHistoryFeature payments={payments} />
-                  )}
-                </>
+              {view === "payments" && <PaymentsFeature expenseCategories={expenseCategories} expenses={expenses} />}
+              {(view === "billing" || view === "billing-history") && (
+                view === "billing" ? (
+                  <BillingFeature
+                    billingRecords={billingRecords}
+                    billingSettings={billingSettings}
+                    collections={collections}
+                    dailyTicketEntries={dailyTicketEntries}
+                    onOpenSubcontractorAccount={(subcontractorId) => {
+                      setSelectedSubcontractorId(subcontractorId);
+                      setSubcontractorAccountTab("billing");
+                      navigate("subcontractors");
+                    }}
+                    onChange={refreshBillingPage}
+                    onLocalBillingRecordsChange={setBillingRecords}
+                    onQueueOfflineMutation={queueOfflineMutation}
+                    payments={payments}
+                    setNotice={setNotice}
+                    subconDailyTickets={subconDailyTickets}
+                    subcontractorAdvances={subcontractorAdvances}
+                    subcontractors={subcontractors}
+                    tabs={(
+                      <div className="page-tabs" role="tablist">
+                        <button className="active" onClick={() => navigate("billing")} role="tab" type="button">Billing</button>
+                        <button onClick={() => navigate("billing-history")} role="tab" type="button">History</button>
+                      </div>
+                    )}
+                    userId={session.user.id}
+                  />
+                ) : (
+                  <BillingHistoryFeature
+                    billingRecords={billingRecords}
+                    billingSettings={billingSettings}
+                    collections={collections}
+                    dailyTicketEntries={dailyTicketEntries}
+                    payments={payments}
+                    tabs={(
+                      <div className="page-tabs" role="tablist">
+                        <button onClick={() => navigate("billing")} role="tab" type="button">Billing</button>
+                        <button className="active" onClick={() => navigate("billing-history")} role="tab" type="button">History</button>
+                      </div>
+                    )}
+                  />
+                )
               )}
-              {view === "billing" && (
-                <BillingFeature
-                  billingRecords={billingRecords}
+              {view === "billing-settings" && (
+                <BillingSettingsManager
                   billingSettings={billingSettings}
-                  collections={collections}
-                  dailyTicketEntries={dailyTicketEntries}
-                  onOpenSubcontractorAccount={(subcontractorId) => {
-                    setSelectedSubcontractorId(subcontractorId);
-                    setSubcontractorAccountTab("billing");
-                    navigate("subcontractors");
-                  }}
                   onChange={refreshBillingPage}
-                  onLocalBillingRecordsChange={setBillingRecords}
-                  onQueueOfflineMutation={queueOfflineMutation}
-                  payments={payments}
                   setNotice={setNotice}
-                  subconDailyTickets={subconDailyTickets}
-                  subcontractors={subcontractors}
+                  userId={session.user.id}
+                />
+              )}
+              {view === "payroll-settings" && (
+                <PayrollSettingsManager
+                  employees={employees}
+                  onChange={refreshPayrollPage}
+                  payrollSettings={payrollSettings}
+                  setNotice={setNotice}
                   userId={session.user.id}
                 />
               )}
               {view === "expenses" && (
                 <ExpensesFeature
+                  categoryScope="company"
                   employees={employees}
                   expenseCategories={expenseCategories}
                   expenses={expenses}
+                  onChange={refreshExpensesPage}
+                  onQueueOfflineMutation={queueOfflineMutation}
+                  setNotice={setNotice}
+                  userId={session.user.id}
+                />
+              )}
+              {view === "personal-expenses" && (
+                <ExpensesFeature
+                  categoryScope="personal"
+                  employees={employees}
+                  expenseCategories={expenseCategories}
+                  expenses={expenses}
+                  onChange={refreshExpensesPage}
+                  onQueueOfflineMutation={queueOfflineMutation}
+                  setNotice={setNotice}
+                  userId={session.user.id}
+                />
+              )}
+              {view === "expense-categories" && (
+                <ExpenseCategoriesManager
+                  categories={expenseCategories}
                   onChange={refreshExpensesPage}
                   onQueueOfflineMutation={queueOfflineMutation}
                   setNotice={setNotice}
@@ -1239,6 +1334,7 @@ function Workspace({ session }: { session: Session }) {
                   onChange={async () => {
                     await Promise.all([
                       loadResource("subcontractors", true),
+                      loadResource("subcontractorAdvances", true),
                       loadResource("subconDailyTickets", true),
                       loadResource("billingRecords", true),
                       loadResource("payments", true),
@@ -1247,10 +1343,12 @@ function Workspace({ session }: { session: Session }) {
                   onSelectSubcontractor={(subcontractorId) => {
                     setSelectedSubcontractorId(subcontractorId);
                   }}
+                  onQueueOfflineMutation={queueOfflineMutation}
                   payments={payments}
                   selectedSubcontractorId={selectedSubcontractorId}
                   setNotice={setNotice}
                   subconDailyTickets={subconDailyTickets}
+                  subcontractorAdvances={subcontractorAdvances}
                   subcontractors={subcontractors}
                   userId={session.user.id}
                 />
@@ -1301,7 +1399,12 @@ function Dashboard({ summary }: { summary: DashboardSummary }) {
     ? new Date(`${latestRun.generated_date}T00:00:00`).toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" })
     : "None";
 
-  const actionItems: Array<{ id: string; title: string; amount: number; urgency: "overdue" | "today"; daysInfo: string; kind: "collection" | "bill" }> = [];
+  const actionItems: Array<{ id: string; title: string; amount: number; urgency: "overdue" | "today"; daysInfo: string; kind: "collection" | "bill" | "expense" }> = [];
+  const actionKindLabels: Record<"collection" | "bill" | "expense", string> = {
+    collection: "Collection",
+    bill: "Bill",
+    expense: "Expense",
+  };
 
   for (const c of summary.overdueCollections) {
     const days = Math.max(1, Math.floor((now.getTime() - new Date(c.due_date).getTime()) / 86400000));
@@ -1311,11 +1414,19 @@ function Dashboard({ summary }: { summary: DashboardSummary }) {
     const days = Math.max(1, Math.floor((now.getTime() - new Date(p.due_date).getTime()) / 86400000));
     actionItems.push({ id: p.id, title: p.title, amount: toNumber(p.amount), urgency: "overdue", daysInfo: `${days}d overdue`, kind: "bill" });
   }
+  for (const e of summary.overdueExpenses) {
+    const referenceDate = expenseOverdueReferenceDate(e, todayKey());
+    const days = referenceDate ? Math.max(1, Math.floor((now.getTime() - new Date(`${referenceDate}T00:00:00`).getTime()) / 86400000)) : 1;
+    actionItems.push({ id: e.id, title: `${e.category_name} — ${e.employee_name}`, amount: toNumber(e.amount), urgency: "overdue", daysInfo: `${days}d overdue`, kind: "expense" });
+  }
   for (const c of summary.dueTodayCollections) {
     actionItems.push({ id: c.id, title: c.title, amount: toNumber(c.outstanding_balance), urgency: "today", daysInfo: "due today", kind: "collection" });
   }
   for (const p of summary.dueTodayPayments) {
     actionItems.push({ id: p.id, title: p.title, amount: toNumber(p.amount), urgency: "today", daysInfo: "due today", kind: "bill" });
+  }
+  for (const e of summary.dueTodayExpenses) {
+    actionItems.push({ id: e.id, title: `${e.category_name} — ${e.employee_name}`, amount: toNumber(e.amount), urgency: "today", daysInfo: "due today", kind: "expense" });
   }
 
   const agingValues = [
@@ -1359,9 +1470,16 @@ function Dashboard({ summary }: { summary: DashboardSummary }) {
         </div>
         <div className="dash-pulse-card bills">
           <span className="dash-pulse-label">Bills due</span>
-          <strong className="dash-pulse-value">{currency.format(summary.dueTodayPayments.reduce((s, p) => s + toNumber(p.amount), 0) + summary.overduePayments.reduce((s, p) => s + toNumber(p.amount), 0))}</strong>
+          <strong className="dash-pulse-value">
+            {currency.format(
+              summary.dueTodayPayments.reduce((s, p) => s + toNumber(p.amount), 0) +
+              summary.overduePayments.reduce((s, p) => s + toNumber(p.amount), 0) +
+              summary.dueTodayExpenses.reduce((s, e) => s + toNumber(e.amount), 0) +
+              summary.overdueExpenses.reduce((s, e) => s + toNumber(e.amount), 0),
+            )}
+          </strong>
           <span className="dash-pulse-sub">
-            {summary.dueTodayPayments.length + summary.overduePayments.length} pending
+            {summary.dueTodayPayments.length + summary.overduePayments.length + summary.dueTodayExpenses.length + summary.overdueExpenses.length} pending
           </span>
         </div>
       </section>
@@ -1381,7 +1499,7 @@ function Dashboard({ summary }: { summary: DashboardSummary }) {
                 <div className="dash-action-info">
                   <strong>{item.title}</strong>
                   <span className="dash-action-meta">
-                    {item.kind === "collection" ? "Collection" : "Bill"} · {item.daysInfo}
+                    {actionKindLabels[item.kind]} · {item.daysInfo}
                   </span>
                 </div>
                 <span className="dash-action-amount">{currency.format(item.amount)}</span>
@@ -1446,7 +1564,7 @@ function Metric({
   helperText?: string;
   icon: ReactNode;
   label: string;
-  tone?: "danger" | "success";
+  tone?: "danger" | "success" | "warning";
   value: number | string;
 }) {
   return (
@@ -1862,6 +1980,9 @@ function PositionsView({
   const rows = positions.filter((position) =>
     `${position.name} ${position.department} ${position.pay_mode}`.toLowerCase().includes(query.toLowerCase())
   );
+  const existingDepartments = Array.from(
+    new Set(positions.map((position) => position.department).filter((department) => department && department.trim())),
+  ).sort((a, b) => a.localeCompare(b));
 
   async function savePosition(values: PositionFormValues) {
     if (!supabase) return;
@@ -2078,7 +2199,7 @@ function PositionsView({
           </div>,
         ])}
       />
-      {formOpen && <PositionForm initial={editing} onClose={() => { setFormOpen(false); setEditing(null); }} onSubmit={savePosition} />}
+      {formOpen && <PositionForm existingDepartments={existingDepartments} initial={editing} onClose={() => { setFormOpen(false); setEditing(null); }} onSubmit={savePosition} />}
       {confirmDelete && (
         <div className="modal-backdrop" role="presentation">
           <section aria-label="Delete position" aria-modal="true" className="modal confirm-modal" role="dialog">
@@ -2115,15 +2236,19 @@ function PositionsView({
 }
 
 function PositionForm({
+  existingDepartments,
   initial,
   onClose,
   onSubmit,
 }: {
+  existingDepartments: string[];
   initial: Position | null;
   onClose: () => void;
   onSubmit: (values: PositionFormValues) => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
+  const [showDepartmentPopup, setShowDepartmentPopup] = useState(false);
+  const [newDepartmentName, setNewDepartmentName] = useState("");
   const [values, setValues] = useState<PositionFormValues>(initial ? {
     name: initial.name,
     department: initial.department,
@@ -2144,12 +2269,36 @@ function PositionForm({
     categories: [],
   });
   const usesTickets = values.pay_mode === "ticket" || values.pay_mode === "hybrid";
+  const departmentOptions = Array.from(
+    new Set([...existingDepartments, ...(values.department.trim() ? [values.department.trim()] : [])]),
+  ).sort((a, b) => a.localeCompare(b));
 
   return (
     <Modal title={initial ? "Edit position" : "Add position"} onClose={onClose}>
       <form className="form-grid" onSubmit={async (event) => { event.preventDefault(); setBusy(true); await onSubmit(values); setBusy(false); }}>
         <TextField label="Position name" value={values.name} onChange={(name) => setValues({ ...values, name })} required />
-        <TextField label="Department" value={values.department} onChange={(department) => setValues({ ...values, department })} />
+        <label>
+          Department
+          <div className="department-field">
+            <select
+              value={values.department}
+              onChange={(event) => setValues({ ...values, department: event.target.value })}
+            >
+              <option value="">No department</option>
+              {departmentOptions.map((department) => (
+                <option key={department} value={department}>{department}</option>
+              ))}
+            </select>
+            <button
+              aria-label="Add new department"
+              className="secondary-button compact"
+              onClick={() => { setNewDepartmentName(""); setShowDepartmentPopup(true); }}
+              type="button"
+            >
+              <Plus size={15} /> New
+            </button>
+          </div>
+        </label>
         <label>
           Pay method
           <select value={values.pay_mode} onChange={(event) => setValues({ ...values, pay_mode: event.target.value as PositionFormValues["pay_mode"] })}>
@@ -2181,6 +2330,36 @@ function PositionForm({
         )}
         <FormActions busy={busy} onClose={onClose} />
       </form>
+      {showDepartmentPopup && (
+        <Modal title="New department" onClose={() => setShowDepartmentPopup(false)}>
+          <form
+            className="form-grid"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const trimmed = newDepartmentName.trim();
+              if (!trimmed) return;
+              setValues((current) => ({ ...current, department: trimmed }));
+              setShowDepartmentPopup(false);
+            }}
+          >
+            <TextField
+              autoFocus
+              label="Department name"
+              value={newDepartmentName}
+              onChange={setNewDepartmentName}
+              required
+            />
+            <div className="form-actions full">
+              <button className="secondary-button" onClick={() => setShowDepartmentPopup(false)} type="button">
+                Cancel
+              </button>
+              <button className="primary-button compact" disabled={!newDepartmentName.trim()} type="submit">
+                Add department
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
     </Modal>
   );
 }
@@ -2222,6 +2401,7 @@ export function DailyTicketEntryView({
 }) {
   const [entryDate, setEntryDate] = useState(todayKey());
   const [draftCounts, setDraftCounts] = useState<Record<string, Record<string, number>>>({});
+  const [draftDisputes, setDraftDisputes] = useState<Record<string, { install: number; repair: number }>>({});
   const [busyEmployeeId, setBusyEmployeeId] = useState("");
   const [query, setQuery] = useState("");
   const [savingAll, setSavingAll] = useState(false);
@@ -2352,19 +2532,127 @@ export function DailyTicketEntryView({
     return position.categories.filter((c) => c.status === "active");
   }
 
-  function grossFor(draft: PositionTicketDraft) {
-    return activeCategories(draft.position).reduce(
-      (sum, cat) => sum + normalizeTicketCount(draft.counts[cat.id]) * toNumber(cat.rate),
+  function distributeRemainingDraftCounts(
+    items: Array<{ count: number }>,
+    disputedCount: number,
+  ) {
+    const total = items.reduce((sum, item) => sum + normalizeTicketCount(item.count), 0);
+    const clampedDisputed = Math.min(total, Math.max(0, normalizeTicketCount(disputedCount)));
+    const targetRemaining = total - clampedDisputed;
+    if (targetRemaining <= 0) return items.map(() => 0);
+    if (targetRemaining >= total) return items.map((item) => normalizeTicketCount(item.count));
+
+    const scaled = items.map((item, index) => {
+      const originalCount = normalizeTicketCount(item.count);
+      const exact = originalCount * targetRemaining / total;
+      const remainingCount = Math.floor(exact);
+      return { index, originalCount, remainingCount, fraction: exact - remainingCount };
+    });
+
+    let remainder = targetRemaining - scaled.reduce((sum, item) => sum + item.remainingCount, 0);
+    scaled
+      .slice()
+      .sort((a, b) => {
+        if (b.fraction !== a.fraction) return b.fraction - a.fraction;
+        return a.index - b.index;
+      })
+      .forEach((item) => {
+        if (remainder <= 0) return;
+        if (item.remainingCount < item.originalCount) {
+          item.remainingCount += 1;
+          remainder -= 1;
+        }
+      });
+
+    return scaled.sort((a, b) => a.index - b.index).map((item) => item.remainingCount);
+  }
+
+  function draftBillableSnapshot(draft: PositionTicketDraft) {
+    const categories = activeCategories(draft.position);
+    const disputes = disputeValuesFor(draft);
+    const installationItems = categories
+      .filter((cat) => (cat.ticket_type ?? "installation") === "installation")
+      .map((cat) => ({ category: cat, count: normalizeTicketCount(draft.counts[cat.id]) }));
+    const repairItems = categories
+      .filter((cat) => cat.ticket_type === "repair")
+      .map((cat) => ({ category: cat, count: normalizeTicketCount(draft.counts[cat.id]) }));
+    const adjustedInstall = distributeRemainingDraftCounts(installationItems, disputes.install);
+    const adjustedRepair = distributeRemainingDraftCounts(repairItems, disputes.repair);
+
+    const installationGross = installationItems.reduce(
+      (sum, item, index) => sum + adjustedInstall[index] * toNumber(item.category.rate),
       0,
     );
+    const repairGross = repairItems.reduce(
+      (sum, item, index) => sum + adjustedRepair[index] * toNumber(item.category.rate),
+      0,
+    );
+
+    return {
+      installationTickets: adjustedInstall.reduce((sum, count) => sum + count, 0),
+      repairTickets: adjustedRepair.reduce((sum, count) => sum + count, 0),
+      gross: installationGross + repairGross,
+    };
+  }
+
+  function entryBillableSnapshot(entry: DailyTicketEntry) {
+    const details = entry.details ?? [];
+    if (details.length > 0) {
+      const installationDetails = details
+        .filter((detail) => (detail.ticket_type ?? "installation") === "installation")
+        .map((detail) => ({ detail, count: normalizeTicketCount(detail.ticket_count) }));
+      const repairDetails = details
+        .filter((detail) => detail.ticket_type === "repair")
+        .map((detail) => ({ detail, count: normalizeTicketCount(detail.ticket_count) }));
+      const adjustedInstall = distributeRemainingDraftCounts(installationDetails, entry.disputed_install ?? 0);
+      const adjustedRepair = distributeRemainingDraftCounts(repairDetails, entry.disputed_repair ?? 0);
+      const installationTickets = adjustedInstall.reduce((sum, count) => sum + count, 0);
+      const repairTickets = adjustedRepair.reduce((sum, count) => sum + count, 0);
+      const gross = installationDetails.reduce(
+        (sum, item, index) => sum + adjustedInstall[index] * toNumber(item.detail.rate),
+        0,
+      ) + repairDetails.reduce(
+        (sum, item, index) => sum + adjustedRepair[index] * toNumber(item.detail.rate),
+        0,
+      );
+      return { installationTickets, repairTickets, total: installationTickets + repairTickets, gross };
+    }
+
+    const installationTickets = Math.max(
+      0,
+      normalizeTicketCount(entry.installation_tickets) - Math.min(normalizeTicketCount(entry.installation_tickets), normalizeTicketCount(entry.disputed_install ?? 0)),
+    );
+    const repairTickets = Math.max(
+      0,
+      normalizeTicketCount(entry.repair_tickets) - Math.min(normalizeTicketCount(entry.repair_tickets), normalizeTicketCount(entry.disputed_repair ?? 0)),
+    );
+    const gross = installationTickets * toNumber(entry.installation_rate) + repairTickets * toNumber(entry.repair_rate);
+    return { installationTickets, repairTickets, total: installationTickets + repairTickets, gross };
+  }
+
+  function grossFor(draft: PositionTicketDraft) {
+    return draftBillableSnapshot(draft).gross;
+  }
+
+  function disputeValuesFor(draft: PositionTicketDraft) {
+    return {
+      install: draftDisputes[draft.employee.id]?.install ?? draft.entry?.disputed_install ?? 0,
+      repair: draftDisputes[draft.employee.id]?.repair ?? draft.entry?.disputed_repair ?? 0,
+    };
   }
 
   function isDirty(draft: PositionTicketDraft) {
-    return activeCategories(draft.position).some((cat) => {
+    const countDirty = activeCategories(draft.position).some((cat) => {
       const current = normalizeTicketCount(draft.counts[cat.id]);
       const saved = draft.entry?.details?.find((d) => d.position_ticket_category_id === cat.id)?.ticket_count ?? 0;
       return current !== saved;
     });
+    const disputes = disputeValuesFor(draft);
+    return (
+      countDirty ||
+      normalizeTicketCount(disputes.install) !== (draft.entry?.disputed_install ?? 0) ||
+      normalizeTicketCount(disputes.repair) !== (draft.entry?.disputed_repair ?? 0)
+    );
   }
 
   async function saveDraftAndMark(draft: PositionTicketDraft) {
@@ -2374,7 +2662,15 @@ export function DailyTicketEntryView({
   }
 
   async function saveAll() {
-    const dirty = drafts.filter((d) => isDirty(d) || Object.values(d.counts).some((c) => c > 0));
+    const dirty = drafts.filter((d) => {
+      const disputes = disputeValuesFor(d);
+      return (
+        isDirty(d) ||
+        Object.values(d.counts).some((c) => c > 0) ||
+        normalizeTicketCount(disputes.install) > 0 ||
+        normalizeTicketCount(disputes.repair) > 0
+      );
+    });
     if (dirty.length === 0) return;
     setSavingAll(true);
     for (const draft of dirty) await saveDraft(draft);
@@ -2392,6 +2688,7 @@ export function DailyTicketEntryView({
     const repairCategories = activeCategories.filter((c) => c.ticket_type === "repair");
     const computedInstall = installCategories.reduce((s, c) => s + normalizeTicketCount(draft.counts[c.id]), 0);
     const computedRepair = repairCategories.reduce((s, c) => s + normalizeTicketCount(draft.counts[c.id]), 0);
+    const disputes = disputeValuesFor(draft);
     const installRate = installCategories[0] ? toNumber(installCategories[0].rate) : 0;
     const repairRate = repairCategories[0] ? toNumber(repairCategories[0].rate) : 0;
     const headerPayload = {
@@ -2404,6 +2701,8 @@ export function DailyTicketEntryView({
       position_name: draft.position.name,
       installation_tickets: computedInstall,
       repair_tickets: computedRepair,
+      disputed_install: normalizeTicketCount(disputes.install),
+      disputed_repair: normalizeTicketCount(disputes.repair),
       installation_rate: installRate,
       repair_rate: repairRate,
     };
@@ -2485,9 +2784,29 @@ export function DailyTicketEntryView({
     await onChange();
   }
 
+  const loggedCount = drafts.filter((draft) => draft.entry).length;
+  const totalGrossForDate = drafts.reduce((sum, draft) => sum + draftBillableSnapshot(draft).gross, 0);
+
   return (
     <div className="page-stack">
       {employees.some((employee) => employee.status === "active" && !employee.position_id) && <NoticeBanner notice={{ type: "error", text: "Some active employees have no position and cannot receive ticket entries." }} onDismiss={() => undefined} />}
+      <section className="subcon-ticket-stats">
+        <div className="subcon-ticket-stat">
+          <span>Employees</span>
+          <strong>{drafts.length}</strong>
+          <span className="subcon-ticket-stat-helper">Eligible for entries</span>
+        </div>
+        <div className="subcon-ticket-stat logged">
+          <span>Logged for this date</span>
+          <strong>{loggedCount}</strong>
+          <span className="subcon-ticket-stat-helper">Entries saved today</span>
+        </div>
+        <div className="subcon-ticket-stat total">
+          <span>Total gross</span>
+          <strong>{currency.format(totalGrossForDate)}</strong>
+          <span className="subcon-ticket-stat-helper">For selected date</span>
+        </div>
+      </section>
       <div className="ticket-toolbar">
         <div className="att-cal-wrap" ref={calendarRef}>
           <button
@@ -2520,7 +2839,7 @@ export function DailyTicketEntryView({
                       dateKey === todayKey() ? "today" : "",
                       datesWithEntries.has(dateKey) ? "has-entry" : "",
                     ].filter(Boolean).join(" ")}
-                    onClick={() => { setEntryDate(dateKey); setDraftCounts({}); setSavedIds(new Set()); setShowCalendar(false); }}
+                    onClick={() => { setEntryDate(dateKey); setDraftCounts({}); setDraftDisputes({}); setSavedIds(new Set()); setShowCalendar(false); }}
                   >
                     {day}
                   </button>
@@ -2537,6 +2856,7 @@ export function DailyTicketEntryView({
                     setCalendarMonth(month);
                     setEntryDate(today);
                     setDraftCounts({});
+                    setDraftDisputes({});
                     setSavedIds(new Set());
                     setShowCalendar(false);
                   }}
@@ -2550,6 +2870,11 @@ export function DailyTicketEntryView({
         <label className="ticket-search-field">
           <Search size={15} />
           <input placeholder="Search employees…" value={query} onChange={(e) => setQuery(e.target.value)} />
+          {query && (
+            <button aria-label="Clear search" className="ticket-search-clear" onClick={() => setQuery("")} type="button">
+              <X size={13} />
+            </button>
+          )}
         </label>
         <button
           className="primary-button compact"
@@ -2621,6 +2946,8 @@ export function DailyTicketEntryView({
                             <span className="ticket-rate-label">₱{toNumber(cat.rate).toLocaleString()}/ticket</span>
                           </th>
                         ))}
+                        <th className="ticket-dispute-col">Disputed Install</th>
+                        <th className="ticket-dispute-col">Disputed Repair</th>
                         <th className="ticket-gross-col">Gross</th>
                         <th className="ticket-action-col" />
                       </tr>
@@ -2630,6 +2957,7 @@ export function DailyTicketEntryView({
                         const dirty = isDirty(draft);
                         const busy = busyEmployeeId === draft.employee.id;
                         const saved = savedIds.has(draft.employee.id);
+                        const disputes = disputeValuesFor(draft);
                         return (
                           <tr key={draft.employee.id} className={dirty ? "ticket-row-dirty" : saved ? "ticket-row-saved" : ""}>
                             <td className="ticket-no-col">{index + 1}</td>
@@ -2662,6 +2990,38 @@ export function DailyTicketEntryView({
                                 />
                               </td>
                             ))}
+                            <td className="ticket-count-cell ticket-count-cell--dispute">
+                              <input
+                                aria-label={`Disputed installation tickets for ${draft.employee.full_name}`}
+                                min="0"
+                                step="1"
+                                type="number"
+                                value={disputes.install}
+                                onChange={(e) => setDraftDisputes((current) => ({
+                                  ...current,
+                                  [draft.employee.id]: {
+                                    install: normalizeTicketCount(e.target.value),
+                                    repair: current[draft.employee.id]?.repair ?? draft.entry?.disputed_repair ?? 0,
+                                  },
+                                }))}
+                              />
+                            </td>
+                            <td className="ticket-count-cell ticket-count-cell--dispute">
+                              <input
+                                aria-label={`Disputed repair tickets for ${draft.employee.full_name}`}
+                                min="0"
+                                step="1"
+                                type="number"
+                                value={disputes.repair}
+                                onChange={(e) => setDraftDisputes((current) => ({
+                                  ...current,
+                                  [draft.employee.id]: {
+                                    install: current[draft.employee.id]?.install ?? draft.entry?.disputed_install ?? 0,
+                                    repair: normalizeTicketCount(e.target.value),
+                                  },
+                                }))}
+                              />
+                            </td>
                             <td className="ticket-gross-cell">
                               <strong>{currency.format(grossFor(draft))}</strong>
                             </td>
@@ -2742,7 +3102,7 @@ export function DailyTicketEntryView({
           .sort((a, b) => b.entry_date.localeCompare(a.entry_date));
         const position = positions.find((p) => p.id === detailEmployee.position_id);
         const cats = position?.categories.filter((c) => c.status === "active") ?? [];
-        const totalGross = empEntries.reduce((s, e) => s + e.details.reduce((ds, d) => ds + (d.ticket_count ?? 0) * toNumber(d.rate), 0), 0);
+        const totalGross = empEntries.reduce((sum, entry) => sum + entryBillableSnapshot(entry).gross, 0);
         return (
           <div className="modal-backdrop" onClick={() => setDetailEmployee(null)}>
             <div className="modal ticket-detail-modal" onClick={(e) => e.stopPropagation()}>
@@ -2762,6 +3122,8 @@ export function DailyTicketEntryView({
                       <tr>
                         <th>Date</th>
                         {cats.map((cat) => <th key={cat.id}>{cat.name}</th>)}
+                        <th>Disputed Install</th>
+                        <th>Disputed Repair</th>
                         <th>Total</th>
                         <th>Gross</th>
                         <th>Payroll</th>
@@ -2769,8 +3131,7 @@ export function DailyTicketEntryView({
                     </thead>
                     <tbody>
                       {empEntries.map((entry) => {
-                        const total = entry.details.reduce((s, d) => s + (d.ticket_count ?? 0), 0);
-                        const gross = entry.details.reduce((s, d) => s + (d.ticket_count ?? 0) * toNumber(d.rate), 0);
+                        const snapshot = entryBillableSnapshot(entry);
                         const ps = periodStatusFor(entry.entry_date);
                         return (
                           <tr key={entry.id}>
@@ -2779,8 +3140,10 @@ export function DailyTicketEntryView({
                               const detail = entry.details.find((d) => d.position_ticket_category_id === cat.id);
                               return <td key={cat.id}>{detail?.ticket_count ?? 0}</td>;
                             })}
-                            <td>{total}</td>
-                            <td><strong>{currency.format(gross)}</strong></td>
+                            <td>{entry.disputed_install ?? 0}</td>
+                            <td>{entry.disputed_repair ?? 0}</td>
+                            <td>{snapshot.total}</td>
+                            <td><strong>{currency.format(snapshot.gross)}</strong></td>
                             <td>
                               {ps === "paid" && <span className="emp-status-pill active">Paid</span>}
                               {ps === "pending" && <span className="emp-status-pill inactive">Pending</span>}
@@ -2978,8 +3341,33 @@ function SubconDailyTicketView({
     setSavingAll(false);
   }
 
+  const loggedCount = activeSubcons.filter((s) => existingEntryFor(s.id)).length;
+  const totalGrossForDate = activeSubcons.reduce((sum, s) => {
+    const values = draftValuesFor(s.id);
+    return sum
+      + normalizeTicketCount(values.install) * toNumber(s.installation_rate)
+      + normalizeTicketCount(values.repair) * toNumber(s.repair_rate);
+  }, 0);
+
   return (
     <div className="page-stack">
+      <section className="subcon-ticket-stats">
+        <div className="subcon-ticket-stat">
+          <span>Subcontractors</span>
+          <strong>{activeSubcons.length}</strong>
+          <span className="subcon-ticket-stat-helper">Active subcontractors</span>
+        </div>
+        <div className="subcon-ticket-stat logged">
+          <span>Logged for this date</span>
+          <strong>{loggedCount}</strong>
+          <span className="subcon-ticket-stat-helper">Entries saved today</span>
+        </div>
+        <div className="subcon-ticket-stat total">
+          <span>Total gross</span>
+          <strong>{currency.format(totalGrossForDate)}</strong>
+          <span className="subcon-ticket-stat-helper">For selected date</span>
+        </div>
+      </section>
       <div className="ticket-toolbar">
         <div className="att-cal-wrap" ref={calendarRef}>
           <button
@@ -3042,6 +3430,11 @@ function SubconDailyTicketView({
         <label className="ticket-search-field">
           <Search size={15} />
           <input placeholder="Search subcontractors…" value={query} onChange={(e) => setQuery(e.target.value)} />
+          {query && (
+            <button aria-label="Clear search" className="ticket-search-clear" onClick={() => setQuery("")} type="button">
+              <X size={13} />
+            </button>
+          )}
         </label>
         <button className="primary-button compact" disabled={savingAll} onClick={() => void saveAll()} type="button">
           {savingAll ? <Spinner size="small" /> : <Save size={15} />} Save All
@@ -3060,17 +3453,17 @@ function SubconDailyTicketView({
           <table className="ticket-table">
             <thead>
               <tr>
-                <th>Subcontractor</th>
-                <th>
+                <th className="ticket-employee-col">Subcontractor</th>
+                <th className="ticket-rate-col">
                   Installation
                   <span className="ticket-rate-label">rate varies</span>
                 </th>
-                <th>
+                <th className="ticket-rate-col">
                   Repair
                   <span className="ticket-rate-label">rate varies</span>
                 </th>
-                <th>Gross</th>
-                <th />
+                <th className="ticket-gross-col">Gross</th>
+                <th className="ticket-action-col" />
               </tr>
             </thead>
             <tbody>
@@ -3167,14 +3560,13 @@ export function AttendanceView({
 }) {
   const [entryDate, setEntryDate] = useState(todayKey());
   const [drafts, setDrafts] = useState<Record<string, AttendanceStatus>>({});
+  const [timeDrafts, setTimeDrafts] = useState<Record<string, { time_in: string; time_out: string }>>({});
   const [busyEmployeeId, setBusyEmployeeId] = useState("");
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | AttendanceStatus | "unmarked">("all");
   const [departmentFilter, setDepartmentFilter] = useState("all");
-  const [selectedAttendanceIds, setSelectedAttendanceIds] = useState<string[]>([]);
   const [attendancePage, setAttendancePage] = useState(1);
   const [refreshing, setRefreshing] = useState(false);
-  const [bulkSaving, setBulkSaving] = useState(false);
   const [showCalendar, setShowCalendar] = useState(false);
   const [calendarYear, setCalendarYear] = useState(() => Number(entryDate.split("-")[0]));
   const [calendarMonth, setCalendarMonth] = useState(() => Number(entryDate.split("-")[1]));
@@ -3267,8 +3659,6 @@ export function AttendanceView({
   const attendancePageCount = Math.max(1, Math.ceil(filteredEmployees.length / attendancePageSize));
   const paginatedEmployees = filteredEmployees.slice((attendancePage - 1) * attendancePageSize, attendancePage * attendancePageSize);
 
-  const allVisibleSelected = paginatedEmployees.length > 0 && paginatedEmployees.every((emp) => selectedAttendanceIds.includes(emp.id));
-
   function statusFor(employeeId: string): AttendanceStatus | "" {
     if (drafts[employeeId] !== undefined) return drafts[employeeId];
     const entry = existingEntries.get(employeeId);
@@ -3277,6 +3667,27 @@ export function AttendanceView({
 
   function setStatus(employeeId: string, status: AttendanceStatus) {
     setDrafts((prev) => ({ ...prev, [employeeId]: status }));
+  }
+
+  function timeInFor(employeeId: string): string {
+    if (timeDrafts[employeeId]?.time_in !== undefined) return timeDrafts[employeeId].time_in;
+    return existingEntries.get(employeeId)?.time_in || "08:00";
+  }
+
+  function timeOutFor(employeeId: string): string {
+    if (timeDrafts[employeeId]?.time_out !== undefined) return timeDrafts[employeeId].time_out;
+    return existingEntries.get(employeeId)?.time_out || "17:00";
+  }
+
+  function setTime(employeeId: string, field: "time_in" | "time_out", value: string) {
+    setTimeDrafts((prev) => {
+      const base = prev[employeeId] ?? { time_in: timeInFor(employeeId), time_out: timeOutFor(employeeId) };
+      return { ...prev, [employeeId]: { ...base, [field]: value } };
+    });
+  }
+
+  function requiresTimeTracking(status: AttendanceStatus | "") {
+    return status === "present" || status === "half_day";
   }
 
   function markAllPresent() {
@@ -3289,49 +3700,16 @@ export function AttendanceView({
     setDrafts((prev) => ({ ...prev, ...newDrafts }));
   }
 
-  function toggleAllVisibleRows(checked: boolean) {
-    const visibleIds = paginatedEmployees.map((emp) => emp.id);
-    setSelectedAttendanceIds((prev) => {
-      const next = new Set(prev);
-      visibleIds.forEach((id) => {
-        if (checked) {
-          next.add(id);
-        } else {
-          next.delete(id);
-        }
-      });
-      return Array.from(next);
-    });
-  }
-
-  function toggleAttendanceRow(employeeId: string, checked: boolean) {
-    setSelectedAttendanceIds((prev) => (
-      checked
-        ? Array.from(new Set([...prev, employeeId]))
-        : prev.filter((id) => id !== employeeId)
-    ));
-  }
-
-  function markSelectedStatus(status: AttendanceStatus) {
-    const updates: Record<string, AttendanceStatus> = {};
-    selectedAttendanceIds.forEach((id) => { updates[id] = status; });
-    setDrafts((prev) => ({ ...prev, ...updates }));
-  }
-
-  async function saveSelected() {
-    setBulkSaving(true);
-    const selectedEmps = dailyEmployees.filter((emp) => selectedAttendanceIds.includes(emp.id));
-    for (const emp of selectedEmps) {
-      if (statusFor(emp.id)) await saveEntry(emp);
-    }
-    setSelectedAttendanceIds([]);
-    setBulkSaving(false);
-    setNotice({ type: "success", text: `Saved attendance for ${selectedEmps.length} employee${selectedEmps.length !== 1 ? "s" : ""}.` });
-  }
-
   async function saveEntry(emp: Employee) {
     const status = statusFor(emp.id);
     if (!status) return;
+    const trackTime = requiresTimeTracking(status);
+    const timeIn = trackTime ? timeInFor(emp.id) : "";
+    const timeOut = trackTime ? timeOutFor(emp.id) : "";
+    if (trackTime && (!timeIn || !timeOut)) {
+      setNotice({ type: "error", text: `Enter Time In and Time Out for ${emp.full_name} before saving.` });
+      return;
+    }
     setBusyEmployeeId(emp.id);
     const pos = positions.find((p) => p.id === emp.position_id);
     const existing = existingEntries.get(emp.id);
@@ -3343,8 +3721,8 @@ export function AttendanceView({
       position_name: pos?.name ?? "",
       entry_date: entryDate,
       status,
-      time_in: existing?.time_in ?? "08:00",
-      time_out: existing?.time_out ?? "17:00",
+      time_in: trackTime ? timeIn : null,
+      time_out: trackTime ? timeOut : null,
     };
 
     if (!navigator.onLine || !supabase) {
@@ -3358,12 +3736,13 @@ export function AttendanceView({
         options: existing ? undefined : { onConflict: "user_id,entry_date,employee_id" },
       });
       setDrafts((prev) => { const next = { ...prev }; delete next[emp.id]; return next; });
+      setTimeDrafts((prev) => { const next = { ...prev }; delete next[emp.id]; return next; });
       setBusyEmployeeId("");
       return;
     }
 
     const result = existing
-      ? await supabase.from("attendance_entries").update({ status, time_in: existing.time_in ?? "08:00", time_out: existing.time_out ?? "17:00" }).eq("id", existing.id)
+      ? await supabase.from("attendance_entries").update({ status, time_in: payload.time_in, time_out: payload.time_out }).eq("id", existing.id)
       : await supabase.from("attendance_entries").upsert(payload, { onConflict: "user_id,entry_date,employee_id" });
 
     if (result.error) {
@@ -3382,23 +3761,33 @@ export function AttendanceView({
       }
     } else {
       setDrafts((prev) => { const next = { ...prev }; delete next[emp.id]; return next; });
+      setTimeDrafts((prev) => { const next = { ...prev }; delete next[emp.id]; return next; });
     }
     setBusyEmployeeId("");
     await onChange();
   }
 
   async function saveAll() {
-    for (const emp of dailyEmployees) {
-      if (statusFor(emp.id)) {
-        await saveEntry(emp);
-      }
+    const pendingEmployees = dailyEmployees.filter((emp) => statusFor(emp.id));
+    const missingTime = pendingEmployees.filter((emp) => {
+      const status = statusFor(emp.id);
+      return requiresTimeTracking(status) && (!timeInFor(emp.id) || !timeOutFor(emp.id));
+    });
+    if (missingTime.length > 0) {
+      const names = missingTime.slice(0, 3).map((emp) => emp.full_name).join(", ");
+      const extra = missingTime.length > 3 ? ` and ${missingTime.length - 3} more` : "";
+      setNotice({ type: "error", text: `Fill in Time In and Time Out for: ${names}${extra} before saving all.` });
+      return;
+    }
+    for (const emp of pendingEmployees) {
+      await saveEntry(emp);
     }
     setNotice({ type: "success", text: "Attendance saved." });
   }
 
   useEffect(() => {
     setDrafts({});
-    setSelectedAttendanceIds([]);
+    setTimeDrafts({});
   }, [entryDate]);
 
   useEffect(() => {
@@ -3446,38 +3835,43 @@ export function AttendanceView({
       />
 
       <section className="attendance-top-grid">
-        <div className="attendance-stat-card">
-          <span className="attendance-stat-icon present"><CheckCircle2 size={21} /></span>
+        <div className="attendance-stat-card present">
+          <span className="attendance-stat-icon present"><UserCheck size={21} /></span>
           <div>
-            <strong>{presentCount}</strong>
             <p>Present</p>
+            <strong>{presentCount}</strong>
+            <span className="attendance-stat-helper">Marked present today</span>
           </div>
         </div>
-        <div className="attendance-stat-card">
-          <span className="attendance-stat-icon leave"><CalendarClock size={21} /></span>
+        <div className="attendance-stat-card leave">
+          <span className="attendance-stat-icon leave"><CalendarOff size={21} /></span>
           <div>
-            <strong>{leaveCount}</strong>
             <p>On Leave</p>
+            <strong>{leaveCount}</strong>
+            <span className="attendance-stat-helper">Approved or pending leave</span>
           </div>
         </div>
-        <div className="attendance-stat-card">
-          <span className="attendance-stat-icon absent"><X size={21} /></span>
+        <div className="attendance-stat-card absent">
+          <span className="attendance-stat-icon absent"><UserX size={21} /></span>
           <div>
-            <strong>{absentCount}</strong>
             <p>Absent</p>
+            <strong>{absentCount}</strong>
+            <span className="attendance-stat-helper">No attendance recorded</span>
           </div>
         </div>
-        <div className="attendance-stat-card">
+        <div className="attendance-stat-card total">
           <span className="attendance-stat-icon total"><Users size={21} /></span>
           <div>
+            <p>Total employees</p>
             <strong>{dailyEmployees.length}</strong>
-            <p>Total Employees</p>
+            <span className="attendance-stat-helper">All active employees</span>
           </div>
         </div>
       </section>
 
       <section className="attendance-shell">
         <div className="attendance-toolbar">
+          <div className="attendance-filter-fields">
           <div className="attendance-field-group">
             <span className="attendance-field-label">Date</span>
             <div className="att-cal-wrap" ref={calendarRef}>
@@ -3567,6 +3961,8 @@ export function AttendanceView({
               ))}
             </select>
           </label>
+          </div>
+          <div className="attendance-toolbar-actions">
           <button className="attendance-tool-button" type="button">
             <Filter size={15} /> More Filters
           </button>
@@ -3579,7 +3975,6 @@ export function AttendanceView({
             onClick={async () => {
               setRefreshing(true);
               setDrafts({});
-              setSelectedAttendanceIds([]);
               await onChange();
               setRefreshing(false);
               setNotice({ type: "success", text: "Attendance refreshed." });
@@ -3592,60 +3987,18 @@ export function AttendanceView({
           <button className="attendance-save-button" onClick={saveAll} type="button">
             <Save size={15} /> Save all
           </button>
-        </div>
-
-        {selectedAttendanceIds.length > 0 && (
-          <div className="att-bulk-bar">
-            <span className="att-bulk-count">{selectedAttendanceIds.length} selected</span>
-            <div className="att-bulk-actions">
-              <span>Mark as:</span>
-              <button className="att-bulk-btn present" type="button" onClick={() => markSelectedStatus("present")}>
-                <CheckCircle2 size={13} /> Present
-              </button>
-              <button className="att-bulk-btn absent" type="button" onClick={() => markSelectedStatus("absent")}>
-                <X size={13} /> Absent
-              </button>
-              <button className="att-bulk-btn leave" type="button" onClick={() => markSelectedStatus("half_day")}>
-                <CalendarClock size={13} /> On Leave
-              </button>
-            </div>
-            <div className="att-bulk-right">
-              <button
-                className="primary-button compact"
-                disabled={bulkSaving}
-                type="button"
-                onClick={saveSelected}
-              >
-                <Save size={13} /> {bulkSaving ? "Saving…" : `Save ${selectedAttendanceIds.length} selected`}
-              </button>
-              <button
-                className="secondary-button compact"
-                type="button"
-                onClick={() => setSelectedAttendanceIds([])}
-              >
-                Clear
-              </button>
-            </div>
           </div>
-        )}
+        </div>
 
         {dailyEmployees.length === 0 ? (
           <p className="attendance-empty">No employees with daily-wage positions found.</p>
         ) : (
           <div className="attendance-table-wrap">
-            <table className={`attendance-table${selectedAttendanceIds.length > 0 ? " att-selecting" : ""}`}>
+            <table className="attendance-table">
               <thead>
                 <tr>
                   <th className="att-no-cell">
                     <span className="att-row-no">No.</span>
-                    <input
-                      type="checkbox"
-                      className="att-row-check"
-                      aria-label="Select all attendance rows"
-                      checked={allVisibleSelected}
-                      disabled={paginatedEmployees.length === 0}
-                      onChange={(event) => toggleAllVisibleRows(event.target.checked)}
-                    />
                   </th>
                   <th>Employee ID</th>
                   <th>Employee</th>
@@ -3663,21 +4016,14 @@ export function AttendanceView({
                   const pos = positions.find((p) => p.id === emp.position_id);
                   const current = statusFor(emp.id);
                   const saved = existingEntries.has(emp.id);
-                  const dirty = drafts[emp.id] !== undefined;
+                  const dirty = drafts[emp.id] !== undefined || timeDrafts[emp.id] !== undefined;
                   const dailyRate = Number(pos?.daily_rate ?? 0);
-                  const earnings = current === "present" ? dailyRate : current === "half_day" ? dailyRate / 2 : 0;
+                  const earnings = computeDailyEarnings(dailyRate, current, timeInFor(emp.id), timeOutFor(emp.id));
                   const employeeIndex = dailyEmployees.findIndex((item) => item.id === emp.id);
                   return (
                     <tr key={emp.id}>
                       <td className="att-no-cell">
                         <span className="att-row-no">{employeeIndex + 1}</span>
-                        <input
-                          type="checkbox"
-                          className="att-row-check"
-                          aria-label={`Select ${emp.full_name}`}
-                          checked={selectedAttendanceIds.includes(emp.id)}
-                          onChange={(event) => toggleAttendanceRow(emp.id, event.target.checked)}
-                        />
                       </td>
                       <td>{employeeCode(employeeIndex)}</td>
                       <td>
@@ -3707,8 +4053,28 @@ export function AttendanceView({
                           </select>
                         </div>
                       </td>
-                      <td>{current === "present" || current === "half_day" ? "8:00 AM" : "--"}</td>
-                      <td>{current === "present" ? "5:00 PM" : current === "half_day" ? "12:00 PM" : "--"}</td>
+                      <td>
+                        {requiresTimeTracking(current) ? (
+                          <input
+                            type="time"
+                            className={`attendance-time-input${!timeInFor(emp.id) ? " missing" : ""}`}
+                            value={timeInFor(emp.id)}
+                            onChange={(e) => setTime(emp.id, "time_in", e.target.value)}
+                            aria-label={`Time in for ${emp.full_name}`}
+                          />
+                        ) : "--"}
+                      </td>
+                      <td>
+                        {requiresTimeTracking(current) ? (
+                          <input
+                            type="time"
+                            className={`attendance-time-input${!timeOutFor(emp.id) ? " missing" : ""}`}
+                            value={timeOutFor(emp.id)}
+                            onChange={(e) => setTime(emp.id, "time_out", e.target.value)}
+                            aria-label={`Time out for ${emp.full_name}`}
+                          />
+                        ) : "--"}
+                      </td>
                       <td><strong>{formatMoney(earnings)}</strong></td>
                       <td>{current === "absent" ? "No Entry" : current === "half_day" ? "Half Day" : "--"}</td>
                       <td>
@@ -3764,551 +4130,6 @@ export function AttendanceView({
 
 }
 
-function LegacyDailyTicketEntryView({
-  dailyTicketEntries,
-  employees,
-  onChange,
-  onQueueOfflineMutation,
-  setNotice,
-  userId,
-}: {
-  dailyTicketEntries: DailyTicketEntry[];
-  employees: Employee[];
-  onChange: () => Promise<void>;
-  onQueueOfflineMutation: QueueOfflineMutation;
-  setNotice: (notice: Notice) => void;
-  userId: string;
-}) {
-  const activeEmployees = employees.filter((employee) => employee.status === "active");
-  const sourceEmployees = activeEmployees.length > 0 ? activeEmployees : employees;
-  const [selectedDate, setSelectedDate] = useState(todayKey());
-  const [department, setDepartment] = useState("all");
-  const [employeeQuery, setEmployeeQuery] = useState("");
-  const [ticketDrafts, setTicketDrafts] = useState<Record<string, { installation: number; repair: number }>>({});
-  const [pendingTicketEdits, setPendingTicketEdits] = useState<Record<string, boolean>>({});
-  const [localSavedTickets, setLocalSavedTickets] = useState<Record<string, { entryDate: string; installation: number; repair: number }>>({});
-  const departments = Array.from(new Set(sourceEmployees.map((employee) => employee.department).filter(Boolean))).sort();
-
-  const rows: DailyTicketDraft[] = sourceEmployees
-    .filter((employee) => department === "all" || employee.department === department)
-    .filter((employee) => `${employee.full_name} ${employee.role} ${employee.department}`.toLowerCase().includes(employeeQuery.toLowerCase()))
-    .map((employee, index) => {
-      const savedEntry = dailyTicketEntries.find((entry) => entry.entry_date === selectedDate && entry.employee_id === employee.id);
-      const localSaved = localSavedTickets[employee.id]?.entryDate === selectedDate ? localSavedTickets[employee.id] : undefined;
-      const savedValues = savedEntry
-        ? {
-            installation: normalizeTicketCount(savedEntry.installation_tickets),
-            repair: normalizeTicketCount(savedEntry.repair_tickets),
-          }
-        : localSaved
-          ? {
-              installation: normalizeTicketCount(localSaved.installation),
-              repair: normalizeTicketCount(localSaved.repair),
-            }
-          : undefined;
-      const draft = ticketDrafts[employee.id] ?? savedValues ?? { repair: 0, installation: 0 };
-      const installation = normalizeTicketCount(draft.installation);
-      const repair = normalizeTicketCount(draft.repair);
-      const isPendingEdit = Boolean(pendingTicketEdits[employee.id]);
-
-      return {
-        employee,
-        employeeCode: `EMP-${new Date(employee.created_at || selectedDate).getFullYear()}-${String(index + 12).padStart(4, "0")}`,
-        installation,
-        repair,
-        savedValues,
-        status: savedValues &&
-            !isPendingEdit &&
-            installation === savedValues.installation &&
-            repair === savedValues.repair
-          ? "saved"
-          : "pending",
-      };
-    });
-  const totalRepair = rows.reduce((sum, row) => sum + row.repair, 0);
-  const totalInstallation = rows.reduce((sum, row) => sum + row.installation, 0);
-  const totalClosed = totalRepair + totalInstallation;
-  const totalRepairEarnings = rows.reduce(
-    (sum, row) => sum + row.repair * toNumber(row.employee.repair_rate),
-    0,
-  );
-  const totalInstallationEarnings = rows.reduce(
-    (sum, row) => sum + row.installation * toNumber(row.employee.installation_rate),
-    0,
-  );
-  const totalEarnings = totalRepairEarnings + totalInstallationEarnings;
-  const formattedDate = new Date(`${selectedDate}T00:00:00`).toLocaleDateString("en-US", {
-    day: "numeric",
-    month: "short",
-    weekday: "long",
-    year: "numeric",
-  });
-  const recentEntries = useMemo(() => {
-    const grouped = dailyTicketEntries.reduce<Record<string, { date: string; repair: number; installation: number; earnings: number; encodedBy: string }>>(
-      (current, entry) => {
-        const existing = current[entry.entry_date] ?? {
-          date: entry.entry_date,
-          encodedBy: "Admin User",
-          installation: 0,
-          repair: 0,
-          earnings: 0,
-        };
-
-        existing.installation += normalizeTicketCount(entry.installation_tickets);
-        existing.repair += normalizeTicketCount(entry.repair_tickets);
-        existing.earnings +=
-          normalizeTicketCount(entry.repair_tickets) * toNumber(entry.repair_rate) +
-          normalizeTicketCount(entry.installation_tickets) * toNumber(entry.installation_rate);
-        current[entry.entry_date] = existing;
-        return current;
-      },
-      {},
-    );
-
-    return Object.values(grouped)
-      .sort((a, b) => b.date.localeCompare(a.date))
-      .slice(0, 5);
-  }, [dailyTicketEntries]);
-
-  const dailyTicketInitialsFor = (employee: Employee) => employee.full_name
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0])
-    .join("")
-    .toUpperCase() || "E";
-
-  function updateTickets(
-    employeeId: string,
-    field: "installation" | "repair",
-    value: number,
-    fallback: { installation: number; repair: number },
-  ) {
-    setPendingTicketEdits((current) => ({
-      ...current,
-      [employeeId]: true,
-    }));
-    setTicketDrafts((current) => ({
-      ...current,
-      [employeeId]: {
-        installation: current[employeeId]?.installation ?? fallback.installation,
-        repair: current[employeeId]?.repair ?? fallback.repair,
-        [field]: normalizeTicketCount(value),
-      },
-    }));
-  }
-
-  async function saveDailyTickets() {
-    if (!supabase) return;
-    if (rows.length === 0) {
-      setNotice({ type: "error", text: "No employees match this daily ticket entry." });
-      return;
-    }
-
-    const payload = rows.map((row) => ({
-      user_id: userId,
-      entry_date: selectedDate,
-      employee_id: row.employee.id,
-      employee_name: row.employee.full_name,
-      installation_tickets: row.installation,
-      repair_tickets: row.repair,
-      installation_rate: toNumber(row.employee.installation_rate),
-      repair_rate: toNumber(row.employee.repair_rate),
-    }));
-    if (!navigator.onLine) {
-      await onQueueOfflineMutation({
-        resource: "dailyTicketEntries",
-        affectedResources: ["dailyTicketEntries", "dashboardSummary"],
-        operation: "upsert",
-        table: "daily_ticket_entries",
-        payload,
-        options: { onConflict: "user_id,entry_date,employee_id" },
-      });
-      setLocalSavedTickets((current) => {
-        const next = { ...current };
-        rows.forEach((row) => {
-          next[row.employee.id] = {
-            entryDate: selectedDate,
-            installation: row.installation,
-            repair: row.repair,
-          };
-        });
-        return next;
-      });
-      setPendingTicketEdits((current) => {
-        const next = { ...current };
-        rows.forEach((row) => {
-          next[row.employee.id] = false;
-        });
-        return next;
-      });
-      setTicketDrafts({});
-      return;
-    }
-
-    const { error } = await supabase
-      .from("daily_ticket_entries")
-      .upsert(payload, { onConflict: "user_id,entry_date,employee_id" });
-
-    if (error) {
-      if (isOfflineLikeError(error)) {
-        await onQueueOfflineMutation({
-          resource: "dailyTicketEntries",
-          affectedResources: ["dailyTicketEntries", "dashboardSummary"],
-          operation: "upsert",
-          table: "daily_ticket_entries",
-          payload,
-          options: { onConflict: "user_id,entry_date,employee_id" },
-        });
-        return;
-      }
-      setNotice({ type: "error", text: friendlyError(error) });
-      return;
-    }
-
-    setNotice({ type: "success", text: "Daily tickets saved and ready for payroll." });
-    setLocalSavedTickets((current) => {
-      const next = { ...current };
-      rows.forEach((row) => {
-        next[row.employee.id] = {
-          entryDate: selectedDate,
-          installation: row.installation,
-          repair: row.repair,
-        };
-      });
-      return next;
-    });
-    setPendingTicketEdits((current) => {
-      const next = { ...current };
-      rows.forEach((row) => {
-        next[row.employee.id] = false;
-      });
-      return next;
-    });
-    setTicketDrafts({});
-    await onChange();
-  }
-
-  async function saveTicketRow(row: DailyTicketDraft) {
-    if (!supabase) return;
-    const payload = {
-      user_id: userId,
-      entry_date: selectedDate,
-      employee_id: row.employee.id,
-      employee_name: row.employee.full_name,
-      installation_tickets: row.installation,
-      repair_tickets: row.repair,
-      installation_rate: toNumber(row.employee.installation_rate),
-      repair_rate: toNumber(row.employee.repair_rate),
-    };
-    if (!navigator.onLine) {
-      await onQueueOfflineMutation({
-        resource: "dailyTicketEntries",
-        affectedResources: ["dailyTicketEntries", "dashboardSummary"],
-        operation: "upsert",
-        table: "daily_ticket_entries",
-        payload,
-        options: { onConflict: "user_id,entry_date,employee_id" },
-      });
-      setLocalSavedTickets((current) => ({
-        ...current,
-        [row.employee.id]: {
-          entryDate: selectedDate,
-          installation: row.installation,
-          repair: row.repair,
-        },
-      }));
-      setPendingTicketEdits((current) => ({
-        ...current,
-        [row.employee.id]: false,
-      }));
-      return;
-    }
-
-    const { error } = await supabase
-      .from("daily_ticket_entries")
-      .upsert(payload, { onConflict: "user_id,entry_date,employee_id" });
-
-    if (error) {
-      if (isOfflineLikeError(error)) {
-        await onQueueOfflineMutation({
-          resource: "dailyTicketEntries",
-          affectedResources: ["dailyTicketEntries", "dashboardSummary"],
-          operation: "upsert",
-          table: "daily_ticket_entries",
-          payload,
-          options: { onConflict: "user_id,entry_date,employee_id" },
-        });
-        return;
-      }
-      setNotice({ type: "error", text: friendlyError(error) });
-      return;
-    }
-
-    setLocalSavedTickets((current) => ({
-      ...current,
-      [row.employee.id]: {
-        entryDate: selectedDate,
-        installation: row.installation,
-        repair: row.repair,
-      },
-    }));
-    setPendingTicketEdits((current) => ({
-      ...current,
-      [row.employee.id]: false,
-    }));
-    setNotice({ type: "success", text: `${row.employee.full_name}'s ticket entry saved.` });
-    await onChange();
-  }
-
-  function editTicketRow(row: DailyTicketDraft) {
-    setTicketDrafts((current) => ({
-      ...current,
-      [row.employee.id]: {
-        installation: row.installation,
-        repair: row.repair,
-      },
-    }));
-    setPendingTicketEdits((current) => ({
-      ...current,
-      [row.employee.id]: true,
-    }));
-    setNotice({
-      type: "success",
-      text: `${row.employee.full_name}'s ticket entry is ready to edit.`,
-    });
-  }
-
-  return (
-    <div className="daily-ticket-page">
-      <PageHeader
-        action={
-          <div className="page-actions">
-            <button className="secondary-button compact" type="button">
-              <Upload size={16} />
-              Import from Excel
-            </button>
-            <button
-              className="primary-button compact"
-              onClick={saveDailyTickets}
-              type="button"
-            >
-              <CalendarClock size={16} />
-              Save Daily Tickets
-            </button>
-          </div>
-        }
-        eyebrow="Closed-ticket payroll"
-        title="Daily Ticket Entry"
-        text="Enter the number of closed tickets for each employee for the selected date."
-      />
-
-      <section className="daily-ticket-filters">
-        <label>
-          Date
-          <input value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} type="date" />
-        </label>
-        <label>
-          Department
-          <select value={department} onChange={(event) => setDepartment(event.target.value)}>
-            <option value="all">All Departments</option>
-            {departments.map((departmentName) => (
-              <option key={departmentName} value={departmentName}>{departmentName}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Search Employee
-          <div className="field-with-icon">
-            <input placeholder="Search employee..." value={employeeQuery} onChange={(event) => setEmployeeQuery(event.target.value)} />
-            <Search size={17} />
-          </div>
-        </label>
-      </section>
-
-      <section className="daily-ticket-summary-row">
-        <article className="daily-ticket-summary-card gross">
-          <span className="daily-ticket-summary-icon">
-            <BadgeDollarSign size={18} />
-          </span>
-          <div>
-            <p>Total Gross</p>
-            <strong>{currency.format(totalEarnings)}</strong>
-          </div>
-        </article>
-        <article className="daily-ticket-summary-card repair">
-          <span className="daily-ticket-summary-icon">
-            <Wrench size={18} />
-          </span>
-          <div>
-            <p>Total Repair</p>
-            <strong>{totalRepair}</strong>
-          </div>
-        </article>
-        <article className="daily-ticket-summary-card installation">
-          <span className="daily-ticket-summary-icon">
-            <Settings size={18} />
-          </span>
-          <div>
-            <p>Total Installation</p>
-            <strong>{totalInstallation}</strong>
-          </div>
-        </article>
-        <article className="daily-ticket-summary-card employees">
-          <span className="daily-ticket-summary-icon">
-            <Users size={18} />
-          </span>
-          <div>
-            <p>Total Employees</p>
-            <strong>{rows.length}</strong>
-          </div>
-        </article>
-      </section>
-
-      <div className="daily-ticket-layout">
-        <section className="daily-ticket-card daily-ticket-entry-card">
-          <h2>Enter Closed Tickets</h2>
-          <div className="daily-ticket-table">
-            <div className="daily-ticket-row daily-ticket-head">
-              <span>Employee</span>
-              <span><Wrench size={18} /> Repair <small>Closed Tickets (employee rate)</small></span>
-              <span><Settings size={18} /> Installation <small>Closed Tickets (employee rate)</small></span>
-              <span>Total Closed Tickets <small>(Auto)</small></span>
-              <span>Daily Earnings <small>(Auto)</small></span>
-              <span>Status</span>
-              <span>Action</span>
-            </div>
-            {rows.map((row) => {
-              const total = row.repair + row.installation;
-              const earnings = row.repair * toNumber(row.employee.repair_rate) + row.installation * toNumber(row.employee.installation_rate);
-
-              return (
-                <div className="daily-ticket-row" key={row.employee.id}>
-                  <div className="employee-list-identity daily-ticket-list-identity">
-                    <div className="daily-ticket-list-copy">
-                      <RecordTitle title={row.employee.full_name} notes={row.employee.email || "No email"} />
-                      <span className="daily-ticket-code">{row.employeeCode}</span>
-                    </div>
-                  </div>
-                  <input
-                    disabled={row.status === "saved"}
-                    min="0"
-                    onChange={(event) => updateTickets(row.employee.id, "repair", Number(event.target.value), row)}
-                    type="number"
-                    value={row.repair}
-                  />
-                  <input
-                    disabled={row.status === "saved"}
-                    min="0"
-                    onChange={(event) => updateTickets(row.employee.id, "installation", Number(event.target.value), row)}
-                    type="number"
-                    value={row.installation}
-                  />
-                  <strong>{total}</strong>
-                  <strong className="daily-ticket-money">{currency.format(earnings)}</strong>
-                  <span className={`status ${row.status}`}>{row.status}</span>
-                  <button
-                    aria-label={`${row.status === "saved" ? "Edit" : "Save"} ${row.employee.full_name} ticket entry`}
-                    className="daily-ticket-more"
-                    onClick={() => row.status === "saved" ? editTicketRow(row) : saveTicketRow(row)}
-                    title={row.status === "saved" ? "Edit ticket entry" : "Save ticket entry"}
-                    type="button"
-                  >
-                    {row.status === "saved" ? <Pencil size={16} /> : <Save size={17} />}
-                  </button>
-                </div>
-              );
-            })}
-            <div className="daily-ticket-row daily-ticket-total">
-              <strong>Total</strong>
-              <strong>{totalRepair}</strong>
-              <strong>{totalInstallation}</strong>
-              <strong>{totalClosed}</strong>
-              <strong>{currency.format(totalEarnings)}</strong>
-              <span />
-              <span />
-            </div>
-          </div>
-          <div className="daily-ticket-note">
-            <CheckCircle2 size={16} />
-            Only closed tickets are included in the payroll computation.
-          </div>
-        </section>
-
-        <aside className="daily-summary-panel">
-          <section className="daily-ticket-card">
-            <h2>Daily Summary</h2>
-            <p>{formattedDate}</p>
-            <DailySummaryMetric
-              earnings={totalRepairEarnings}
-              icon={<Wrench size={18} />}
-              label="Repair Tickets Closed"
-              rateLabel="By employee wage category"
-              tone="repair"
-              value={totalRepair}
-            />
-            <DailySummaryMetric
-              earnings={totalInstallationEarnings}
-              icon={<Settings size={18} />}
-              label="Installation Tickets Closed"
-              rateLabel="By position ticket rate"
-              tone="installation"
-              value={totalInstallation}
-            />
-            <div className="daily-total-card">
-              <span>Total Closed Tickets</span>
-              <strong>{totalClosed}</strong>
-              <span>Total Earnings</span>
-              <strong>{currency.format(totalEarnings)}</strong>
-            </div>
-          </section>
-          <section className="daily-help-card">
-            <CheckCircle2 size={17} />
-            <div>
-              <strong>How it works</strong>
-              <p>Enter closed tickets per employee for each service type. Earnings are automatically computed based on the rates.</p>
-            </div>
-          </section>
-        </aside>
-      </div>
-
-      <section className="daily-ticket-card">
-        <h2>Recent Daily Entries</h2>
-        <DataTable
-          empty="No recent daily entries."
-          headers={["Date", "Total Repair Tickets", "Total Installation Tickets", "Total Closed Tickets", "Total Earnings", "Encoded By", "Actions"]}
-          rows={recentEntries.map((entry) => {
-            const total = entry.repair + entry.installation;
-            const displayDate = new Date(`${entry.date}T00:00:00`).toLocaleDateString("en-US", {
-              day: "numeric",
-              month: "short",
-              weekday: "short",
-              year: "numeric",
-            });
-
-            return [
-              displayDate,
-              entry.repair,
-              entry.installation,
-              total,
-              currency.format(entry.earnings),
-              entry.encodedBy,
-              <button className="secondary-button compact" key="view" type="button"><Eye size={15} /> View</button>,
-            ];
-          })}
-        />
-        <div className="daily-ticket-footer">
-          <button className="secondary-button compact" type="button">
-            <FileText size={16} />
-            View All Daily Entries
-            <ChevronDown size={15} />
-          </button>
-        </div>
-      </section>
-    </div>
-  );
-}
-
 function DailySummaryMetric({
   earnings,
   icon,
@@ -4342,6 +4163,7 @@ function DailySummaryMetric({
 export function EmployeesView({
   employees,
   initialDetailsEmployeeId,
+  initialDetailsEmployeeNonce = 0,
   mode = "list",
   onChange,
   onClearInitialDetailsEmployee,
@@ -4350,12 +4172,13 @@ export function EmployeesView({
   onQueueOfflineMutation,
   payrollRuns,
   positions,
-  salaryBonds,
+  employeeAdvances,
   setNotice,
   userId,
 }: {
   employees: Employee[];
   initialDetailsEmployeeId?: string | null;
+  initialDetailsEmployeeNonce?: number;
   mode?: "list" | "add";
   onChange: () => Promise<void>;
   onClearInitialDetailsEmployee?: () => void;
@@ -4364,7 +4187,7 @@ export function EmployeesView({
   onQueueOfflineMutation: QueueOfflineMutation;
   payrollRuns: PayrollRunWithItems[];
   positions: Position[];
-  salaryBonds: SalaryBond[];
+  employeeAdvances: EmployeeAdvance[];
   setNotice: (notice: Notice) => void;
   userId: string;
 }) {
@@ -4389,7 +4212,7 @@ export function EmployeesView({
     setEditing(null);
     setDetailsEmployee(employee);
     onClearInitialDetailsEmployee?.();
-  }, [employees, initialDetailsEmployeeId, onClearInitialDetailsEmployee]);
+  }, [employees, initialDetailsEmployeeId, initialDetailsEmployeeNonce, onClearInitialDetailsEmployee]);
 
   function closeForm() {
     setEditing(null);
@@ -4432,8 +4255,9 @@ export function EmployeesView({
         onQueueOfflineMutation={onQueueOfflineMutation}
         payrollRuns={payrollRuns}
         positions={positions}
-        salaryBonds={salaryBonds}
+        employeeAdvances={employeeAdvances}
         setNotice={setNotice}
+        userId={userId}
       />
     );
   }
@@ -4483,6 +4307,10 @@ export function EmployeesView({
       sss_number: values.sss_number.trim(),
       philhealth_number: values.philhealth_number.trim(),
       pagibig_number: values.pagibig_number.trim(),
+      sss_deduction: toNumber(values.sss_deduction),
+      philhealth_deduction: toNumber(values.philhealth_deduction),
+      pagibig_deduction: toNumber(values.pagibig_deduction),
+      withholding_tax: toNumber(values.withholding_tax),
       tin_number: values.tin_number.trim(),
       gender: values.gender,
       emergency_contact_name: values.emergency_contact_name.trim(),
@@ -4566,7 +4394,7 @@ export function EmployeesView({
       <section className="metric-grid employee-summary-grid">
         <Metric helperText="All active employees" icon={<Users size={18} />} label="Total employees" value={totalEmployees} />
         <Metric helperText="Current Active" icon={<UserRound size={18} />} label="Active employees" tone="success" value={activeEmployees} />
-        <Metric helperText="On Leave" icon={<CalendarClock size={18} />} label="On leave" value={employeesOnLeave} />
+        <Metric helperText="On Leave" icon={<CalendarClock size={18} />} label="On leave" tone="warning" value={employeesOnLeave} />
         <Metric helperText="No Longer Active" icon={<BadgeInfo size={18} />} label="Inactive" tone="danger" value={inactiveEmployees} />
       </section>
       <section className="panel employee-list-panel">
@@ -4625,8 +4453,9 @@ export function EmployeeDetailsView({
   onQueueOfflineMutation,
   payrollRuns,
   positions,
-  salaryBonds,
+  employeeAdvances,
   setNotice,
+  userId,
 }: {
   employee: Employee;
   onChange: () => Promise<void>;
@@ -4636,10 +4465,11 @@ export function EmployeeDetailsView({
   onQueueOfflineMutation: QueueOfflineMutation;
   payrollRuns: PayrollRunWithItems[];
   positions: Position[];
-  salaryBonds: SalaryBond[];
+  employeeAdvances: EmployeeAdvance[];
   setNotice: (notice: Notice) => void;
+  userId: string;
 }) {
-  const [activeTab, setActiveTab] = useState<"information" | "payroll" | "tickets" | "salary-bond" | "payments" | "documents" | "attendance">("information");
+  const [activeTab, setActiveTab] = useState<"information" | "payroll" | "tickets" | "employee-advances" | "payments" | "documents" | "government-deduction" | "attendance">("information");
   const [currentEmployee, setCurrentEmployee] = useState(employee);
   const [employeePayrollRuns, setEmployeePayrollRuns] = useState<PayrollRunWithItems[]>([]);
   const [editingRate, setEditingRate] = useState<"installation" | "repair" | null>(null);
@@ -4647,6 +4477,7 @@ export function EmployeeDetailsView({
   const [empAttendance, setEmpAttendance] = useState<AttendanceEntry[]>([]);
   const [empTickets, setEmpTickets] = useState<DailyTicketEntry[]>([]);
   const [empAttendanceLoading, setEmpAttendanceLoading] = useState(false);
+  const [empAttendancePage, setEmpAttendancePage] = useState(1);
 
   useEffect(() => {
     setCurrentEmployee(employee);
@@ -4673,13 +4504,14 @@ export function EmployeeDetailsView({
 
   useEffect(() => {
     if (activeTab !== "attendance" || !supabase) return;
+    setEmpAttendancePage(1);
     setEmpAttendanceLoading(true);
     const pos = positions.find((p) => p.id === currentEmployee.position_id);
     const isTicket = pos?.pay_mode === "ticket" || pos?.pay_mode === "hybrid";
     if (isTicket) {
       supabase
         .from("daily_ticket_entries")
-        .select("id,user_id,employee_id,employee_name,position_id,position_name,entry_date,installation_tickets,repair_tickets,installation_rate,repair_rate,created_at,updated_at,details:daily_ticket_entry_items(id,user_id,daily_ticket_entry_id,position_ticket_category_id,category_name,ticket_count,rate,created_at)")
+        .select("id,user_id,employee_id,employee_name,position_id,position_name,entry_date,installation_tickets,repair_tickets,disputed_install,disputed_repair,installation_rate,repair_rate,created_at,updated_at,details:daily_ticket_entry_items(id,user_id,daily_ticket_entry_id,position_ticket_category_id,category_name,ticket_count,rate,created_at)")
         .eq("employee_id", currentEmployee.id)
         .order("entry_date", { ascending: false })
         .limit(200)
@@ -4794,9 +4626,6 @@ export function EmployeeDetailsView({
   const installationEarnings = ticketTotals.installation * installationRate;
   const totalTicketEarnings = repairEarnings + installationEarnings;
   const closedTickets = ticketTotals.repair + ticketTotals.installation;
-  const employeeSalaryBonds = salaryBonds
-    .filter((bond) => bond.employee_id === currentEmployee.id)
-    .sort((a, b) => b.created_at.localeCompare(a.created_at));
   const initials = currentEmployee.full_name
     .split(" ")
     .filter(Boolean)
@@ -4820,8 +4649,9 @@ export function EmployeeDetailsView({
     { id: "payroll", icon: <Briefcase size={16} />, label: "Salary History" },
     ...(isTicketBased ? [{ id: "tickets" as const, icon: <BadgeDollarSign size={16} />, label: "Ticket Earnings" }] : []),
     { id: "attendance", icon: <CalendarClock size={16} />, label: "Attendance" },
-    { id: "salary-bond", icon: <CreditCard size={16} />, label: "Salary Bonds" },
+    { id: "employee-advances", icon: <CreditCard size={16} />, label: "Employee Advances" },
     { id: "documents", icon: <FileText size={16} />, label: "Documents" },
+    { id: "government-deduction", icon: <BadgeDollarSign size={16} />, label: "Government Deduction" },
   ] as const;
 
   return (
@@ -5016,57 +4846,15 @@ export function EmployeeDetailsView({
           </section>
         )}
 
-        {activeTab === "salary-bond" && (
-          <section className="emp-content-card history-stack">
-            <div className="ticket-section-heading">
-              <div>
-                <h3>Salary Bond</h3>
-                <p>Track employee salary bonds and payroll deductions.</p>
-              </div>
-              <button className="primary-button compact" type="button">
-                <Plus size={15} />
-                Add Salary Bond
-              </button>
-            </div>
-            <DataTable
-              empty="No salary bonds for this employee yet."
-              headers={["Employee", "Purpose", "Amount", "Balance", "Deduction/Payroll", "Status", "Action"]}
-              rows={employeeSalaryBonds.map((bond) => [
-                currentEmployee.full_name,
-                bond.purpose || bond.bond_type || bond.bond_id,
-                currency.format(toNumber(bond.amount)),
-                currency.format(toNumber(bond.balance)),
-                currency.format(toNumber(bond.deduction_per_payroll)),
-                <StatusPill key="status" status={bond.status} />,
-                <div className="salary-bond-actions" key="actions">
-                  <button
-                    onClick={() => setNotice({ type: "success", text: `${bond.bond_id} details selected.` })}
-                    type="button"
-                  >
-                    View Details
-                  </button>
-                  <button
-                    onClick={() => setNotice({ type: "success", text: `${bond.bond_id} is ready to edit.` })}
-                    type="button"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => setNotice({ type: "success", text: `${bond.bond_id} marked completed.` })}
-                    type="button"
-                  >
-                    Mark Completed
-                  </button>
-                  <button
-                    onClick={() => setNotice({ type: "success", text: `${bond.bond_id} archived.` })}
-                    type="button"
-                  >
-                    Archive
-                  </button>
-                </div>,
-              ])}
-            />
-          </section>
+        {activeTab === "employee-advances" && (
+          <EmployeeAdvancesFeature
+            employee={currentEmployee}
+            employeeAdvances={employeeAdvances}
+            onChange={onChange}
+            onQueueOfflineMutation={onQueueOfflineMutation}
+            setNotice={setNotice}
+            userId={userId}
+          />
         )}
 
 
@@ -5082,9 +4870,51 @@ export function EmployeeDetailsView({
           </section>
         )}
 
+        {activeTab === "government-deduction" && (
+          <section className="emp-content-card">
+            <h3>Government Deduction</h3>
+            <div className="emp-info-grid">
+              <DetailItem icon={<BadgeDollarSign size={15} />} label="SSS" value={currency.format(toNumber(currentEmployee.sss_deduction))} />
+              <DetailItem icon={<BadgeDollarSign size={15} />} label="PhilHealth" value={currency.format(toNumber(currentEmployee.philhealth_deduction))} />
+              <DetailItem icon={<BadgeDollarSign size={15} />} label="Pag-IBIG" value={currency.format(toNumber(currentEmployee.pagibig_deduction))} />
+              <DetailItem icon={<BadgeDollarSign size={15} />} label="Withholding Tax" value={currency.format(toNumber(currentEmployee.withholding_tax))} />
+            </div>
+          </section>
+        )}
+
         {activeTab === "attendance" && (() => {
           const isTicket = currentPosition?.pay_mode === "ticket" || currentPosition?.pay_mode === "hybrid";
           const dailyRate = toNumber(currentPosition?.daily_rate ?? 0);
+          const attendancePageSize = 10;
+          const attendanceTotal = isTicket ? empTickets.length : empAttendance.length;
+          const attendancePageCount = Math.max(1, Math.ceil(attendanceTotal / attendancePageSize));
+          const safeAttendancePage = Math.min(empAttendancePage, attendancePageCount);
+          const pageStart = (safeAttendancePage - 1) * attendancePageSize;
+          const pageEnd = Math.min(pageStart + attendancePageSize, attendanceTotal);
+          const paginatedTickets = empTickets.slice(pageStart, pageEnd);
+          const paginatedAttendance = empAttendance.slice(pageStart, pageEnd);
+          const attendanceFooter = attendanceTotal > attendancePageSize && (
+            <div className="attendance-footer emp-attendance-footer">
+              <span>
+                Showing {pageStart + 1} to {pageEnd} of {attendanceTotal} {isTicket ? "ticket" : "attendance"} records
+              </span>
+              <div>
+                <button type="button">{attendancePageSize} / page</button>
+                <button type="button" disabled={safeAttendancePage === 1} onClick={() => setEmpAttendancePage((page) => Math.max(1, page - 1))}>{"<"}</button>
+                {Array.from({ length: attendancePageCount }, (_, index) => index + 1).map((page) => (
+                  <button
+                    className={page === safeAttendancePage ? "active" : undefined}
+                    key={page}
+                    onClick={() => setEmpAttendancePage(page)}
+                    type="button"
+                  >
+                    {page}
+                  </button>
+                ))}
+                <button type="button" disabled={safeAttendancePage === attendancePageCount} onClick={() => setEmpAttendancePage((page) => Math.min(attendancePageCount, page + 1))}>{">"}</button>
+              </div>
+            </div>
+          );
           return (
             <section className="emp-content-card">
               <h3>Attendance &amp; Earnings History</h3>
@@ -5104,7 +4934,7 @@ export function EmployeeDetailsView({
                         </tr>
                       </thead>
                       <tbody>
-                        {empTickets.map((entry) => {
+                        {paginatedTickets.map((entry) => {
                           const totalTickets = entry.details && entry.details.length > 0
                             ? entry.details.reduce((s, d) => s + (d.ticket_count ?? 0), 0)
                             : normalizeTicketCount(entry.installation_tickets) + normalizeTicketCount(entry.repair_tickets);
@@ -5121,6 +4951,7 @@ export function EmployeeDetailsView({
                         })}
                       </tbody>
                     </table>
+                    {attendanceFooter}
                   </div>
                 )
               ) : (
@@ -5139,8 +4970,8 @@ export function EmployeeDetailsView({
                         </tr>
                       </thead>
                       <tbody>
-                        {empAttendance.map((entry) => {
-                          const earnings = entry.status === "present" ? dailyRate : entry.status === "half_day" ? dailyRate / 2 : 0;
+                        {paginatedAttendance.map((entry) => {
+                          const earnings = computeDailyEarnings(dailyRate, entry.status, entry.time_in ?? "08:00", entry.time_out ?? "17:00");
                           return (
                             <tr key={entry.id} className={entry.status === "absent" ? "emp-att-absent" : entry.status === "half_day" ? "emp-att-leave" : ""}>
                               <td>{new Date(`${entry.entry_date}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</td>
@@ -5157,6 +4988,7 @@ export function EmployeeDetailsView({
                         })}
                       </tbody>
                     </table>
+                    {attendanceFooter}
                   </div>
                 )
               )}
@@ -5253,7 +5085,7 @@ function EmployeeForm({
   onSubmit: (values: EmployeeFormValues) => Promise<void>;
   positions: Position[];
 }) {
-  type FormTab = "personal" | "employment" | "documents";
+  type FormTab = "personal" | "employment" | "documents" | "government-deduction";
   const [activeTab, setActiveTab] = useState<FormTab>("personal");
   const [values, setValues] = useState<EmployeeFormValues>(
     initial
@@ -5274,6 +5106,10 @@ function EmployeeForm({
           sss_number: initial.sss_number,
           philhealth_number: initial.philhealth_number,
           pagibig_number: initial.pagibig_number,
+          sss_deduction: String(initial.sss_deduction ?? 0),
+          philhealth_deduction: String(initial.philhealth_deduction ?? 0),
+          pagibig_deduction: String(initial.pagibig_deduction ?? 0),
+          withholding_tax: String(initial.withholding_tax ?? 0),
           tin_number: initial.tin_number,
           emergency_contact_name: initial.emergency_contact_name ?? "",
           emergency_contact_number: initial.emergency_contact_number ?? "",
@@ -5316,13 +5152,28 @@ function EmployeeForm({
 
   const selectedPosition = positions.find((p) => p.id === values.position_id);
   const initials = values.full_name.trim().split(" ").filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
-  const completedFields = [values.full_name, values.position_id, values.email, values.contact_number, values.hire_date, values.sss_number, values.philhealth_number, values.pagibig_number, values.tin_number].filter(Boolean).length;
-  const totalFields = 9;
+  const completedFields = [
+    values.full_name,
+    values.position_id,
+    values.email,
+    values.contact_number,
+    values.hire_date,
+    values.sss_number,
+    values.philhealth_number,
+    values.pagibig_number,
+    values.sss_deduction,
+    values.philhealth_deduction,
+    values.pagibig_deduction,
+    values.withholding_tax,
+    values.tin_number,
+  ].filter(Boolean).length;
+  const totalFields = 13;
 
   const tabs: { id: FormTab; icon: ReactNode; label: string }[] = [
     { id: "personal", icon: <Users size={16} />, label: "Personal" },
     { id: "employment", icon: <Briefcase size={16} />, label: "Employment" },
     { id: "documents", icon: <FileText size={16} />, label: "Documents" },
+    { id: "government-deduction", icon: <BadgeDollarSign size={16} />, label: "Government Deduction" },
   ];
 
   const formContent = (
@@ -5498,6 +5349,21 @@ function EmployeeForm({
               </div>
             </div>
           )}
+
+          {activeTab === "government-deduction" && (
+            <div className="emp-form-section">
+              <div className="emp-form-group">
+                <h3>Government Deduction</h3>
+                <p className="emp-form-group-desc">Per-payroll statutory deduction amounts.</p>
+                <div className="emp-form-fields">
+                  <MoneyInput label="SSS" value={values.sss_deduction} onChange={(sss_deduction) => setValues({ ...values, sss_deduction })} />
+                  <MoneyInput label="PhilHealth" value={values.philhealth_deduction} onChange={(philhealth_deduction) => setValues({ ...values, philhealth_deduction })} />
+                  <MoneyInput label="Pag-IBIG" value={values.pagibig_deduction} onChange={(pagibig_deduction) => setValues({ ...values, pagibig_deduction })} />
+                  <MoneyInput label="Withholding Tax" value={values.withholding_tax} onChange={(withholding_tax) => setValues({ ...values, withholding_tax })} />
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <aside className="emp-form-sidebar">
@@ -5610,6 +5476,10 @@ function EmployeeForm({
         <TextField label="SSS number" value={values.sss_number} onChange={(sss_number) => setValues({ ...values, sss_number })} />
         <TextField label="PhilHealth number" value={values.philhealth_number} onChange={(philhealth_number) => setValues({ ...values, philhealth_number })} />
         <TextField label="Pag-IBIG number" value={values.pagibig_number} onChange={(pagibig_number) => setValues({ ...values, pagibig_number })} />
+        <MoneyInput label="SSS deduction" value={values.sss_deduction} onChange={(sss_deduction) => setValues({ ...values, sss_deduction })} />
+        <MoneyInput label="PhilHealth deduction" value={values.philhealth_deduction} onChange={(philhealth_deduction) => setValues({ ...values, philhealth_deduction })} />
+        <MoneyInput label="Pag-IBIG deduction" value={values.pagibig_deduction} onChange={(pagibig_deduction) => setValues({ ...values, pagibig_deduction })} />
+        <MoneyInput label="Withholding tax" value={values.withholding_tax} onChange={(withholding_tax) => setValues({ ...values, withholding_tax })} />
         <TextField label="TIN number" value={values.tin_number} onChange={(tin_number) => setValues({ ...values, tin_number })} />
         <label className="full">
           Address

@@ -24,6 +24,19 @@ export function collectionStatus(
   return paid > 0 ? "partial" : "pending";
 }
 
+export function dateCollectedFor(
+  collection: Pick<CollectionReminder, "amount" | "due_date" | "archived_at" | "payments">,
+  today?: string,
+): string | null {
+  if (collectionStatus(collection, today) !== "collected") return null;
+  const nonVoidPayments = (collection.payments ?? []).filter((payment) => !payment.is_void);
+  if (nonVoidPayments.length === 0) return null;
+  return nonVoidPayments.reduce(
+    (latest, payment) => (payment.payment_date > latest ? payment.payment_date : latest),
+    nonVoidPayments[0].payment_date,
+  );
+}
+
 export function daysOverdue(dueDate: string, today = new Date().toISOString().slice(0, 10)) {
   if (!dueDate || dueDate >= today) return 0;
   const due = Date.parse(`${dueDate}T00:00:00Z`);

@@ -2,12 +2,14 @@ import { useEffect, useState } from "react";
 import { formatMoney } from "../utils/currency";
 
 export function MoneyField({
+  disabled,
   label,
   onChange,
   placeholder,
   required,
   value,
 }: {
+  disabled?: boolean;
   label?: string;
   onChange: (value: string) => void;
   placeholder?: string;
@@ -24,6 +26,7 @@ export function MoneyField({
   const input = (
     <input
       inputMode="decimal"
+      disabled={disabled}
       onBlur={() => {
         setFocused(false);
         setDisplay(formatMoney(value));

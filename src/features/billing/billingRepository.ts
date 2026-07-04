@@ -6,7 +6,7 @@ import type {
   Subcontractor,
 } from "../../types";
 
-const BILLING_RECORDS_SELECT = "id,user_id,billing_month,billing_year,billing_period,install_tickets,repair_tickets,disputed_install,disputed_repair,total_tickets,disputed_tickets,billable_tickets,billing_rate,billing_amount,collections_pct,collections_amount,collectibles_amount,collection_id,collectibles_collection_id,notes,created_at,updated_at,subcon_items:billing_subcon_items(id,user_id,billing_record_id,subcontractor_id,subcon_name,install_tickets,repair_tickets,disputed_install,disputed_repair,installation_rate,repair_rate,billable_tickets,billing_amount,payable_pct,payable_amount,collection_amount,created_at)";
+const BILLING_RECORDS_SELECT = "id,user_id,invoice_no,billing_month,billing_year,billing_period,install_tickets,repair_tickets,disputed_install,disputed_repair,total_tickets,disputed_tickets,billable_tickets,billing_rate,billing_amount,collections_pct,collections_amount,collectibles_amount,collection_id,collectibles_collection_id,notes,created_at,updated_at,subcon_items:billing_subcon_items(id,user_id,billing_record_id,subcontractor_id,subcon_name,install_tickets,repair_tickets,disputed_install,disputed_repair,installation_rate,repair_rate,billable_tickets,billing_amount,payable_pct,payable_amount,collection_amount,created_at)";
 const SUBCONTRACTOR_SELECT = "id,user_id,name,installation_rate,repair_rate,payable_pct,status,created_at,updated_at";
 const BILLING_SETTINGS_SELECT = "id,user_id,installation_rate,repair_rate,collections_pct,client_name,created_at,updated_at";
 const PAYMENT_REMINDER_SUBCON_SELECT = "id,user_id,title,type,amount,due_date,status,notes,subcontractor_id,billing_subcon_item_id,billing_month,billing_year,billing_period,created_at,updated_at";
@@ -61,7 +61,7 @@ export async function saveBillingSettings(
 
 export async function saveBillingRecord(
   supabase: SupabaseClient,
-  record: Omit<BillingRecord, "created_at" | "updated_at">,
+  record: Omit<BillingRecord, "created_at" | "updated_at" | "invoice_no">,
 ) {
   const { subcon_items: _, ...row } = record;
   return supabase
@@ -77,12 +77,29 @@ export async function deleteBillingRecord(
   collectionId: string | null,
   collectiblesCollectionId: string | null,
 ) {
-  if (collectionId) {
-    await supabase.from("collection_reminders").delete().eq("id", collectionId);
+  const collectionIds = [collectionId, collectiblesCollectionId].filter((value): value is string => Boolean(value));
+
+  if (collectionIds.length > 0) {
+    const paymentsResult = await supabase
+      .from("collection_payments")
+      .select("id")
+      .in("collection_id", collectionIds)
+      .limit(1);
+    if (paymentsResult.error) return { error: paymentsResult.error };
+    if ((paymentsResult.data ?? []).length > 0) {
+      return {
+        error: {
+          message: "Can't delete this billing record — its linked collection already has payments recorded. Void those payments or archive the collection instead.",
+        },
+      };
+    }
   }
-  if (collectiblesCollectionId) {
-    await supabase.from("collection_reminders").delete().eq("id", collectiblesCollectionId);
+
+  for (const collectionIdToDelete of collectionIds) {
+    const deleteResult = await supabase.from("collection_reminders").delete().eq("id", collectionIdToDelete);
+    if (deleteResult.error) return { error: deleteResult.error };
   }
+
   return supabase.from("billing_records").delete().eq("id", id);
 }
 

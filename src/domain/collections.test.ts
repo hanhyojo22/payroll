@@ -3,6 +3,7 @@ import {
   collectionAgingBucket,
   collectionBalance,
   collectionStatus,
+  dateCollectedFor,
   validateCollectionPayment,
 } from "./collections";
 import type { CollectionPayment, CollectionReminder } from "../types";
@@ -49,6 +50,25 @@ describe("receivable collection rules", () => {
     expect(collectionAgingBucket("2026-05-31", "2026-07-01")).toBe("days31To60");
     expect(collectionAgingBucket("2026-05-01", "2026-07-01")).toBe("days61To90");
     expect(collectionAgingBucket("2026-03-31", "2026-07-01")).toBe("daysOver90");
+  });
+
+  it("reports the date collected as the latest non-void payment once fully paid", () => {
+    expect(dateCollectedFor(receivable())).toBeNull();
+    expect(dateCollectedFor(receivable({ payments: [payment(400)] }))).toBeNull();
+    const payments = [
+      payment(400, { payment_date: "2026-06-05" }),
+      payment(600, { payment_date: "2026-06-10" }),
+    ];
+    expect(dateCollectedFor(receivable({ payments }))).toBe("2026-06-10");
+  });
+
+  it("ignores void payments when finding the date collected", () => {
+    const payments = [
+      payment(400, { payment_date: "2026-06-05" }),
+      payment(600, { payment_date: "2026-06-10" }),
+      payment(1000, { payment_date: "2026-06-20", is_void: true, void_reason: "Duplicate", voided_at: "2026-06-21T00:00:00Z" }),
+    ];
+    expect(dateCollectedFor(receivable({ payments }))).toBe("2026-06-10");
   });
 
   it("rejects invalid, future, archived, and over-balance payments", () => {

@@ -2,11 +2,16 @@
     id uuid primary key default gen_random_uuid(),
     user_id uuid not null references auth.users(id) on delete cascade,
     title text not null,
-    type text not null check (type in ('loan', 'bill')),
+    type text not null check (type in ('loan', 'bill', 'subcontractor')),
     amount numeric(12, 2) not null check (amount >= 0),
     due_date date not null,
     status text not null default 'pending' check (status in ('pending', 'paid', 'overdue')),
     notes text not null default '',
+    subcontractor_id uuid,
+    billing_subcon_item_id uuid,
+    billing_month integer check (billing_month is null or billing_month between 1 and 12),
+    billing_year integer check (billing_year is null or billing_year between 1900 and 2200),
+    billing_period text check (billing_period is null or billing_period in ('first_half', 'second_half')),
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
   );
@@ -15,6 +20,7 @@
     id uuid primary key default gen_random_uuid(),
     user_id uuid not null references auth.users(id) on delete cascade,
     name text not null,
+    type text not null default 'company' check (type in ('personal', 'company')),
     status text not null default 'active' check (status in ('active', 'archived')),
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
@@ -75,24 +81,62 @@
   create table if not exists public.expenses (
     id uuid primary key default gen_random_uuid(),
     user_id uuid not null references auth.users(id) on delete cascade,
-    employee_id uuid not null references public.employees(id) on delete cascade,
+    employee_id uuid references public.employees(id) on delete cascade,
     employee_name text not null,
     category_id uuid not null references public.expense_categories(id) on delete restrict,
     category_name text not null,
     amount numeric(12, 2) not null default 0 check (amount >= 0),
+    frequency text not null default 'one_time' check (frequency in ('one_time', 'monthly')),
+    duration_months integer check (duration_months is null or duration_months > 0),
+    paid_installments integer not null default 0 check (paid_installments >= 0),
+    status text not null default 'pending' check (status in ('pending', 'paid')),
+    paid_date date,
     expense_date date not null,
+    due_date date,
     notes text not null default '',
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
   );
 
-  create table if not exists public.salary_bonds (
+  do $$
+  begin
+    if exists (
+      select 1
+      from information_schema.tables
+      where table_schema = 'public' and table_name = 'salary_bonds'
+    ) and not exists (
+      select 1
+      from information_schema.tables
+      where table_schema = 'public' and table_name = 'employee_advances'
+    ) then
+      alter table public.salary_bonds rename to employee_advances;
+    end if;
+
+    if exists (
+      select 1
+      from information_schema.columns
+      where table_schema = 'public' and table_name = 'employee_advances' and column_name = 'bond_id'
+    ) then
+      alter table public.employee_advances rename column bond_id to advance_id;
+    end if;
+
+    if exists (
+      select 1
+      from information_schema.columns
+      where table_schema = 'public' and table_name = 'employee_advances' and column_name = 'bond_type'
+    ) then
+      alter table public.employee_advances rename column bond_type to advance_type;
+    end if;
+  end
+  $$;
+
+  create table if not exists public.employee_advances (
     id uuid primary key default gen_random_uuid(),
     user_id uuid not null references auth.users(id) on delete cascade,
     employee_id uuid references public.employees(id) on delete set null,
     employee_name text not null,
-    bond_id text not null,
-    bond_type text not null default 'Salary Advance',
+    advance_id text not null,
+    advance_type text not null default 'Salary Bond',
     date_granted date not null default current_date,
     start_deduction date not null default current_date,
     purpose text not null default '',
@@ -103,7 +147,7 @@
     notes text not null default '',
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
-    unique (user_id, bond_id)
+    unique (user_id, advance_id)
   );
 
   create table if not exists public.payroll_runs (
@@ -139,6 +183,18 @@
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
   );
+
+  create table if not exists public.payroll_settings (
+    id uuid primary key default gen_random_uuid(),
+    user_id uuid not null references auth.users(id) on delete cascade,
+    government_deduction_cutoff text not null default 'second_half' check (government_deduction_cutoff in ('first_half', 'second_half')),
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    unique (user_id)
+  );
+
+  alter table public.payroll_settings
+  add column if not exists government_deduction_enabled boolean not null default true;
 
   create table if not exists public.daily_ticket_entries (
     id uuid primary key default gen_random_uuid(),
@@ -198,6 +254,18 @@
   add column if not exists repair_rate numeric(12, 2) not null default 200;
 
   alter table public.employees
+  add column if not exists sss_deduction numeric(12, 2) not null default 0;
+
+  alter table public.employees
+  add column if not exists philhealth_deduction numeric(12, 2) not null default 0;
+
+  alter table public.employees
+  add column if not exists pagibig_deduction numeric(12, 2) not null default 0;
+
+  alter table public.employees
+  add column if not exists withholding_tax numeric(12, 2) not null default 0;
+
+  alter table public.employees
   drop constraint if exists employees_wage_category_check;
 
   alter table public.employees
@@ -218,76 +286,133 @@
   add constraint employees_repair_rate_check
   check (repair_rate >= 0);
 
-  alter table public.salary_bonds
+  alter table public.employees
+  drop constraint if exists employees_sss_deduction_check;
+
+  alter table public.employees
+  add constraint employees_sss_deduction_check
+  check (sss_deduction >= 0);
+
+  alter table public.employees
+  drop constraint if exists employees_philhealth_deduction_check;
+
+  alter table public.employees
+  add constraint employees_philhealth_deduction_check
+  check (philhealth_deduction >= 0);
+
+  alter table public.employees
+  drop constraint if exists employees_pagibig_deduction_check;
+
+  alter table public.employees
+  add constraint employees_pagibig_deduction_check
+  check (pagibig_deduction >= 0);
+
+  alter table public.employees
+  drop constraint if exists employees_withholding_tax_check;
+
+  alter table public.employees
+  add constraint employees_withholding_tax_check
+  check (withholding_tax >= 0);
+
+  alter table public.employee_advances
   add column if not exists employee_id uuid references public.employees(id) on delete set null;
 
-  alter table public.salary_bonds
+  alter table public.employee_advances
   add column if not exists employee_name text not null default '';
 
-  alter table public.salary_bonds
-  add column if not exists bond_id text not null default '';
+  alter table public.employee_advances
+  add column if not exists advance_id text not null default '';
 
-  alter table public.salary_bonds
-  add column if not exists bond_type text not null default 'Salary Advance';
+  alter table public.employee_advances
+  add column if not exists advance_type text not null default 'Salary Bond';
 
-  alter table public.salary_bonds
+  alter table public.employee_advances
   add column if not exists date_granted date not null default current_date;
 
-  alter table public.salary_bonds
+  alter table public.employee_advances
   add column if not exists start_deduction date not null default current_date;
 
-  alter table public.salary_bonds
+  alter table public.employee_advances
   add column if not exists purpose text not null default '';
 
-  alter table public.salary_bonds
+  alter table public.employee_advances
   add column if not exists amount numeric(12, 2) not null default 0;
 
-  alter table public.salary_bonds
+  alter table public.employee_advances
   add column if not exists balance numeric(12, 2) not null default 0;
 
-  alter table public.salary_bonds
+  alter table public.employee_advances
   add column if not exists deduction_per_payroll numeric(12, 2) not null default 0;
 
-  alter table public.salary_bonds
+  alter table public.employee_advances
   add column if not exists status text not null default 'active';
 
-  alter table public.salary_bonds
+  alter table public.employee_advances
   add column if not exists notes text not null default '';
 
-  alter table public.salary_bonds
+  update public.employee_advances
+  set advance_type = case
+    when coalesce(trim(advance_type), '') in ('', 'Salary Advance', 'Salary Bond', 'Bond') then 'Salary Bond'
+    when advance_type in ('Cash Advance', 'Salary Bond', 'Salary Loan', 'Company Loan', 'Other Loan') then advance_type
+    else 'Other Loan'
+  end;
+
+  alter table public.employee_advances
   drop constraint if exists salary_bonds_status_check;
 
-  alter table public.salary_bonds
-  add constraint salary_bonds_status_check
+  alter table public.employee_advances
+  drop constraint if exists employee_advances_status_check;
+
+  alter table public.employee_advances
+  add constraint employee_advances_status_check
   check (status in ('active', 'completed', 'archived'));
 
-  alter table public.salary_bonds
+  alter table public.employee_advances
+  drop constraint if exists employee_advances_type_check;
+
+  alter table public.employee_advances
+  add constraint employee_advances_type_check
+  check (advance_type in ('Cash Advance', 'Salary Bond', 'Salary Loan', 'Company Loan', 'Other Loan'));
+
+  alter table public.employee_advances
   drop constraint if exists salary_bonds_amount_check;
 
-  alter table public.salary_bonds
-  add constraint salary_bonds_amount_check
+  alter table public.employee_advances
+  drop constraint if exists employee_advances_amount_check;
+
+  alter table public.employee_advances
+  add constraint employee_advances_amount_check
   check (amount >= 0);
 
-  alter table public.salary_bonds
+  alter table public.employee_advances
   drop constraint if exists salary_bonds_balance_check;
 
-  alter table public.salary_bonds
-  add constraint salary_bonds_balance_check
+  alter table public.employee_advances
+  drop constraint if exists employee_advances_balance_check;
+
+  alter table public.employee_advances
+  add constraint employee_advances_balance_check
   check (balance >= 0);
 
-  alter table public.salary_bonds
+  alter table public.employee_advances
   drop constraint if exists salary_bonds_deduction_per_payroll_check;
 
-  alter table public.salary_bonds
-  add constraint salary_bonds_deduction_per_payroll_check
+  alter table public.employee_advances
+  drop constraint if exists employee_advances_deduction_per_payroll_check;
+
+  alter table public.employee_advances
+  add constraint employee_advances_deduction_per_payroll_check
   check (deduction_per_payroll >= 0);
 
-  alter table public.salary_bonds
+  alter table public.employee_advances
   drop constraint if exists salary_bonds_user_id_bond_id_key;
 
-  alter table public.salary_bonds
-  add constraint salary_bonds_user_id_bond_id_key
-  unique (user_id, bond_id);
+  alter table public.employee_advances
+  drop constraint if exists employee_advances_user_id_advance_id_key;
+
+  alter table public.employee_advances
+  add constraint employee_advances_user_id_advance_id_key
+  unique (user_id, advance_id);
 
   alter table public.payroll_run_items
   add column if not exists installation_tickets integer not null default 0;
@@ -342,6 +467,12 @@
   add column if not exists repair_rate numeric(12, 2) not null default 200;
 
   alter table public.daily_ticket_entries
+  add column if not exists disputed_install integer not null default 0;
+
+  alter table public.daily_ticket_entries
+  add column if not exists disputed_repair integer not null default 0;
+
+  alter table public.daily_ticket_entries
   drop constraint if exists daily_ticket_entries_user_id_entry_date_employee_id_key;
 
   alter table public.daily_ticket_entries
@@ -376,11 +507,68 @@
   add constraint daily_ticket_entries_repair_rate_check
   check (repair_rate >= 0);
 
+  alter table public.daily_ticket_entries
+  drop constraint if exists daily_ticket_entries_disputed_install_check;
+
+  alter table public.daily_ticket_entries
+  add constraint daily_ticket_entries_disputed_install_check
+  check (disputed_install >= 0);
+
+  alter table public.daily_ticket_entries
+  drop constraint if exists daily_ticket_entries_disputed_repair_check;
+
+  alter table public.daily_ticket_entries
+  add constraint daily_ticket_entries_disputed_repair_check
+  check (disputed_repair >= 0);
+
   create index if not exists payment_reminders_user_due_date_idx
   on public.payment_reminders (user_id, due_date);
 
   create index if not exists payment_reminders_user_status_due_date_idx
   on public.payment_reminders (user_id, status, due_date);
+
+  alter table public.payment_reminders
+  add column if not exists subcontractor_id uuid;
+
+  alter table public.payment_reminders
+  add column if not exists billing_subcon_item_id uuid;
+
+  alter table public.payment_reminders
+  add column if not exists billing_month integer;
+
+  alter table public.payment_reminders
+  add column if not exists billing_year integer;
+
+  alter table public.payment_reminders
+  add column if not exists billing_period text;
+
+  alter table public.payment_reminders
+  drop constraint if exists payment_reminders_type_check;
+
+  alter table public.payment_reminders
+  add constraint payment_reminders_type_check
+  check (type in ('loan', 'bill', 'subcontractor'));
+
+  alter table public.payment_reminders
+  drop constraint if exists payment_reminders_billing_month_check;
+
+  alter table public.payment_reminders
+  add constraint payment_reminders_billing_month_check
+  check (billing_month is null or billing_month between 1 and 12);
+
+  alter table public.payment_reminders
+  drop constraint if exists payment_reminders_billing_year_check;
+
+  alter table public.payment_reminders
+  add constraint payment_reminders_billing_year_check
+  check (billing_year is null or billing_year between 1900 and 2200);
+
+  alter table public.payment_reminders
+  drop constraint if exists payment_reminders_billing_period_check;
+
+  alter table public.payment_reminders
+  add constraint payment_reminders_billing_period_check
+  check (billing_period is null or billing_period in ('first_half', 'second_half'));
 
   create index if not exists expense_categories_user_name_idx
   on public.expense_categories (user_id, name);
@@ -418,11 +606,15 @@
   create index if not exists daily_ticket_entries_employee_entry_date_idx
   on public.daily_ticket_entries (employee_id, entry_date desc);
 
-  create index if not exists salary_bonds_user_status_idx
-  on public.salary_bonds (user_id, status);
+  drop index if exists public.salary_bonds_user_status_idx;
 
-  create index if not exists salary_bonds_employee_status_idx
-  on public.salary_bonds (employee_id, status);
+  drop index if exists public.salary_bonds_employee_status_idx;
+
+  create index if not exists employee_advances_user_status_idx
+  on public.employee_advances (user_id, status);
+
+  create index if not exists employee_advances_employee_status_idx
+  on public.employee_advances (employee_id, status);
 
   drop trigger if exists set_payment_reminders_updated_at on public.payment_reminders;
   create trigger set_payment_reminders_updated_at
@@ -444,9 +636,10 @@
   before update on public.collection_reminders
   for each row execute function public.set_updated_at();
 
-  drop trigger if exists set_salary_bonds_updated_at on public.salary_bonds;
-  create trigger set_salary_bonds_updated_at
-  before update on public.salary_bonds
+  drop trigger if exists set_salary_bonds_updated_at on public.employee_advances;
+  drop trigger if exists set_employee_advances_updated_at on public.employee_advances;
+  create trigger set_employee_advances_updated_at
+  before update on public.employee_advances
   for each row execute function public.set_updated_at();
 
   drop trigger if exists set_payroll_records_updated_at on public.payroll_records;
@@ -478,7 +671,7 @@
   alter table public.expense_categories enable row level security;
   alter table public.expenses enable row level security;
   alter table public.collection_reminders enable row level security;
-  alter table public.salary_bonds enable row level security;
+  alter table public.employee_advances enable row level security;
   alter table public.payroll_records enable row level security;
   alter table public.employees enable row level security;
   alter table public.payroll_runs enable row level security;
@@ -513,9 +706,10 @@
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
 
-  drop policy if exists "salary bonds are owned by their user" on public.salary_bonds;
-  create policy "salary bonds are owned by their user"
-  on public.salary_bonds
+  drop policy if exists "salary bonds are owned by their user" on public.employee_advances;
+  drop policy if exists "employee advances are owned by their user" on public.employee_advances;
+  create policy "employee advances are owned by their user"
+  on public.employee_advances
   for all
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
@@ -1198,6 +1392,18 @@ create trigger set_billing_settings_updated_at
 before update on public.billing_settings
 for each row execute function public.set_updated_at();
 
+drop trigger if exists set_payroll_settings_updated_at on public.payroll_settings;
+create trigger set_payroll_settings_updated_at
+before update on public.payroll_settings
+for each row execute function public.set_updated_at();
+
+alter table public.payroll_settings enable row level security;
+
+drop policy if exists "payroll settings are owned by their user" on public.payroll_settings;
+create policy "payroll settings are owned by their user"
+on public.payroll_settings for all
+using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
 alter table public.billing_settings enable row level security;
 
 drop policy if exists "billing settings are owned by their user" on public.billing_settings;
@@ -1265,6 +1471,83 @@ where
   and disputed_repair = 0
   and (total_tickets <> 0 or disputed_tickets <> 0);
 
+-- Billing invoice numbering
+alter table public.billing_records add column if not exists invoice_no text;
+
+create table if not exists public.billing_number_sequences (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  sequence_year integer not null check (sequence_year between 1900 and 2200),
+  last_value integer not null default 0 check (last_value >= 0),
+  primary key (user_id, sequence_year)
+);
+
+create or replace function public.next_billing_number(owner_id uuid, invoice_year integer)
+returns text
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  next_value integer;
+begin
+  insert into public.billing_number_sequences (user_id, sequence_year, last_value)
+  values (owner_id, invoice_year, 1)
+  on conflict (user_id, sequence_year)
+  do update set last_value = public.billing_number_sequences.last_value + 1
+  returning last_value into next_value;
+  return 'INV-' || invoice_year::text || '-' || lpad(next_value::text, 4, '0');
+end;
+$$;
+
+create or replace function public.assign_billing_number()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.invoice_no is null or btrim(new.invoice_no) = '' then
+    new.invoice_no := public.next_billing_number(new.user_id, new.billing_year);
+  end if;
+  return new;
+end;
+$$;
+
+with numbered as (
+  select id, user_id, billing_year,
+    row_number() over (
+      partition by user_id, billing_year
+      order by billing_month, billing_period, created_at, id
+    ) as sequence_value
+  from public.billing_records
+  where invoice_no is null or btrim(invoice_no) = ''
+)
+update public.billing_records b
+set invoice_no = 'INV-' || n.billing_year::text || '-' || lpad(n.sequence_value::text, 4, '0')
+from numbered n where n.id = b.id;
+
+insert into public.billing_number_sequences (user_id, sequence_year, last_value)
+select user_id, billing_year, count(*)
+from public.billing_records
+group by user_id, billing_year
+on conflict (user_id, sequence_year)
+do update set last_value = greatest(public.billing_number_sequences.last_value, excluded.last_value);
+
+create unique index if not exists billing_records_user_invoice_no_key
+on public.billing_records (user_id, invoice_no);
+
+drop trigger if exists assign_billing_number_trigger on public.billing_records;
+create trigger assign_billing_number_trigger
+before insert on public.billing_records
+for each row execute function public.assign_billing_number();
+
+alter table public.billing_number_sequences enable row level security;
+
+drop policy if exists "billing sequences are owned by their user" on public.billing_number_sequences;
+create policy "billing sequences are owned by their user"
+on public.billing_number_sequences for select
+using (auth.uid() = user_id);
+
 -- Subcontractors
 create table if not exists public.subcontractors (
   id uuid primary key default gen_random_uuid(),
@@ -1289,6 +1572,114 @@ alter table public.subcontractors enable row level security;
 drop policy if exists "subcontractors are owned by their user" on public.subcontractors;
 create policy "subcontractors are owned by their user"
 on public.subcontractors for all
+using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create table if not exists public.subcontractor_advances (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  subcontractor_id uuid references public.subcontractors(id) on delete set null,
+  subcon_name text not null,
+  advance_id text not null,
+  date_granted date not null default current_date,
+  amount numeric(12, 2) not null default 0,
+  balance numeric(12, 2) not null default 0,
+  deduction_mode text not null default 'full_payout',
+  deduction_per_billing numeric(12, 2) not null default 0,
+  status text not null default 'active',
+  notes text not null default '',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, advance_id)
+);
+
+alter table public.subcontractor_advances
+add column if not exists subcontractor_id uuid references public.subcontractors(id) on delete set null;
+
+alter table public.subcontractor_advances
+add column if not exists subcon_name text not null default '';
+
+alter table public.subcontractor_advances
+add column if not exists advance_id text not null default '';
+
+alter table public.subcontractor_advances
+add column if not exists date_granted date not null default current_date;
+
+alter table public.subcontractor_advances
+add column if not exists amount numeric(12, 2) not null default 0;
+
+alter table public.subcontractor_advances
+add column if not exists balance numeric(12, 2) not null default 0;
+
+alter table public.subcontractor_advances
+add column if not exists deduction_mode text not null default 'full_payout';
+
+alter table public.subcontractor_advances
+add column if not exists deduction_per_billing numeric(12, 2) not null default 0;
+
+alter table public.subcontractor_advances
+add column if not exists status text not null default 'active';
+
+alter table public.subcontractor_advances
+add column if not exists notes text not null default '';
+
+alter table public.subcontractor_advances
+drop constraint if exists subcontractor_advances_status_check;
+
+alter table public.subcontractor_advances
+add constraint subcontractor_advances_status_check
+check (status in ('active', 'completed', 'archived'));
+
+alter table public.subcontractor_advances
+drop constraint if exists subcontractor_advances_amount_check;
+
+alter table public.subcontractor_advances
+add constraint subcontractor_advances_amount_check
+check (amount >= 0);
+
+alter table public.subcontractor_advances
+drop constraint if exists subcontractor_advances_balance_check;
+
+alter table public.subcontractor_advances
+add constraint subcontractor_advances_balance_check
+check (balance >= 0);
+
+alter table public.subcontractor_advances
+drop constraint if exists subcontractor_advances_deduction_mode_check;
+
+alter table public.subcontractor_advances
+add constraint subcontractor_advances_deduction_mode_check
+check (deduction_mode in ('per_billing', 'full_payout'));
+
+alter table public.subcontractor_advances
+drop constraint if exists subcontractor_advances_deduction_per_billing_check;
+
+alter table public.subcontractor_advances
+add constraint subcontractor_advances_deduction_per_billing_check
+check (deduction_per_billing >= 0);
+
+alter table public.subcontractor_advances
+drop constraint if exists subcontractor_advances_user_id_advance_id_key;
+
+alter table public.subcontractor_advances
+add constraint subcontractor_advances_user_id_advance_id_key
+unique (user_id, advance_id);
+
+create index if not exists subcontractor_advances_user_status_idx
+on public.subcontractor_advances (user_id, status);
+
+create index if not exists subcontractor_advances_subcontractor_status_idx
+on public.subcontractor_advances (subcontractor_id, status);
+
+drop trigger if exists set_subcontractor_advances_updated_at on public.subcontractor_advances;
+create trigger set_subcontractor_advances_updated_at
+before update on public.subcontractor_advances
+for each row execute function public.set_updated_at();
+
+alter table public.subcontractor_advances enable row level security;
+
+drop policy if exists "subcontractor advances are owned by their user" on public.subcontractor_advances;
+create policy "subcontractor advances are owned by their user"
+on public.subcontractor_advances for all
 using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 -- Subcontractor daily tickets
@@ -1346,6 +1737,28 @@ create table if not exists public.billing_subcon_items (
 create index if not exists billing_subcon_items_record_idx
 on public.billing_subcon_items (billing_record_id);
 
+alter table public.payment_reminders
+drop constraint if exists payment_reminders_subcontractor_id_fkey;
+
+alter table public.payment_reminders
+add constraint payment_reminders_subcontractor_id_fkey
+foreign key (subcontractor_id) references public.subcontractors(id) on delete set null;
+
+alter table public.payment_reminders
+drop constraint if exists payment_reminders_billing_subcon_item_id_fkey;
+
+alter table public.payment_reminders
+add constraint payment_reminders_billing_subcon_item_id_fkey
+foreign key (billing_subcon_item_id) references public.billing_subcon_items(id) on delete cascade;
+
+create unique index if not exists payment_reminders_billing_subcon_item_uidx
+on public.payment_reminders (billing_subcon_item_id)
+where billing_subcon_item_id is not null;
+
+create index if not exists payment_reminders_subcontractor_due_idx
+on public.payment_reminders (subcontractor_id, due_date desc)
+where subcontractor_id is not null;
+
 alter table public.billing_subcon_items enable row level security;
 
 drop policy if exists "billing subcon items are owned by their user" on public.billing_subcon_items;
@@ -1395,3 +1808,114 @@ using (auth.uid() = user_id) with check (auth.uid() = user_id);
 alter table public.employees add column if not exists emergency_contact_name text not null default '';
 alter table public.employees add column if not exists emergency_contact_number text not null default '';
 alter table public.employees add column if not exists emergency_contact_relation text not null default '';
+
+-- Personal vs company classification on expense categories
+alter table public.expense_categories
+add column if not exists type text not null default 'company';
+
+alter table public.expense_categories
+drop constraint if exists expense_categories_type_check;
+
+alter table public.expense_categories
+add constraint expense_categories_type_check
+check (type in ('personal', 'company'));
+
+-- Monthly vs one-time classification on expenses
+alter table public.expenses
+add column if not exists frequency text not null default 'one_time';
+
+alter table public.expenses
+drop constraint if exists expenses_frequency_check;
+
+alter table public.expenses
+add constraint expenses_frequency_check
+check (frequency in ('one_time', 'monthly'));
+
+-- Personal expenses aren't tied to a tracked employee record
+alter table public.expenses
+alter column employee_id drop not null;
+
+-- How long a monthly expense recurs for (in months), before it's considered finished
+alter table public.expenses
+add column if not exists duration_months integer;
+
+alter table public.expenses
+drop constraint if exists expenses_duration_months_check;
+
+alter table public.expenses
+add constraint expenses_duration_months_check
+check (duration_months is null or duration_months > 0);
+
+-- Paid / pending status on expenses
+alter table public.expenses
+add column if not exists status text not null default 'pending';
+
+alter table public.expenses
+add column if not exists paid_date date;
+
+alter table public.expenses
+drop constraint if exists expenses_status_check;
+
+alter table public.expenses
+add constraint expenses_status_check
+check (status in ('pending', 'paid'));
+
+-- Track partial (installment) payments on multi-month expenses
+alter table public.expenses
+add column if not exists paid_installments integer not null default 0;
+
+alter table public.expenses
+drop constraint if exists expenses_paid_installments_check;
+
+alter table public.expenses
+add constraint expenses_paid_installments_check
+check (paid_installments >= 0);
+
+-- Payment history for expense installments (each period's payment, with method and reference)
+create table if not exists public.expense_installment_payments (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  expense_id uuid not null references public.expenses(id) on delete cascade,
+  amount numeric(12, 2) not null check (amount > 0),
+  payment_date date not null default current_date,
+  payment_method text not null default 'other'
+    check (payment_method in ('cash', 'bank_transfer', 'check', 'e_wallet', 'card', 'other')),
+  reference_number text not null default '',
+  notes text not null default '',
+  created_at timestamptz not null default now()
+);
+
+create index if not exists expense_installment_payments_expense_idx
+on public.expense_installment_payments (expense_id, payment_date desc);
+
+alter table public.expense_installment_payments enable row level security;
+
+drop policy if exists "expense installment payments are owned by their user" on public.expense_installment_payments;
+create policy "expense installment payments are owned by their user"
+on public.expense_installment_payments for all
+using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- Optional due date on expenses
+alter table public.expenses
+add column if not exists due_date date;
+
+-- Allow expenses to be cancelled without being marked paid
+alter table public.expenses
+drop constraint if exists expenses_status_check;
+
+alter table public.expenses
+add constraint expenses_status_check
+check (status in ('pending', 'paid', 'cancelled'));
+
+-- Allow a daily recurring frequency on expenses (in addition to one_time/monthly)
+alter table public.expenses
+drop constraint if exists expenses_frequency_check;
+
+alter table public.expenses
+add constraint expenses_frequency_check
+check (frequency in ('one_time', 'monthly', 'daily'));
+
+-- Informational payment date for company expenses (separate from paid_date, which is
+-- system-managed when an expense's balance is fully settled).
+alter table public.expenses
+add column if not exists payment_date date;

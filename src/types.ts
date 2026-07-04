@@ -3,13 +3,24 @@ export type PaymentStatus = "pending" | "paid" | "overdue";
 export type CollectionStatus = "pending" | "partial" | "collected" | "overdue" | "archived";
 export type CollectionPaymentMethod = "cash" | "bank_transfer" | "check" | "e_wallet" | "card" | "other";
 export type PayrollItemStatus = "pending" | "paid";
-export type SalaryBondStatus = "active" | "completed" | "archived";
+export type EmployeeAdvanceStatus = "active" | "completed" | "archived";
+export type SubcontractorAdvanceStatus = "active" | "completed" | "archived";
+export type SubcontractorAdvanceDeductionMode = "per_billing" | "full_payout";
+export type EmployeeAdvanceType =
+  | "Cash Advance"
+  | "Salary Bond"
+  | "Salary Loan"
+  | "Company Loan"
+  | "Other Loan";
 export type EmployeeStatus = "active" | "inactive";
 export type EmployeeWageCategory = "new" | "special_old";
 export type AttendanceStatus = "present" | "absent" | "half_day";
 export type PositionStatus = "active" | "archived";
 export type PositionPayMode = "fixed" | "ticket" | "hybrid" | "daily";
+export type ExpenseCategoryType = "personal" | "company";
+export type ExpenseFrequency = "one_time" | "monthly" | "daily";
 export type PayrollPayPeriod = "first_half" | "second_half";
+export type PayrollGovernmentDeductionCutoff = PayrollPayPeriod;
 export type ResourceKey =
   | "attendanceEntries"
   | "billingRecords"
@@ -23,8 +34,10 @@ export type ResourceKey =
   | "payments"
   | "payrollHistory"
   | "payrollRuns"
+  | "payrollSettings"
   | "positions"
-  | "salaryBonds"
+  | "employeeAdvances"
+  | "subcontractorAdvances"
   | "subconDailyTickets"
   | "subcontractors";
 
@@ -95,23 +108,64 @@ export type ExpenseCategory = {
   id: string;
   user_id: string;
   name: string;
+  type: ExpenseCategoryType;
   status: "active" | "archived";
   created_at: string;
   updated_at: string;
 };
 
+export type ExpenseInstallmentPayment = {
+  id: string;
+  user_id: string;
+  expense_id: string;
+  amount: number;
+  payment_date: string;
+  payment_method: CollectionPaymentMethod;
+  reference_number: string;
+  notes: string;
+  created_at: string;
+};
+
+export type ExpenseStatus = "pending" | "paid" | "cancelled";
+export type ExpenseDisplayStatus = "unpaid" | "partial" | "paid" | "cancelled";
+
 export type Expense = {
   id: string;
   user_id: string;
-  employee_id: string;
+  employee_id: string | null;
   employee_name: string;
   category_id: string;
   category_name: string;
   amount: number;
+  frequency: ExpenseFrequency;
+  duration_months: number | null;
+  installment_payments: ExpenseInstallmentPayment[];
+  status: ExpenseStatus;
+  paid_date: string | null;
   expense_date: string;
+  due_date: string | null;
+  payment_date: string | null;
   notes: string;
   created_at: string;
   updated_at: string;
+};
+
+export type PaymentLedgerSource = "expense" | "loan" | "bill" | "subcontractor";
+
+export type PaymentLedgerRow = {
+  id: string;
+  source: PaymentLedgerSource;
+  paymentDate: string;
+  label: string;
+  vendor: string;
+  category: string;
+  categoryType: ExpenseCategoryType | null;
+  amount: number;
+  method: CollectionPaymentMethod | null;
+  referenceNumber: string;
+  status: string;
+  expenseId: string | null;
+  paymentReminderId: string | null;
 };
 
 export type CollectionReminder = {
@@ -150,20 +204,20 @@ export type CollectionPayment = {
   updated_at: string;
 };
 
-export type SalaryBond = {
+export type EmployeeAdvance = {
   id: string;
   user_id: string;
   employee_id: string | null;
   employee_name: string;
-  bond_id: string;
-  bond_type: string;
+  advance_id: string;
+  advance_type: EmployeeAdvanceType;
   date_granted: string;
   start_deduction: string;
   purpose: string;
   amount: number;
   balance: number;
   deduction_per_payroll: number;
-  status: SalaryBondStatus;
+  status: EmployeeAdvanceStatus;
   notes: string;
   created_at: string;
   updated_at: string;
@@ -189,6 +243,10 @@ export type Employee = {
   sss_number: string;
   philhealth_number: string;
   pagibig_number: string;
+  sss_deduction: number;
+  philhealth_deduction: number;
+  pagibig_deduction: number;
+  withholding_tax: number;
   tin_number: string;
   gender: string;
   emergency_contact_name: string;
@@ -207,6 +265,15 @@ export type PayrollRun = {
   pay_period: PayrollPayPeriod;
   generated_date: string;
   notes: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PayrollSettings = {
+  id: string;
+  user_id: string;
+  government_deduction_enabled: boolean;
+  government_deduction_cutoff: PayrollGovernmentDeductionCutoff;
   created_at: string;
   updated_at: string;
 };
@@ -273,6 +340,8 @@ export type DashboardSummary = {
   overduePayments: PaymentReminder[];
   dueTodayCollections: CollectionReminder[];
   overdueCollections: CollectionReminder[];
+  dueTodayExpenses: Expense[];
+  overdueExpenses: Expense[];
 };
 
 export type PayrollHistoryRow = {
@@ -300,6 +369,8 @@ export type DailyTicketEntry = {
   details: DailyTicketEntryDetail[];
   installation_tickets: number;
   repair_tickets: number;
+  disputed_install?: number;
+  disputed_repair?: number;
   installation_rate: number;
   repair_rate: number;
   created_at: string;
@@ -371,6 +442,23 @@ export type Subcontractor = {
   updated_at: string;
 };
 
+export type SubcontractorAdvance = {
+  id: string;
+  user_id: string;
+  subcontractor_id: string | null;
+  subcon_name: string;
+  advance_id: string;
+  date_granted: string;
+  amount: number;
+  balance: number;
+  deduction_mode: SubcontractorAdvanceDeductionMode;
+  deduction_per_billing: number;
+  status: SubcontractorAdvanceStatus;
+  notes: string;
+  created_at: string;
+  updated_at: string;
+};
+
 
 export type SubconDailyTicket = {
   id: string;
@@ -411,6 +499,7 @@ export type BillingPeriod = "first_half" | "second_half";
 export type BillingRecord = {
   id: string;
   user_id: string;
+  invoice_no: string;
   billing_month: number;
   billing_year: number;
   billing_period: BillingPeriod;
@@ -484,16 +573,26 @@ export type CollectionPaymentFormValues = {
   notes: string;
 };
 
-export type SalaryBondFormValues = {
+export type EmployeeAdvanceFormValues = {
   employee_id: string;
-  bond_type: string;
+  advance_type: EmployeeAdvanceType;
   date_granted: string;
   start_deduction: string;
   purpose: string;
   amount: string;
   balance: string;
   deduction_per_payroll: string;
-  status: SalaryBondStatus;
+  status: EmployeeAdvanceStatus;
+  notes: string;
+};
+
+export type SubcontractorAdvanceFormValues = {
+  subcontractor_id: string;
+  date_granted: string;
+  amount: string;
+  deduction_mode: SubcontractorAdvanceDeductionMode;
+  deduction_per_billing: string;
+  status: SubcontractorAdvanceStatus;
   notes: string;
 };
 
@@ -514,11 +613,20 @@ export type EmployeeFormValues = {
   sss_number: string;
   philhealth_number: string;
   pagibig_number: string;
+  sss_deduction: string;
+  philhealth_deduction: string;
+  pagibig_deduction: string;
+  withholding_tax: string;
   tin_number: string;
   emergency_contact_name: string;
   emergency_contact_number: string;
   emergency_contact_relation: string;
   notes: string;
+};
+
+export type PayrollSettingsFormValues = {
+  government_deduction_enabled: boolean;
+  government_deduction_cutoff: PayrollGovernmentDeductionCutoff;
 };
 
 export type PayrollRunFormValues = {

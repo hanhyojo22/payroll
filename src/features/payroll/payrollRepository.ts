@@ -3,6 +3,7 @@ import type {
   PayrollHistoryRow,
   PayrollRun,
   PayrollRunItem,
+  PayrollSettings,
   PayrollRunWithItems,
 } from "../../types";
 
@@ -11,6 +12,7 @@ type AppErrorLike = { message?: string; details?: string | null; code?: string }
 const toNumber = (value: string | number | null | undefined) => Number(value ?? 0);
 const payPeriodLabel = (payPeriod: PayrollRun["pay_period"]) =>
   payPeriod === "first_half" ? "First half" : "Second half";
+const PAYROLL_SETTINGS_SELECT = "id,user_id,government_deduction_enabled,government_deduction_cutoff,created_at,updated_at";
 
 export async function fetchPayrollRuns(supabase: SupabaseClient) {
   const result = await supabase
@@ -38,6 +40,45 @@ export async function fetchPayrollRunItems(supabase: SupabaseClient, payrollRunI
     data: (result.data ?? []) as PayrollRunItem[],
     error: result.error as AppErrorLike | null,
   };
+}
+
+export async function fetchPayrollSettings(supabase: SupabaseClient) {
+  const result = await supabase
+    .from("payroll_settings")
+    .select(PAYROLL_SETTINGS_SELECT)
+    .limit(1)
+    .maybeSingle();
+
+  return {
+    data: result.data as PayrollSettings | null,
+    error: result.error as AppErrorLike | null,
+  };
+}
+
+export async function ensurePayrollSettings(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<{ data: PayrollSettings; error: AppErrorLike | null }> {
+  const existing = await fetchPayrollSettings(supabase);
+  if (existing.data) return { data: existing.data, error: null };
+
+  const result = await supabase
+    .from("payroll_settings")
+    .upsert({ user_id: userId, government_deduction_enabled: true, government_deduction_cutoff: "second_half" }, { onConflict: "user_id" })
+    .select(PAYROLL_SETTINGS_SELECT)
+    .single();
+
+  return { data: result.data as PayrollSettings, error: result.error as AppErrorLike | null };
+}
+
+export async function savePayrollSettings(
+  supabase: SupabaseClient,
+  userId: string,
+  payload: { government_deduction_enabled: boolean; government_deduction_cutoff: PayrollSettings["government_deduction_cutoff"] },
+) {
+  return supabase
+    .from("payroll_settings")
+    .upsert({ user_id: userId, ...payload }, { onConflict: "user_id" });
 }
 
 export async function fetchPayrollHistoryRows(

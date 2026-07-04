@@ -11,33 +11,49 @@ import { DataTable } from "../../shared/components/DataTable";
 import { MoneyField } from "../../shared/components/MoneyField";
 import { PageHeader, Toolbar } from "../../shared/components/PageLayout";
 import { StatusBadge } from "../../shared/components/StatusBadge";
-import type { Notice } from "../../shared/types";
+import type { Notice, QueueOfflineMutation } from "../../shared/types";
 import { currency } from "../../shared/utils/currency";
 import { monthNames, todayKey } from "../../shared/utils/dates";
-import type { BillingPeriod, BillingRecord, PaymentReminder, SubconDailyTicket, Subcontractor } from "../../types";
+import type { BillingPeriod, BillingRecord, PaymentReminder, SubconDailyTicket, Subcontractor, SubcontractorAdvance, SubcontractorAdvanceFormValues } from "../../types";
 
-type AccountTab = "daily" | "billing" | "payouts";
+type AccountTab = "daily" | "billing" | "payouts" | "advances";
+
+function emptySubcontractorAdvanceForm(subcontractorId: string): SubcontractorAdvanceFormValues {
+  return {
+    subcontractor_id: subcontractorId,
+    date_granted: todayKey(),
+    amount: "",
+    deduction_mode: "full_payout",
+    deduction_per_billing: "",
+    status: "active",
+    notes: "",
+  };
+}
 
 export function SubcontractorsFeature({
   billingRecords,
   initialTab,
   onChange,
+  onQueueOfflineMutation,
   onSelectSubcontractor,
   payments,
   selectedSubcontractorId,
   setNotice,
   subconDailyTickets,
+  subcontractorAdvances,
   subcontractors,
   userId,
 }: {
   billingRecords: BillingRecord[];
   initialTab?: AccountTab;
   onChange: () => Promise<void>;
+  onQueueOfflineMutation: QueueOfflineMutation;
   onSelectSubcontractor: (subcontractorId: string) => void;
   payments: PaymentReminder[];
   selectedSubcontractorId: string | null;
   setNotice: (notice: Notice) => void;
   subconDailyTickets: SubconDailyTicket[];
+  subcontractorAdvances: SubcontractorAdvance[];
   subcontractors: Subcontractor[];
   userId: string;
 }) {
@@ -80,10 +96,14 @@ export function SubcontractorsFeature({
         billingRecords,
         dailyTickets: subconDailyTickets,
         payments,
+        subcontractorAdvances,
       });
-      return { subcontractor, pending: account.netPending, tickets: account.ticketsThisPeriod };
+      const advanceBalance = subcontractorAdvances
+        .filter((advance) => advance.subcontractor_id === subcontractor.id && advance.status === "active")
+        .reduce((sum, advance) => sum + Number(advance.balance), 0);
+      return { subcontractor, pending: account.netPending, tickets: account.ticketsThisPeriod, advanceBalance };
     });
-  }, [billingRecords, filtered, payments, subconDailyTickets]);
+  }, [billingRecords, filtered, payments, subconDailyTickets, subcontractorAdvances]);
 
   async function toggleArchive(subcontractor: Subcontractor) {
     if (!supabase) return;
@@ -152,7 +172,7 @@ export function SubcontractorsFeature({
                 <span>Try a different search or add a new subcontractor.</span>
               </div>
             ) : (
-              listRows.map(({ subcontractor, pending, tickets }) => (
+              listRows.map(({ subcontractor, pending, tickets, advanceBalance }) => (
                 <button
                   className={selected?.id === subcontractor.id ? "subcon-rail-card active" : "subcon-rail-card"}
                   key={subcontractor.id}
@@ -164,7 +184,7 @@ export function SubcontractorsFeature({
                     <StatusBadge status={subcontractor.status} />
                   </div>
                   <div className="subcon-rail-card-meta">
-                    <span>{tickets} tickets this period</span>
+                    <span>{tickets} tickets · advances {currency.format(advanceBalance)}</span>
                     <strong>{currency.format(pending)}</strong>
                   </div>
                 </button>
@@ -188,11 +208,16 @@ export function SubcontractorsFeature({
               onMarkPaymentPaid={markPaymentPaid}
               onMarkLatestPendingPaid={markLatestPendingPaid}
               onOpenBillingRow={setDrawerRow}
+              onQueueOfflineMutation={onQueueOfflineMutation}
               payments={payments}
               selected={selected}
               setTab={setTab}
               subconDailyTickets={subconDailyTickets}
+              subcontractorAdvances={subcontractorAdvances}
               tab={tab}
+              userId={userId}
+              onChange={onChange}
+              setNotice={setNotice}
             />
           )}
         </section>
@@ -241,28 +266,38 @@ export function SubcontractorsFeature({
 
 function SubcontractorAccountPanel({
   billingRecords,
+  onChange,
   onArchive,
   onEdit,
   onMarkLatestPendingPaid,
   onMarkPaymentPaid,
   onOpenBillingRow,
+  onQueueOfflineMutation,
   payments,
   selected,
   setTab,
+  setNotice,
   subconDailyTickets,
+  subcontractorAdvances,
   tab,
+  userId,
 }: {
   billingRecords: BillingRecord[];
+  onChange: () => Promise<void>;
   onArchive: (subcontractor: Subcontractor) => Promise<void>;
   onEdit: (subcontractor: Subcontractor) => void;
   onMarkLatestPendingPaid: () => Promise<void>;
   onMarkPaymentPaid: (payment: PaymentReminder) => Promise<void>;
   onOpenBillingRow: (row: BillingRecord["subcon_items"][number] & { billing_month: number; billing_year: number; billing_period: BillingPeriod }) => void;
+  onQueueOfflineMutation: QueueOfflineMutation;
   payments: PaymentReminder[];
   selected: Subcontractor;
   setTab: (tab: AccountTab) => void;
+  setNotice: (notice: Notice) => void;
   subconDailyTickets: SubconDailyTicket[];
+  subcontractorAdvances: SubcontractorAdvance[];
   tab: AccountTab;
+  userId: string;
 }) {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -270,6 +305,9 @@ function SubcontractorAccountPanel({
   const [activeCalendar, setActiveCalendar] = useState<"start" | "end" | null>(null);
   const [calendarYear, setCalendarYear] = useState(() => Number(todayKey().split("-")[0]));
   const [calendarMonth, setCalendarMonth] = useState(() => Number(todayKey().split("-")[1]));
+  const [editingAdvance, setEditingAdvance] = useState<SubcontractorAdvance | null>(null);
+  const [advanceForm, setAdvanceForm] = useState<SubcontractorAdvanceFormValues>(() => emptySubcontractorAdvanceForm(selected.id));
+  const [advanceBusy, setAdvanceBusy] = useState(false);
   const calendarRef = useRef<HTMLDivElement>(null);
   const isMatchingPeriod = (value: string) => {
     if (periodFilter === "all") return true;
@@ -282,7 +320,13 @@ function SubcontractorAccountPanel({
     billingRecords,
     dailyTickets: subconDailyTickets,
     payments,
-  }), [billingRecords, payments, selected, subconDailyTickets]);
+    subcontractorAdvances,
+  }), [billingRecords, payments, selected, subconDailyTickets, subcontractorAdvances]);
+
+  useEffect(() => {
+    setEditingAdvance(null);
+    setAdvanceForm(emptySubcontractorAdvanceForm(selected.id));
+  }, [selected.id]);
 
   const filteredTickets = useMemo(() => {
     return filterSubcontractorDailyTickets(subconDailyTickets, selected.id, startDate || undefined, endDate || undefined)
@@ -299,6 +343,89 @@ function SubcontractorAccountPanel({
         ),
       );
   }, [payments, selected.id]);
+
+  const selectedAdvances = useMemo(() => subcontractorAdvances
+    .filter((advance) => advance.subcontractor_id === selected.id)
+    .sort((a, b) => b.date_granted.localeCompare(a.date_granted)),
+  [selected.id, subcontractorAdvances]);
+
+  const activeAdvanceBalance = selectedAdvances
+    .filter((advance) => advance.status === "active")
+    .reduce((sum, advance) => sum + Number(advance.balance), 0);
+
+  async function saveAdvance(event: FormEvent) {
+    event.preventDefault();
+    if (!supabase) return;
+    const amount = Number(advanceForm.amount) || 0;
+    const balance = editingAdvance ? Number(editingAdvance.balance) || 0 : amount;
+    const deductionPerBilling = advanceForm.deduction_mode === "per_billing"
+      ? Number(advanceForm.deduction_per_billing) || 0
+      : 0;
+    if (amount <= 0) {
+      setNotice({ type: "error", text: "Enter a cash advance amount greater than zero." });
+      return;
+    }
+    if (advanceForm.deduction_mode === "per_billing" && deductionPerBilling <= 0) {
+      setNotice({ type: "error", text: "Enter a per-billing deduction amount greater than zero." });
+      return;
+    }
+    setAdvanceBusy(true);
+    const payload = {
+      user_id: userId,
+      subcontractor_id: selected.id,
+      subcon_name: selected.name,
+      advance_id: editingAdvance?.advance_id ?? `SCA-${Date.now().toString(36).toUpperCase()}`,
+      date_granted: advanceForm.date_granted,
+      amount,
+      balance,
+      deduction_mode: advanceForm.deduction_mode,
+      deduction_per_billing: deductionPerBilling,
+      status: advanceForm.status,
+      notes: advanceForm.notes.trim(),
+    };
+
+    if (!navigator.onLine) {
+      await onQueueOfflineMutation({
+        resource: "subcontractorAdvances",
+        affectedResources: ["subcontractorAdvances", "dashboardSummary"],
+        operation: editingAdvance ? "update" : "insert",
+        table: "subcontractor_advances",
+        recordId: editingAdvance?.id,
+        payload,
+      });
+      setEditingAdvance(null);
+      setAdvanceForm(emptySubcontractorAdvanceForm(selected.id));
+      setAdvanceBusy(false);
+      return;
+    }
+
+    const result = editingAdvance
+      ? await supabase.from("subcontractor_advances").update(payload).eq("id", editingAdvance.id)
+      : await supabase.from("subcontractor_advances").insert(payload);
+    setAdvanceBusy(false);
+    if (result.error) {
+      setNotice({ type: "error", text: (result.error as { message?: string }).message ?? "Failed to save cash advance." });
+      return;
+    }
+    setNotice({ type: "success", text: editingAdvance ? "Cash advance updated." : "Cash advance saved." });
+    setEditingAdvance(null);
+    setAdvanceForm(emptySubcontractorAdvanceForm(selected.id));
+    await onChange();
+  }
+
+  function editAdvance(advance: SubcontractorAdvance) {
+    setEditingAdvance(advance);
+    setAdvanceForm({
+      subcontractor_id: advance.subcontractor_id ?? selected.id,
+      date_granted: advance.date_granted,
+      amount: String(advance.amount),
+      deduction_mode: advance.deduction_mode,
+      deduction_per_billing: String(advance.deduction_per_billing),
+      status: advance.status,
+      notes: advance.notes,
+    });
+    setTab("advances");
+  }
 
   const paymentByItemId = useMemo(() => new Map(
     subconPayments
@@ -444,13 +571,14 @@ function SubcontractorAccountPanel({
         <KpiCard icon={<Ticket size={18} />} label="Tickets this period" value={String(displaySummary.ticketsThisPeriod)} />
         <KpiCard icon={<WalletCards size={18} />} label="Net pending" value={currency.format(displaySummary.netPending)} emphasis />
         <KpiCard icon={<CheckCircle2 size={18} />} label="Paid this month" value={currency.format(displaySummary.paidThisMonth)} />
-        <KpiCard icon={<ReceiptText size={18} />} label="Last payout status" value={displaySummary.lastPayoutStatus || "No payouts yet"} />
+        <KpiCard icon={<ReceiptText size={18} />} label="Cash advance balance" value={currency.format(activeAdvanceBalance)} />
       </div>
 
       <div className="page-tabs subcon-account-tabs" role="tablist">
         <button className={tab === "daily" ? "active" : ""} onClick={() => setTab("daily")} role="tab" type="button">Daily Tickets</button>
         <button className={tab === "billing" ? "active" : ""} onClick={() => setTab("billing")} role="tab" type="button">Billing & Net</button>
         <button className={tab === "payouts" ? "active" : ""} onClick={() => setTab("payouts")} role="tab" type="button">Payouts</button>
+        <button className={tab === "advances" ? "active" : ""} onClick={() => setTab("advances")} role="tab" type="button">Cash Advances</button>
       </div>
 
       {tab === "daily" && (
@@ -644,6 +772,79 @@ function SubcontractorAccountPanel({
               : "—",
           ])}
         />
+      )}
+
+      {tab === "advances" && (
+        <div className="page-stack">
+          <form className="employee-advance-form" onSubmit={saveAdvance}>
+            <div className="employee-advance-selected-employee">
+              <span>{editingAdvance ? "Edit cash advance" : "New cash advance"}</span>
+              <strong>{selected.name}</strong>
+              {editingAdvance && (
+                <button aria-label="Cancel editing cash advance" onClick={() => {
+                  setEditingAdvance(null);
+                  setAdvanceForm(emptySubcontractorAdvanceForm(selected.id));
+                }} type="button">
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+            <label>
+              Date Granted *
+              <input required type="date" value={advanceForm.date_granted} onChange={(event) => setAdvanceForm({ ...advanceForm, date_granted: event.target.value })} />
+            </label>
+            <MoneyField label="Amount *" onChange={(amountValue) => setAdvanceForm({ ...advanceForm, amount: amountValue })} required value={advanceForm.amount} />
+            <label>
+              Deduction Method
+              <select value={advanceForm.deduction_mode} onChange={(event) => setAdvanceForm({ ...advanceForm, deduction_mode: event.target.value as SubcontractorAdvance["deduction_mode"] })}>
+                <option value="full_payout">Full paid from payout</option>
+                <option value="per_billing">Per billing deduction</option>
+              </select>
+            </label>
+            <MoneyField
+              disabled={advanceForm.deduction_mode !== "per_billing"}
+              label="Deduction Per Billing"
+              onChange={(value) => setAdvanceForm({ ...advanceForm, deduction_per_billing: value })}
+              required={advanceForm.deduction_mode === "per_billing"}
+              value={advanceForm.deduction_per_billing}
+            />
+            <label>
+              Status
+              <select value={advanceForm.status} onChange={(event) => setAdvanceForm({ ...advanceForm, status: event.target.value as SubcontractorAdvance["status"] })}>
+                <option value="active">Active</option>
+                <option value="completed">Completed</option>
+                <option value="archived">Archived</option>
+              </select>
+            </label>
+            <label className="employee-advance-form-wide">
+              Notes
+              <textarea placeholder="Purpose, release details, or reminders..." value={advanceForm.notes} onChange={(event) => setAdvanceForm({ ...advanceForm, notes: event.target.value })} />
+            </label>
+            <div className="employee-advance-form-actions">
+              <button className="secondary-button" onClick={() => {
+                setEditingAdvance(null);
+                setAdvanceForm(emptySubcontractorAdvanceForm(selected.id));
+              }} type="button">Clear</button>
+              <button className="primary-button" disabled={advanceBusy} type="submit">{advanceBusy ? "Saving..." : editingAdvance ? "Update advance" : "Save cash advance"}</button>
+            </div>
+          </form>
+          <DataTable
+            empty="No cash advances for this subcontractor yet."
+            headers={["Reference", "Date", "Amount", "Balance", "Deduction", "Status", "Notes", "Action"]}
+            rows={selectedAdvances.map((advance) => [
+              advance.advance_id,
+              advance.date_granted,
+              currency.format(Number(advance.amount)),
+              <strong className="subcon-net-value" key={`${advance.id}-balance`}>{currency.format(Number(advance.balance))}</strong>,
+              advance.deduction_mode === "per_billing"
+                ? `${currency.format(Number(advance.deduction_per_billing))} / billing`
+                : "Full paid from payout",
+              <StatusBadge key={`${advance.id}-status`} status={advance.status} />,
+              advance.notes || "-",
+              <button className="secondary-button compact" key={`${advance.id}-edit`} onClick={() => editAdvance(advance)} type="button"><Pencil size={14} /> Edit</button>,
+            ])}
+          />
+        </div>
       )}
     </>
   );

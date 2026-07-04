@@ -5,6 +5,7 @@ import type {
   PaymentReminder,
   SubconDailyTicket,
   Subcontractor,
+  SubcontractorAdvance,
 } from "../types";
 
 function filterByPeriod(entries: DailyTicketEntry[], month: number, year: number, period?: BillingPeriod): DailyTicketEntry[] {
@@ -16,6 +17,25 @@ function filterByPeriod(entries: DailyTicketEntry[], month: number, year: number
   });
 }
 
+function clampedBillableByType(entry: DailyTicketEntry) {
+  const details = entry.details ?? [];
+  const installation = details.length > 0
+    ? details
+      .filter((detail) => (detail.ticket_type ?? "installation") === "installation")
+      .reduce((sum, detail) => sum + (detail.ticket_count ?? 0), 0)
+    : (entry.installation_tickets ?? 0);
+  const repair = details.length > 0
+    ? details
+      .filter((detail) => detail.ticket_type === "repair")
+      .reduce((sum, detail) => sum + (detail.ticket_count ?? 0), 0)
+    : (entry.repair_tickets ?? 0);
+
+  return {
+    installation: Math.max(0, installation - Math.min(installation, entry.disputed_install ?? 0)),
+    repair: Math.max(0, repair - Math.min(repair, entry.disputed_repair ?? 0)),
+  };
+}
+
 export function countTicketsForMonth(
   entries: DailyTicketEntry[],
   month: number,
@@ -24,10 +44,8 @@ export function countTicketsForMonth(
 ): number {
   return filterByPeriod(entries, month, year, period)
     .reduce((sum, entry) => {
-      if (entry.details && entry.details.length > 0) {
-        return sum + entry.details.reduce((s, d) => s + (d.ticket_count ?? 0), 0);
-      }
-      return sum + (entry.installation_tickets ?? 0) + (entry.repair_tickets ?? 0);
+      const counts = clampedBillableByType(entry);
+      return sum + counts.installation + counts.repair;
     }, 0);
 }
 
@@ -39,22 +57,10 @@ export function countTicketsByType(
 ): { installation: number; repair: number } {
   return filterByPeriod(entries, month, year, period).reduce(
     (acc, entry) => {
-      const details = entry.details ?? [];
-      if (details.length > 0) {
-        const installation = details
-          .filter((d) => (d.ticket_type ?? "installation") === "installation")
-          .reduce((s, d) => s + d.ticket_count, 0);
-        const repair = details
-          .filter((d) => d.ticket_type === "repair")
-          .reduce((s, d) => s + d.ticket_count, 0);
-        return {
-          installation: acc.installation + installation,
-          repair: acc.repair + repair,
-        };
-      }
+      const counts = clampedBillableByType(entry);
       return {
-        installation: acc.installation + (entry.installation_tickets ?? 0),
-        repair: acc.repair + (entry.repair_tickets ?? 0),
+        installation: acc.installation + counts.installation,
+        repair: acc.repair + counts.repair,
       };
     },
     { installation: 0, repair: 0 },
@@ -181,24 +187,93 @@ export function buildSubcontractorPaymentPayloads(args: {
   existingPayments?: PaymentReminder[];
   monthName: string;
 }): Array<Omit<PaymentReminder, "created_at" | "updated_at">> {
+  return buildSubcontractorPayoutArtifacts(args).payoutPayloads;
+}
+
+export type SubcontractorAdvanceUpdate = { id: string; payload: Pick<SubcontractorAdvance, "balance" | "status"> };
+
+export function buildSubcontractorPayoutArtifacts(args: {
+  billingMonth: number;
+  billingYear: number;
+  billingPeriod: BillingPeriod;
+  dueDate: string;
+  userId: string;
+  items: BillingSubconItem[];
+  existingPayments?: PaymentReminder[];
+  monthName: string;
+  subcontractorAdvances?: SubcontractorAdvance[];
+}): {
+  payoutPayloads: Array<Omit<PaymentReminder, "created_at" | "updated_at">>;
+  advanceUpdates: SubcontractorAdvanceUpdate[];
+} {
   const paymentByItemId = new Map(
     (args.existingPayments ?? [])
       .filter((p) => p.billing_subcon_item_id !== null)
       .map((payment) => [payment.billing_subcon_item_id!, payment]),
   );
   const periodLabel = billingPeriodLabel(args.billingPeriod);
+  const activeAdvancesBySubcontractor = new Map<string, SubcontractorAdvance[]>();
+  (args.subcontractorAdvances ?? [])
+    .filter((advance) => advance.status === "active" && advance.subcontractor_id && Number(advance.balance) > 0)
+    .sort((a, b) => `${a.date_granted}-${a.created_at}`.localeCompare(`${b.date_granted}-${b.created_at}`))
+    .forEach((advance) => {
+      const list = activeAdvancesBySubcontractor.get(advance.subcontractor_id!) ?? [];
+      list.push({ ...advance });
+      activeAdvancesBySubcontractor.set(advance.subcontractor_id!, list);
+    });
+  const advanceUpdates = new Map<string, SubcontractorAdvanceUpdate>();
 
-  return args.items.map((item) => {
+  const payoutPayloads = args.items.map((item) => {
     const existing = paymentByItemId.get(item.id);
+    const isPaid = existing?.status === "paid";
+    const shouldPreserveExisting = Boolean(existing);
+    let advanceDeduction = 0;
+
+    if (!shouldPreserveExisting) {
+      const advances = activeAdvancesBySubcontractor.get(item.subcontractor_id) ?? [];
+      let remainingDeductionCapacity = item.payable_amount;
+
+      for (const advance of advances) {
+        if (remainingDeductionCapacity <= 0) break;
+        const currentBalance = Number(advance.balance) || 0;
+        if (currentBalance <= 0) continue;
+        const configuredDeduction = advance.deduction_mode === "per_billing"
+          ? Number(advance.deduction_per_billing) || 0
+          : currentBalance;
+        if (configuredDeduction <= 0) continue;
+        const deduction = Math.min(currentBalance, configuredDeduction, remainingDeductionCapacity);
+        const nextBalance = Math.round((currentBalance - deduction) * 100) / 100;
+        advance.balance = nextBalance;
+        advance.status = nextBalance === 0 ? "completed" : advance.status;
+        advanceDeduction += deduction;
+        remainingDeductionCapacity = Math.round((remainingDeductionCapacity - deduction) * 100) / 100;
+        advanceUpdates.set(advance.id, {
+          id: advance.id,
+          payload: {
+            balance: nextBalance,
+            status: nextBalance === 0 ? "completed" : advance.status,
+          },
+        });
+      }
+    }
+
+    const netAmount = shouldPreserveExisting
+      ? existing!.amount
+      : Math.round((item.payable_amount - advanceDeduction) * 100) / 100;
+    const baseNote = `${args.monthName} ${args.billingYear} · ${periodLabel}`;
+    const deductionNote = advanceDeduction > 0
+      ? `Gross payable PHP ${item.payable_amount.toFixed(2)} - Cash advance PHP ${advanceDeduction.toFixed(2)} = Net payout PHP ${netAmount.toFixed(2)}`
+      : baseNote;
+
     return {
       id: existing?.id ?? crypto.randomUUID(),
       user_id: args.userId,
       title: item.subcon_name,
       type: "subcontractor" as const,
-      amount: item.payable_amount,
+      amount: netAmount,
       due_date: existing?.due_date ?? args.dueDate,
-      status: (existing?.status === "paid" ? "paid" : "pending") as PaymentReminder["status"],
-      notes: `${args.monthName} ${args.billingYear} · ${periodLabel}`,
+      status: (isPaid ? "paid" : "pending") as PaymentReminder["status"],
+      notes: shouldPreserveExisting ? existing!.notes : deductionNote,
       subcontractor_id: item.subcontractor_id,
       billing_subcon_item_id: item.id,
       billing_month: args.billingMonth,
@@ -206,6 +281,8 @@ export function buildSubcontractorPaymentPayloads(args: {
       billing_period: args.billingPeriod,
     };
   });
+
+  return { payoutPayloads, advanceUpdates: Array.from(advanceUpdates.values()) };
 }
 
 export function buildSubcontractorAccountSummary(args: {
@@ -218,6 +295,7 @@ export function buildSubcontractorAccountSummary(args: {
   }>;
   dailyTickets: SubconDailyTicket[];
   payments: PaymentReminder[];
+  subcontractorAdvances?: SubcontractorAdvance[];
   today?: Date;
 }) {
   const today = args.today ?? new Date();

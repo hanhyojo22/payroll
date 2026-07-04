@@ -1,4 +1,4 @@
-import type { AttendanceEntry, DailyTicketEntry, Employee, PayrollPayPeriod, PayrollRun, PayrollRunItem, Position } from "../types";
+import type { AttendanceEntry, DailyTicketEntry, Employee, PayrollPayPeriod, PayrollRun, PayrollRunItem, PayrollSettings, Position } from "../types";
 import {
   normalizeTicketCount,
   toNumber,
@@ -6,6 +6,27 @@ import {
 
 export const payPeriodLabel = (payPeriod: PayrollRun["pay_period"]) =>
   payPeriod === "first_half" ? "First half" : "Second half";
+
+export function governmentDeductionForEmployee(
+  employee: Employee,
+  payrollSettings: PayrollSettings | null,
+  payPeriod: PayrollPayPeriod,
+) {
+  if (
+    !payrollSettings ||
+    !payrollSettings.government_deduction_enabled ||
+    payrollSettings.government_deduction_cutoff !== payPeriod
+  ) {
+    return 0;
+  }
+
+  return (
+    toNumber(employee.sss_deduction) +
+    toNumber(employee.philhealth_deduction) +
+    toNumber(employee.pagibig_deduction) +
+    toNumber(employee.withholding_tax)
+  );
+}
 
 export function dailyTicketEntriesForPayrollPeriod(
   entries: DailyTicketEntry[],
@@ -63,15 +84,76 @@ export function attendanceTotalsForEmployee(
   };
 }
 
+function clampDisputedCount(total: number, disputed: number) {
+  return Math.min(total, Math.max(0, normalizeTicketCount(disputed)));
+}
+
+function distributeRemainingCounts<T extends { ticket_count: number }>(
+  details: T[],
+  disputedCount: number,
+) {
+  const total = details.reduce((sum, detail) => sum + normalizeTicketCount(detail.ticket_count), 0);
+  const clampedDisputed = clampDisputedCount(total, disputedCount);
+  const targetRemaining = total - clampedDisputed;
+  if (targetRemaining <= 0) {
+    return details.map((detail) => ({ ...detail, remainingCount: 0 }));
+  }
+  if (targetRemaining >= total) {
+    return details.map((detail) => ({ ...detail, remainingCount: normalizeTicketCount(detail.ticket_count) }));
+  }
+
+  const scaled = details.map((detail, index) => {
+    const originalCount = normalizeTicketCount(detail.ticket_count);
+    const exact = originalCount * targetRemaining / total;
+    const remainingCount = Math.floor(exact);
+    return { detail, index, originalCount, exact, remainingCount, fraction: exact - remainingCount };
+  });
+
+  let remainder = targetRemaining - scaled.reduce((sum, item) => sum + item.remainingCount, 0);
+  scaled
+    .slice()
+    .sort((a, b) => {
+      if (b.fraction !== a.fraction) return b.fraction - a.fraction;
+      return a.index - b.index;
+    })
+    .forEach((item) => {
+      if (remainder <= 0) return;
+      if (item.remainingCount < item.originalCount) {
+        item.remainingCount += 1;
+        remainder -= 1;
+      }
+    });
+
+  return scaled
+    .sort((a, b) => a.index - b.index)
+    .map((item) => ({ ...item.detail, remainingCount: item.remainingCount }));
+}
+
 export function dailyTicketTotalsForEmployee(entries: DailyTicketEntry[], employee: Employee) {
   const employeeEntries = entries.filter((entry) => entry.employee_id === employee.id);
-  const normalizedDetails = employeeEntries.flatMap((entry) => entry.details ?? []);
+  const normalizedDetails = employeeEntries.flatMap((entry) => {
+    const details = entry.details ?? [];
+    if (details.length === 0) return [];
+
+    const installationDetails = details.filter((detail) => (detail.ticket_type ?? "installation") === "installation");
+    const repairDetails = details.filter((detail) => detail.ticket_type === "repair");
+    const adjustedInstallation = distributeRemainingCounts(installationDetails, entry.disputed_install ?? 0);
+    const adjustedRepair = distributeRemainingCounts(repairDetails, entry.disputed_repair ?? 0);
+
+    return [...adjustedInstallation, ...adjustedRepair]
+      .filter((detail) => detail.remainingCount > 0)
+      .map((detail) => ({
+        ...detail,
+        ticket_count: detail.remainingCount,
+      }));
+  });
   if (normalizedDetails.length > 0) {
     const grouped = new Map<string, {
       position_ticket_category_id: string | null;
       category_name: string;
       ticket_count: number;
       rate: number;
+      ticket_type?: "installation" | "repair";
     }>();
     normalizedDetails.forEach((detail) => {
       const key = `${detail.position_ticket_category_id ?? detail.category_name}:${toNumber(detail.rate)}`;
@@ -81,27 +163,42 @@ export function dailyTicketTotalsForEmployee(entries: DailyTicketEntry[], employ
         category_name: detail.category_name,
         ticket_count: (current?.ticket_count ?? 0) + normalizeTicketCount(detail.ticket_count),
         rate: toNumber(detail.rate),
+        ticket_type: detail.ticket_type,
       });
     });
     const details = Array.from(grouped.values()).map((detail) => ({
       ...detail,
       amount: detail.ticket_count * detail.rate,
     }));
+    const installationTickets = details
+      .filter((detail) => (detail.ticket_type ?? "installation") === "installation")
+      .reduce((sum, detail) => sum + detail.ticket_count, 0);
+    const repairTickets = details
+      .filter((detail) => detail.ticket_type === "repair")
+      .reduce((sum, detail) => sum + detail.ticket_count, 0);
     return {
       gross: details.reduce((sum, detail) => sum + detail.amount, 0),
-      installationTickets: 0,
-      repairTickets: 0,
-      details,
+      installationTickets,
+      repairTickets,
+      details: details.map(({ ticket_type: _ticketType, ...detail }) => detail),
     };
   }
-  const installationTickets = employeeEntries.reduce((sum, entry) => sum + normalizeTicketCount(entry.installation_tickets), 0);
-  const repairTickets = employeeEntries.reduce((sum, entry) => sum + normalizeTicketCount(entry.repair_tickets), 0);
+  const installationTickets = employeeEntries.reduce(
+    (sum, entry) => sum + Math.max(0, normalizeTicketCount(entry.installation_tickets) - clampDisputedCount(entry.installation_tickets, entry.disputed_install ?? 0)),
+    0,
+  );
+  const repairTickets = employeeEntries.reduce(
+    (sum, entry) => sum + Math.max(0, normalizeTicketCount(entry.repair_tickets) - clampDisputedCount(entry.repair_tickets, entry.disputed_repair ?? 0)),
+    0,
+  );
   const installationGross = employeeEntries.reduce(
-    (sum, entry) => sum + normalizeTicketCount(entry.installation_tickets) * toNumber(entry.installation_rate),
+    (sum, entry) =>
+      sum + Math.max(0, normalizeTicketCount(entry.installation_tickets) - clampDisputedCount(entry.installation_tickets, entry.disputed_install ?? 0)) * toNumber(entry.installation_rate),
     0,
   );
   const repairGross = employeeEntries.reduce(
-    (sum, entry) => sum + normalizeTicketCount(entry.repair_tickets) * toNumber(entry.repair_rate),
+    (sum, entry) =>
+      sum + Math.max(0, normalizeTicketCount(entry.repair_tickets) - clampDisputedCount(entry.repair_tickets, entry.disputed_repair ?? 0)) * toNumber(entry.repair_rate),
     0,
   );
 
