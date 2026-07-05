@@ -586,6 +586,114 @@ input[type="radio"] {
   color: var(--color-success-text);
 }
 
+/* ── NotificationService: toasts ── */
+
+.toast-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: min(380px, calc(100vw - 32px));
+  position: fixed;
+  right: 24px;
+  top: 24px;
+  z-index: 70;
+}
+
+.toast {
+  align-items: flex-start;
+  background: var(--color-surface);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  font-weight: 500;
+  gap: 10px;
+  padding: 14px 16px;
+}
+
+.toast p {
+  flex: 1;
+  line-height: 1.4;
+  margin: 0;
+}
+
+.toast button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: currentColor;
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 26px;
+  justify-content: center;
+  margin: -4px -6px 0 0;
+  padding: 0;
+  width: 26px;
+}
+
+.toast button:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.toast-success {
+  background: var(--color-success-bg);
+  border-color: rgba(52, 199, 89, 0.25);
+  color: var(--color-success-text);
+}
+
+.toast-error {
+  background: var(--color-danger-bg);
+  border-color: rgba(255, 59, 48, 0.2);
+  color: var(--color-danger-text);
+}
+
+.toast-warning {
+  background: var(--color-warning-bg);
+  border-color: rgba(255, 149, 0, 0.25);
+  color: var(--color-warning-text);
+}
+
+.toast-info {
+  background: rgba(0, 113, 227, 0.08);
+  border-color: rgba(0, 113, 227, 0.2);
+  color: var(--color-accent);
+}
+
+/* ── NotificationService: loading overlay ── */
+
+.loading-overlay {
+  align-items: center;
+  background: rgba(0, 0, 0, 0.48);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  color: #ffffff;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  inset: 0;
+  justify-content: center;
+  position: fixed;
+  z-index: 80;
+}
+
+.loading-overlay .spinner {
+  border-color: rgba(255, 255, 255, 0.3);
+  border-top-color: #ffffff;
+  height: 40px;
+  width: 40px;
+}
+
+.loading-overlay p {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  margin: 0;
+}
+
+@media (max-width: 640px) {
+  .toast-stack { left: 16px; right: 16px; top: 16px; max-width: none; }
+}
+
 /* ── App Shell ── */
 
 .app-shell {
