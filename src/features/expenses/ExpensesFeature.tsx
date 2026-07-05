@@ -457,6 +457,17 @@ export function ExpensesFeature({
     await onChange();
   }
 
+  function expenseRowMeta(expense: Expense) {
+    const displayStatus = expenseDisplayStatus(expense, expense.installment_payments);
+    const totalAmount = expenseTotalAmount(expense);
+    const remainingBalance = expenseRemainingBalance(expense, expense.installment_payments);
+    const isOverdue = isExpenseOverdue(expense, expense.installment_payments, todayKey());
+    const hasPayments = expense.installment_payments.length > 0;
+    const canRecordPayment = displayStatus !== "paid" && displayStatus !== "cancelled";
+    const isOpenEndedRecurring = expense.frequency !== "one_time" && !expense.duration_months;
+    return { displayStatus, totalAmount, remainingBalance, isOverdue, hasPayments, canRecordPayment, isOpenEndedRecurring };
+  }
+
   return (
     <div className="billing-page">
       <PageHeader
@@ -532,16 +543,15 @@ export function ExpensesFeature({
           <p>No expenses found</p>
           <span>Add an expense or adjust the filters to see records here.</span>
         </div>
-      ) : (
+      ) : categoryScope === "company" ? (
         <div className="billing-table-wrap">
           <table className="billing-table">
             <thead>
               <tr>
                 <th>Date</th>
                 <th>Category</th>
-                <th>{categoryScope === "personal" ? "Name" : "Employee"}</th>
-                {categoryScope === "personal" && <th>Due date</th>}
-                {categoryScope === "company" && <th>Payment date</th>}
+                <th>Employee</th>
+                <th>Payment date</th>
                 <th className="num">Total</th>
                 <th className="num">Paid</th>
                 <th className="num">Remaining</th>
@@ -551,40 +561,25 @@ export function ExpensesFeature({
             </thead>
             <tbody>
               {filteredExpenses.map((expense) => {
-                const displayStatus = expenseDisplayStatus(expense, expense.installment_payments);
-                const totalAmount = expenseTotalAmount(expense);
-                const remainingBalance = expenseRemainingBalance(expense, expense.installment_payments);
-                const isOverdue = isExpenseOverdue(expense, expense.installment_payments, todayKey());
-                const hasPayments = expense.installment_payments.length > 0;
-                const canRecordPayment = displayStatus !== "paid" && displayStatus !== "cancelled";
-                const isOpenEndedRecurring = expense.frequency !== "one_time" && !expense.duration_months;
+                const { displayStatus, totalAmount, remainingBalance, isOverdue, hasPayments, canRecordPayment, isOpenEndedRecurring } = expenseRowMeta(expense);
                 return (
                 <tr key={expense.id}>
                   <td>{expense.expense_date}</td>
                   <td>{expense.category_name}</td>
                   <td>
-                    {categoryScope === "personal" ? (
-                      expense.employee_name
-                    ) : (
-                      <div className="employee-list-identity">
-                        <div className="employee-list-avatar">
-                          {(() => {
-                            const emp = employees.find((e) => e.id === expense.employee_id);
-                            return emp?.profile_photo_url
-                              ? <img alt="" src={emp.profile_photo_url} />
-                              : <span>{expense.employee_name.split(" ").filter(Boolean).slice(0, 2).map((p: string) => p[0]).join("").toUpperCase() || "E"}</span>;
-                          })()}
-                        </div>
-                        <RecordTitle title={expense.employee_name} notes={employees.find((e) => e.id === expense.employee_id)?.email || "No email"} />
+                    <div className="employee-list-identity">
+                      <div className="employee-list-avatar">
+                        {(() => {
+                          const emp = employees.find((e) => e.id === expense.employee_id);
+                          return emp?.profile_photo_url
+                            ? <img alt="" src={emp.profile_photo_url} />
+                            : <span>{expense.employee_name.split(" ").filter(Boolean).slice(0, 2).map((p: string) => p[0]).join("").toUpperCase() || "E"}</span>;
+                        })()}
                       </div>
-                    )}
+                      <RecordTitle title={expense.employee_name} notes={employees.find((e) => e.id === expense.employee_id)?.email || "No email"} />
+                    </div>
                   </td>
-                  {categoryScope === "personal" && (
-                    <td className={isOverdue ? "expense-overdue" : ""}>{expense.due_date ?? "—"}</td>
-                  )}
-                  {categoryScope === "company" && (
-                    <td className={isOverdue ? "expense-overdue" : ""}>{expense.payment_date ?? "—"}</td>
-                  )}
+                  <td className={isOverdue ? "expense-overdue" : ""}>{expense.payment_date ?? "—"}</td>
                   <td className="num">
                     {totalAmount == null ? "Ongoing" : currency.format(totalAmount)}
                     {expense.frequency !== "one_time" && expense.duration_months != null && (
@@ -642,6 +637,74 @@ export function ExpensesFeature({
               })}
             </tbody>
           </table>
+        </div>
+      ) : (
+        <div className="personal-expense-list">
+          {filteredExpenses.map((expense) => {
+            const { displayStatus, totalAmount, isOverdue, hasPayments, canRecordPayment, isOpenEndedRecurring } = expenseRowMeta(expense);
+            return (
+              <div className={`personal-expense-card${isOverdue ? " overdue" : ""}`} key={expense.id}>
+                <div className="personal-expense-card-icon"><Receipt size={18} /></div>
+                <div className="personal-expense-card-main">
+                  <div className="personal-expense-card-title-row">
+                    <strong>{expense.employee_name}</strong>
+                    <StatusBadge status={displayStatus} />
+                  </div>
+                  <span className="personal-expense-card-category">{expense.category_name}</span>
+                </div>
+                <div className="personal-expense-card-amount">
+                  <strong>{totalAmount == null ? "Ongoing" : currency.format(totalAmount)}</strong>
+                  {expense.frequency !== "one_time" && expense.duration_months != null && (
+                    <small className="expense-installment-progress">{expense.installment_payments.length} of {expense.duration_months} paid</small>
+                  )}
+                </div>
+                <div className="personal-expense-card-due">
+                  <span className={isOverdue ? "expense-overdue" : ""}>{expense.due_date ?? "—"}</span>
+                </div>
+                <div className="personal-expense-card-actions billing-row-actions">
+                  <button onClick={() => setViewingExpense(expense)} title="View details" type="button">
+                    <Eye size={14} />
+                  </button>
+                  {canRecordPayment && (
+                    <button onClick={() => setPayingInstallmentExpense(expense)} title="Record payment" type="button">
+                      <CheckCircle2 size={14} />
+                    </button>
+                  )}
+                  {canRecordPayment && isOpenEndedRecurring && (
+                    <button onClick={() => void handleEndRecurringExpense(expense)} title="End expense" type="button">
+                      <Square size={14} />
+                    </button>
+                  )}
+                  <button
+                    disabled={hasPayments}
+                    onClick={() => { setEditingExpense(expense); setFormOpen(true); }}
+                    title={hasPayments ? "Locked — payments already recorded against this expense." : "Edit"}
+                    type="button"
+                  >
+                    <Pencil size={14} />
+                  </button>
+                  {canRecordPayment && (
+                    <button
+                      disabled={hasPayments}
+                      onClick={() => void handleCancelExpense(expense)}
+                      title={hasPayments ? "Can't cancel — payments already recorded against this expense." : "Cancel expense"}
+                      type="button"
+                    >
+                      <Ban size={14} />
+                    </button>
+                  )}
+                  <button
+                    disabled={hasPayments}
+                    onClick={() => setDeletingExpense(expense)}
+                    title={hasPayments ? "Can't delete — payments already recorded against this expense." : "Delete"}
+                    type="button"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
