@@ -729,7 +729,7 @@ function ExpenseFormModal({
             setBusy(false);
           }}
         >
-          <div className="billing-form-fields">
+          <div className={`billing-form-fields${categoryScope === "personal" ? " personal-expense-form-fields" : ""}`}>
             <label>
               {categoryScope === "personal" ? "What's this for?" : "Employee"}
               {categoryScope === "personal" ? (

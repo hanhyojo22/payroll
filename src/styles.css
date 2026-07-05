@@ -7250,7 +7250,9 @@ td {
 }
 
 .personal-expense-more {
+  border-top: 1px solid var(--color-border-light);
   margin-top: 4px;
+  padding-top: 14px;
 }
 
 .personal-expense-more-toggle {
@@ -8196,6 +8198,15 @@ td {
 .billing-form-modal {
   max-width: 900px;
   width: 96vw;
+}
+
+.personal-expense-modal {
+  border-top: 3px solid var(--color-warning);
+  max-width: 460px;
+}
+
+.billing-form-fields.personal-expense-form-fields {
+  grid-template-columns: 1fr;
 }
 
 .collection-details-modal {
