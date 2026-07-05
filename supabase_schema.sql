@@ -808,7 +808,7 @@
   alter table public.payroll_run_items add column if not exists ticket_pay numeric(12, 2) not null default 0 check (ticket_pay >= 0);
   alter table public.payroll_run_items drop constraint if exists payroll_run_items_pay_mode_check;
   alter table public.payroll_run_items add constraint payroll_run_items_pay_mode_check
-  check (pay_mode in ('fixed', 'ticket', 'hybrid', 'legacy'));
+  check (pay_mode in ('fixed', 'ticket', 'hybrid', 'daily', 'legacy'));
 
   create table if not exists public.payroll_run_item_ticket_details (
     id uuid primary key default gen_random_uuid(),
@@ -1691,12 +1691,32 @@ create table if not exists public.subcon_daily_tickets (
   subcon_name text not null,
   install_tickets integer not null default 0 check (install_tickets >= 0),
   repair_tickets integer not null default 0 check (repair_tickets >= 0),
+  disputed_install integer not null default 0 check (disputed_install >= 0),
+  disputed_repair integer not null default 0 check (disputed_repair >= 0),
   installation_rate numeric(12, 2) not null default 0,
   repair_rate numeric(12, 2) not null default 0,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (user_id, entry_date, subcontractor_id)
 );
+
+alter table public.subcon_daily_tickets
+  add column if not exists disputed_install integer not null default 0,
+  add column if not exists disputed_repair integer not null default 0;
+
+alter table public.subcon_daily_tickets
+  drop constraint if exists subcon_daily_tickets_disputed_install_check;
+
+alter table public.subcon_daily_tickets
+  add constraint subcon_daily_tickets_disputed_install_check
+  check (disputed_install >= 0);
+
+alter table public.subcon_daily_tickets
+  drop constraint if exists subcon_daily_tickets_disputed_repair_check;
+
+alter table public.subcon_daily_tickets
+  add constraint subcon_daily_tickets_disputed_repair_check
+  check (disputed_repair >= 0);
 
 create index if not exists subcon_daily_tickets_user_date_idx
 on public.subcon_daily_tickets (user_id, entry_date desc);

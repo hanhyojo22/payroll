@@ -329,13 +329,15 @@ const viewFromPath = (path: string): View => {
 };
 
 function AppBreadcrumbs({
+  extraItems,
   navigate,
   view,
 }: {
+  extraItems?: BreadcrumbItem[];
   navigate: (view: View) => void;
   view: View;
 }) {
-  const items = viewBreadcrumbs[view];
+  const items = extraItems?.length ? [...viewBreadcrumbs[view], ...extraItems] : viewBreadcrumbs[view];
   const backTarget = [...items]
     .slice(0, -1)
     .reverse()
@@ -577,6 +579,7 @@ function Workspace({ session }: { session: Session }) {
   const [subcontractors, setSubcontractors] = useState<Subcontractor[]>([]);
   const [selectedEmployeeDetailId, setSelectedEmployeeDetailId] = useState<string | null>(null);
   const [selectedEmployeeDetailNonce, setSelectedEmployeeDetailNonce] = useState(0);
+  const [employeeDetailOpen, setEmployeeDetailOpen] = useState(false);
   const [selectedSubcontractorId, setSelectedSubcontractorId] = useState<string | null>(null);
   const [subcontractorAccountTab, setSubcontractorAccountTab] = useState<"daily" | "billing" | "payouts" | "advances">("daily");
   const [resourceStatuses, setResourceStatuses] = useState(initialResourceStatuses);
@@ -797,6 +800,12 @@ function Workspace({ session }: { session: Session }) {
       loadResource("dashboardSummary", true),
     ]);
   }
+
+  useEffect(() => {
+    if (view !== "employees") {
+      setEmployeeDetailOpen(false);
+    }
+  }, [view]);
 
   useEffect(() => {
     const handlePopState = () => {
@@ -1090,7 +1099,13 @@ function Workspace({ session }: { session: Session }) {
           </div>
         </header>
         <section className="content">
-          {view !== "dashboard" && <AppBreadcrumbs navigate={navigate} view={view} />}
+          {view !== "dashboard" && (
+            <AppBreadcrumbs
+              extraItems={view === "employees" && employeeDetailOpen ? [{ label: "Employee Details" }] : undefined}
+              navigate={navigate}
+              view={view}
+            />
+          )}
           <NoticeBanner notice={notice} onDismiss={() => setNotice(null)} />
           {showSyncIndicator && <SyncIndicator text="Syncing latest data..." />}
           {showPageSkeleton ? (
@@ -1107,6 +1122,7 @@ function Workspace({ session }: { session: Session }) {
                   initialDetailsEmployeeNonce={selectedEmployeeDetailNonce}
                   onChange={refreshEmployeesPage}
                   onClearInitialDetailsEmployee={() => setSelectedEmployeeDetailId(null)}
+                  onDetailsOpenChange={setEmployeeDetailOpen}
                   onLocalEmployeesChange={setEmployees}
                   onQueueOfflineMutation={queueOfflineMutation}
                   payrollRuns={payrollRuns}
@@ -2529,7 +2545,12 @@ export function DailyTicketEntryView({
     : positionKeys[0] ?? "";
 
   function activeCategories(position: Position) {
-    return position.categories.filter((c) => c.status === "active");
+    return position.categories
+      .filter((c) => c.status === "active")
+      .sort((a, b) => {
+        const rank = (c: typeof a) => (c.ticket_type === "repair" ? 0 : 1);
+        return rank(a) - rank(b);
+      });
   }
 
   function distributeRemainingDraftCounts(
@@ -3180,7 +3201,7 @@ function SubconDailyTicketView({
   userId: string;
 }) {
   const [entryDate, setEntryDate] = useState(todayKey());
-  const [drafts, setDrafts] = useState<Record<string, { install: number; repair: number }>>({});
+  const [drafts, setDrafts] = useState<Record<string, { install: number; repair: number; disputedInstall: number; disputedRepair: number }>>({});
   const [busySubconId, setBusySubconId] = useState("");
   const [query, setQuery] = useState("");
   const [savingAll, setSavingAll] = useState(false);
@@ -3256,6 +3277,8 @@ function SubconDailyTicketView({
     return {
       install: drafts[subcontractorId]?.install ?? saved?.install_tickets ?? 0,
       repair: drafts[subcontractorId]?.repair ?? saved?.repair_tickets ?? 0,
+      disputedInstall: drafts[subcontractorId]?.disputedInstall ?? saved?.disputed_install ?? 0,
+      disputedRepair: drafts[subcontractorId]?.disputedRepair ?? saved?.disputed_repair ?? 0,
     };
   }
 
@@ -3264,7 +3287,9 @@ function SubconDailyTicketView({
     const values = draftValuesFor(subcontractor.id);
     return (
       normalizeTicketCount(values.install) !== (saved?.install_tickets ?? 0) ||
-      normalizeTicketCount(values.repair) !== (saved?.repair_tickets ?? 0)
+      normalizeTicketCount(values.repair) !== (saved?.repair_tickets ?? 0) ||
+      normalizeTicketCount(values.disputedInstall) !== (saved?.disputed_install ?? 0) ||
+      normalizeTicketCount(values.disputedRepair) !== (saved?.disputed_repair ?? 0)
     );
   }
 
@@ -3280,6 +3305,8 @@ function SubconDailyTicketView({
       subcon_name: subcontractor.name,
       install_tickets: normalizeTicketCount(currentDraft.install),
       repair_tickets: normalizeTicketCount(currentDraft.repair),
+      disputed_install: normalizeTicketCount(currentDraft.disputedInstall),
+      disputed_repair: normalizeTicketCount(currentDraft.disputedRepair),
       installation_rate: toNumber(subcontractor.installation_rate),
       repair_rate: toNumber(subcontractor.repair_rate),
     };
@@ -3342,12 +3369,14 @@ function SubconDailyTicketView({
   }
 
   const loggedCount = activeSubcons.filter((s) => existingEntryFor(s.id)).length;
-  const totalGrossForDate = activeSubcons.reduce((sum, s) => {
-    const values = draftValuesFor(s.id);
-    return sum
-      + normalizeTicketCount(values.install) * toNumber(s.installation_rate)
-      + normalizeTicketCount(values.repair) * toNumber(s.repair_rate);
-  }, 0);
+  const totalGrossForDate = activeSubcons.reduce((sum, s) => sum + billableGrossFor(s), 0);
+
+  function billableGrossFor(subcontractor: Subcontractor) {
+    const values = draftValuesFor(subcontractor.id);
+    const billableInstall = Math.max(0, normalizeTicketCount(values.install) - normalizeTicketCount(values.disputedInstall));
+    const billableRepair = Math.max(0, normalizeTicketCount(values.repair) - normalizeTicketCount(values.disputedRepair));
+    return billableInstall * toNumber(subcontractor.installation_rate) + billableRepair * toNumber(subcontractor.repair_rate);
+  }
 
   return (
     <div className="page-stack">
@@ -3455,13 +3484,15 @@ function SubconDailyTicketView({
               <tr>
                 <th className="ticket-employee-col">Subcontractor</th>
                 <th className="ticket-rate-col">
-                  Installation
-                  <span className="ticket-rate-label">rate varies</span>
-                </th>
-                <th className="ticket-rate-col">
                   Repair
                   <span className="ticket-rate-label">rate varies</span>
                 </th>
+                <th className="ticket-rate-col">
+                  Installation
+                  <span className="ticket-rate-label">rate varies</span>
+                </th>
+                <th className="ticket-dispute-col">Disputed Install</th>
+                <th className="ticket-dispute-col">Disputed Repair</th>
                 <th className="ticket-gross-col">Gross</th>
                 <th className="ticket-action-col" />
               </tr>
@@ -3469,9 +3500,7 @@ function SubconDailyTicketView({
             <tbody>
               {filteredSubcons.map((subcontractor) => {
                 const values = draftValuesFor(subcontractor.id);
-                const gross =
-                  normalizeTicketCount(values.install) * toNumber(subcontractor.installation_rate) +
-                  normalizeTicketCount(values.repair) * toNumber(subcontractor.repair_rate);
+                const gross = billableGrossFor(subcontractor);
                 const dirty = isDirty(subcontractor);
                 const busy = busySubconId === subcontractor.id;
                 const saved = savedIds.has(subcontractor.id);
@@ -3482,6 +3511,19 @@ function SubconDailyTicketView({
                       <span className="ticket-rate-label">
                         Install ₱{toNumber(subcontractor.installation_rate).toLocaleString()} · Repair ₱{toNumber(subcontractor.repair_rate).toLocaleString()}
                       </span>
+                    </td>
+                    <td className="ticket-count-cell">
+                      <input
+                        aria-label={`Repair tickets for ${subcontractor.name}`}
+                        min="0"
+                        step="1"
+                        type="number"
+                        value={values.repair}
+                        onChange={(e) => setDrafts((current) => ({
+                          ...current,
+                          [subcontractor.id]: { ...draftValuesFor(subcontractor.id), repair: normalizeTicketCount(e.target.value) },
+                        }))}
+                      />
                     </td>
                     <td className="ticket-count-cell">
                       <input
@@ -3496,16 +3538,29 @@ function SubconDailyTicketView({
                         }))}
                       />
                     </td>
-                    <td className="ticket-count-cell">
+                    <td className="ticket-count-cell ticket-count-cell--dispute">
                       <input
-                        aria-label={`Repair tickets for ${subcontractor.name}`}
+                        aria-label={`Disputed install tickets for ${subcontractor.name}`}
                         min="0"
                         step="1"
                         type="number"
-                        value={values.repair}
+                        value={values.disputedInstall}
                         onChange={(e) => setDrafts((current) => ({
                           ...current,
-                          [subcontractor.id]: { ...draftValuesFor(subcontractor.id), repair: normalizeTicketCount(e.target.value) },
+                          [subcontractor.id]: { ...draftValuesFor(subcontractor.id), disputedInstall: normalizeTicketCount(e.target.value) },
+                        }))}
+                      />
+                    </td>
+                    <td className="ticket-count-cell ticket-count-cell--dispute">
+                      <input
+                        aria-label={`Disputed repair tickets for ${subcontractor.name}`}
+                        min="0"
+                        step="1"
+                        type="number"
+                        value={values.disputedRepair}
+                        onChange={(e) => setDrafts((current) => ({
+                          ...current,
+                          [subcontractor.id]: { ...draftValuesFor(subcontractor.id), disputedRepair: normalizeTicketCount(e.target.value) },
                         }))}
                       />
                     </td>
@@ -4167,6 +4222,7 @@ export function EmployeesView({
   mode = "list",
   onChange,
   onClearInitialDetailsEmployee,
+  onDetailsOpenChange,
   onExitForm,
   onLocalEmployeesChange,
   onQueueOfflineMutation,
@@ -4182,6 +4238,7 @@ export function EmployeesView({
   mode?: "list" | "add";
   onChange: () => Promise<void>;
   onClearInitialDetailsEmployee?: () => void;
+  onDetailsOpenChange?: (open: boolean) => void;
   onExitForm?: () => void;
   onLocalEmployeesChange: (employees: Employee[]) => void;
   onQueueOfflineMutation: QueueOfflineMutation;
@@ -4196,6 +4253,10 @@ export function EmployeesView({
   const [editing, setEditing] = useState<Employee | null>(null);
   const [formOpen, setFormOpen] = useState(mode === "add");
   const [detailsEmployee, setDetailsEmployee] = useState<Employee | null>(null);
+
+  useEffect(() => {
+    onDetailsOpenChange?.(Boolean(detailsEmployee));
+  }, [detailsEmployee, onDetailsOpenChange]);
 
   useEffect(() => {
     if (mode === "add") {
@@ -4701,14 +4762,6 @@ export function EmployeeDetailsView({
             <button className="primary-button compact" onClick={() => onEdit(currentEmployee)} type="button">
               <Pencil size={14} />
               Edit Employee
-            </button>
-            <button
-              className="secondary-button compact"
-              onClick={() => setNotice({ type: "success", text: `${currentEmployee.full_name} actions opened.` })}
-              type="button"
-            >
-              <ChevronDown size={14} />
-              More Actions
             </button>
           </div>
         </header>

@@ -468,6 +468,8 @@ export type SubconDailyTicket = {
   subcon_name: string;
   install_tickets: number;
   repair_tickets: number;
+  disputed_install?: number;
+  disputed_repair?: number;
   installation_rate: number;
   repair_rate: number;
   created_at: string;
