@@ -6,6 +6,7 @@ import { supabase } from "../../supabase";
 import { MoneyField } from "../../shared/components/MoneyField";
 import { PageHeader } from "../../shared/components/PageLayout";
 import type { Notice, QueueOfflineMutation } from "../../shared/types";
+import { NotificationService } from "../../shared/notifications/NotificationService";
 import { currency, formatMoney } from "../../shared/utils/currency";
 import { todayKey } from "../../shared/utils/dates";
 import type {
@@ -135,7 +136,7 @@ function CollectionWorkspace({
   async function submitReceivable(values: CollectionFormValues) {
     if (!supabase) return;
     if (Number(values.amount) <= 0 || values.issue_date > values.due_date || (editing && Number(values.amount) < editing.amount_paid)) {
-      setNotice({ type: "error", text: "Enter a positive amount, keep it at least equal to payments already received, and use a due date on or after the issue date." });
+      NotificationService.showError("Enter a positive amount, keep it at least equal to payments already received, and use a due date on or after the issue date.");
       return;
     }
     const id = editing?.id ?? crypto.randomUUID();
@@ -176,10 +177,10 @@ function CollectionWorkspace({
         closeForm();
         return;
       }
-      setNotice({ type: "error", text: errorText(result.error) });
+      NotificationService.showError(errorText(result.error));
       return;
     }
-    setNotice({ type: "success", text: "Receivable saved." });
+    NotificationService.showSuccess("Receivable saved.");
     closeForm();
     await onChange();
   }
@@ -204,10 +205,10 @@ function CollectionWorkspace({
     }
     const result = restoring ? await restoreReceivable(supabase, collection.id) : await archiveReceivable(supabase, collection.id);
     if (result.error) {
-      setNotice({ type: "error", text: errorText(result.error) });
+      NotificationService.showError(errorText(result.error));
       return;
     }
-    setNotice({ type: "success", text: restoring ? "Receivable restored." : "Receivable archived." });
+    NotificationService.showSuccess(restoring ? "Receivable restored." : "Receivable archived.");
     await onChange();
   }
 
@@ -221,7 +222,7 @@ function CollectionWorkspace({
       paymentDate: values.payment_date,
     });
     if (validationError) {
-      setNotice({ type: "error", text: validationError });
+      NotificationService.showError(validationError);
       return;
     }
     const id = crypto.randomUUID();
@@ -249,8 +250,8 @@ function CollectionWorkspace({
       return;
     }
     const result = await recordReceivablePayment(supabase, collection.id, id, values);
-    if (result.error) { setNotice({ type: "error", text: errorText(result.error) }); return; }
-    setNotice({ type: "success", text: amount >= collection.outstanding_balance ? "Marked as collected." : "Payment recorded." });
+    if (result.error) { NotificationService.showError(errorText(result.error)); return; }
+    NotificationService.showSuccess(amount >= collection.outstanding_balance ? "Marked as collected." : "Payment recorded.");
     setPayingCollection(null);
     await onChange();
   }
