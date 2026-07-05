@@ -5,6 +5,7 @@ import { isOfflineLikeError } from "../../lib/offlineSync";
 import { MoneyField } from "../../shared/components/MoneyField";
 import { PageHeader, RecordTitle, Toolbar } from "../../shared/components/PageLayout";
 import { StatusBadge } from "../../shared/components/StatusBadge";
+import { NotificationService } from "../../shared/notifications/NotificationService";
 import type { Notice, QueueOfflineMutation } from "../../shared/types";
 import { currency, toNumber } from "../../shared/utils/currency";
 import { monthNames, todayKey } from "../../shared/utils/dates";
@@ -160,7 +161,7 @@ export function ExpensesFeature({
     if (!supabase) return;
     const category = activeCategories.find((item) => item.id === values.category_id);
     if (!category) {
-      setNotice({ type: "error", text: "Select a valid category." });
+      NotificationService.showError("Select a valid category.");
       return;
     }
 
@@ -169,14 +170,14 @@ export function ExpensesFeature({
     if (category.type === "company") {
       const employee = activeEmployees.find((item) => item.id === values.employee_id);
       if (!employee) {
-        setNotice({ type: "error", text: "Select a valid employee." });
+        NotificationService.showError("Select a valid employee.");
         return;
       }
       employeeId = employee.id;
       employeeName = employee.full_name;
     } else {
       if (!values.employee_name.trim()) {
-        setNotice({ type: "error", text: "Enter a name for this personal expense." });
+        NotificationService.showError("Enter a name for this personal expense.");
         return;
       }
       employeeName = values.employee_name.trim();
@@ -215,7 +216,7 @@ export function ExpensesFeature({
       });
       setFormOpen(false);
       setEditingExpense(null);
-      setNotice({ type: "success", text: "Expense saved locally. It will sync when online." });
+      NotificationService.showSuccess("Expense saved locally. It will sync when online.");
       return;
     }
 
@@ -232,24 +233,24 @@ export function ExpensesFeature({
         });
         setFormOpen(false);
         setEditingExpense(null);
-        setNotice({ type: "success", text: "Expense saved locally. It will sync when online." });
+        NotificationService.showSuccess("Expense saved locally. It will sync when online.");
         return;
       }
       if (isLegacyExpensesStatusConstraintError(result.error)) {
-        setNotice({ type: "error", text: "Your database still uses the older expenses status rule. Apply the latest expense schema update to enable cancelled expenses." });
+        NotificationService.showError("Your database still uses the older expenses status rule. Apply the latest expense schema update to enable cancelled expenses.");
         return;
       }
       if (isLegacyExpensesFrequencyConstraintError(result.error)) {
-        setNotice({ type: "error", text: "Your database still uses the older expenses frequency rule. Apply the latest expense schema update to enable Daily frequency." });
+        NotificationService.showError("Your database still uses the older expenses frequency rule. Apply the latest expense schema update to enable Daily frequency.");
         return;
       }
-      setNotice({ type: "error", text: result.error.message ?? "Failed to save expense." });
+      NotificationService.showError(result.error.message ?? "Failed to save expense.");
       return;
     }
 
     setFormOpen(false);
     setEditingExpense(null);
-    setNotice({ type: "success", text: "Expense saved." });
+    NotificationService.showSuccess("Expense saved.");
     await onChange();
   }
 
@@ -265,23 +266,27 @@ export function ExpensesFeature({
         recordId: expense.id,
       });
       setDeletingExpense(null);
-      setNotice({ type: "success", text: "Expense deleted locally. It will sync when online." });
+      NotificationService.showSuccess("Expense deleted locally. It will sync when online.");
       return;
     }
 
     const result = await deleteExpense(supabase, expense.id);
     if (result.error) {
-      setNotice({ type: "error", text: result.error.message ?? "Failed to delete expense." });
+      NotificationService.showError(result.error.message ?? "Failed to delete expense.");
       return;
     }
     setDeletingExpense(null);
-    setNotice({ type: "success", text: "Expense deleted." });
+    NotificationService.showSuccess("Expense deleted.");
     await onChange();
   }
 
   async function handleCancelExpense(expense: Expense) {
     if (!supabase || expense.installment_payments.length > 0) return;
-    if (!window.confirm("Cancel this expense? It will move to Expense History.")) return;
+    const confirmed = await NotificationService.showConfirm({
+      message: "Cancel this expense? It will move to Expense History.",
+      danger: true,
+    });
+    if (!confirmed) return;
 
     if (!navigator.onLine) {
       await onQueueOfflineMutation({
@@ -292,20 +297,20 @@ export function ExpensesFeature({
         recordId: expense.id,
         payload: { status: "cancelled" },
       });
-      setNotice({ type: "success", text: "Cancelled locally. It will sync when online." });
+      NotificationService.showSuccess("Cancelled locally. It will sync when online.");
       return;
     }
 
     const result = await cancelExpense(supabase, expense.id);
     if (result.error) {
       if (isLegacyExpensesStatusConstraintError(result.error)) {
-        setNotice({ type: "error", text: "This database does not yet allow cancelled expense status. Apply the latest expense schema update, then try again." });
+        NotificationService.showError("This database does not yet allow cancelled expense status. Apply the latest expense schema update, then try again.");
         return;
       }
-      setNotice({ type: "error", text: friendlyError(result.error, "Failed to cancel this expense.") });
+      NotificationService.showError(friendlyError(result.error, "Failed to cancel this expense."));
       return;
     }
-    setNotice({ type: "success", text: "Expense cancelled." });
+    NotificationService.showSuccess("Expense cancelled.");
     await onChange();
   }
 
@@ -321,7 +326,7 @@ export function ExpensesFeature({
       today: todayKey(),
     });
     if (validationError) {
-      setNotice({ type: "error", text: validationError });
+      NotificationService.showError(validationError);
       return;
     }
 
@@ -352,33 +357,35 @@ export function ExpensesFeature({
         },
       });
       setPayingInstallmentExpense(null);
-      setNotice({ type: "success", text: "Payment recorded locally. It will sync when online." });
+      NotificationService.showSuccess("Payment recorded locally. It will sync when online.");
       return;
     }
 
     const paymentResult = await payExpenseInstallment(supabase, userId, expense.id, paymentPayload);
     if (paymentResult.error) {
-      setNotice({ type: "error", text: friendlyError(paymentResult.error, "Failed to record the payment.") });
+      NotificationService.showError(friendlyError(paymentResult.error, "Failed to record the payment."));
       return;
     }
     if (complete) {
       const completionResult = await updateExpenseCompletion(supabase, expense.id, next);
       if (completionResult.error) {
-        setNotice({ type: "error", text: friendlyError(completionResult.error, "Payment recorded, but failed to mark the expense complete.") });
+        NotificationService.showError(friendlyError(completionResult.error, "Payment recorded, but failed to mark the expense complete."));
         await onChange();
         return;
       }
     }
     setPayingInstallmentExpense(null);
-    setNotice({
-      type: "success",
-      text: complete ? "Final payment recorded — expense moved to History." : "Payment recorded.",
-    });
+    NotificationService.showSuccess(complete ? "Final payment recorded — expense moved to History." : "Payment recorded.");
     await onChange();
   }
 
   async function handleDeleteInstallmentPayment(expense: Expense, payment: ExpenseInstallmentPayment) {
-    if (!supabase || !window.confirm("Delete this installment payment?")) return;
+    if (!supabase) return;
+    const confirmed = await NotificationService.showConfirm({
+      message: "Delete this installment payment?",
+      danger: true,
+    });
+    if (!confirmed) return;
     const remainingPayments = expense.installment_payments.filter((item) => item.id !== payment.id);
     const shouldRevert = expense.status === "paid" && nextExpenseCompletionState(expense, remainingPayments, todayKey()).status !== "paid";
 
@@ -400,29 +407,34 @@ export function ExpensesFeature({
           payload: { status: "pending", paid_date: null },
         });
       }
-      setNotice({ type: "success", text: "Deleted locally. It will sync when online." });
+      NotificationService.showSuccess("Deleted locally. It will sync when online.");
       return;
     }
 
     const deleteResult = await deleteExpenseInstallmentPayment(supabase, payment.id);
     if (deleteResult.error) {
-      setNotice({ type: "error", text: friendlyError(deleteResult.error, "Failed to delete that payment.") });
+      NotificationService.showError(friendlyError(deleteResult.error, "Failed to delete that payment."));
       return;
     }
     if (shouldRevert) {
       const completionResult = await updateExpenseCompletion(supabase, expense.id, { status: "pending", paid_date: null });
       if (completionResult.error) {
-        setNotice({ type: "error", text: friendlyError(completionResult.error, "Payment deleted, but failed to reopen the expense.") });
+        NotificationService.showError(friendlyError(completionResult.error, "Payment deleted, but failed to reopen the expense."));
         await onChange();
         return;
       }
     }
-    setNotice({ type: "success", text: "Installment payment deleted." });
+    NotificationService.showSuccess("Installment payment deleted.");
     await onChange();
   }
 
   async function handleEndRecurringExpense(expense: Expense) {
-    if (!supabase || !window.confirm("End this recurring expense? It will move to Expense History.")) return;
+    if (!supabase) return;
+    const confirmed = await NotificationService.showConfirm({
+      message: "End this recurring expense? It will move to Expense History.",
+      danger: true,
+    });
+    if (!confirmed) return;
     const payload = { status: "paid" as const, paid_date: todayKey() };
 
     if (!navigator.onLine) {
@@ -434,16 +446,16 @@ export function ExpensesFeature({
         recordId: expense.id,
         payload,
       });
-      setNotice({ type: "success", text: "Ended locally. It will sync when online." });
+      NotificationService.showSuccess("Ended locally. It will sync when online.");
       return;
     }
 
     const result = await updateExpenseCompletion(supabase, expense.id, payload);
     if (result.error) {
-      setNotice({ type: "error", text: friendlyError(result.error, "Failed to end this expense.") });
+      NotificationService.showError(friendlyError(result.error, "Failed to end this expense."));
       return;
     }
-    setNotice({ type: "success", text: "Expense ended and moved to History." });
+    NotificationService.showSuccess("Expense ended and moved to History.");
     await onChange();
   }
 
@@ -1129,25 +1141,30 @@ export function ExpenseCategoriesManager({
       setFormOpen(false);
       setEditing(null);
       setName("");
-      setNotice({ type: "success", text: "Expense category saved locally. It will sync when online." });
+      NotificationService.showSuccess("Expense category saved locally. It will sync when online.");
       return;
     }
 
     const result = await saveExpenseCategory(supabase, userId, payload);
     setBusy(false);
     if (result.error) {
-      setNotice({ type: "error", text: friendlyError(result.error, "Failed to save expense category.") });
+      NotificationService.showError(friendlyError(result.error, "Failed to save expense category."));
       return;
     }
     setFormOpen(false);
     setEditing(null);
     setName("");
-    setNotice({ type: "success", text: "Expense category saved." });
+    NotificationService.showSuccess("Expense category saved.");
     await onChange();
   }
 
   async function deleteCategory(category: ExpenseCategory) {
-    if (!supabase || !window.confirm(`Delete the "${category.name}" category?`)) return;
+    if (!supabase) return;
+    const confirmed = await NotificationService.showConfirm({
+      message: `Delete the "${category.name}" category?`,
+      danger: true,
+    });
+    if (!confirmed) return;
 
     if (!navigator.onLine) {
       await onQueueOfflineMutation({
@@ -1162,7 +1179,7 @@ export function ExpenseCategoriesManager({
         setEditing(null);
         setName("");
       }
-      setNotice({ type: "success", text: "Category deleted locally. It will sync when online." });
+      NotificationService.showSuccess("Category deleted locally. It will sync when online.");
       return;
     }
 
@@ -1170,10 +1187,10 @@ export function ExpenseCategoriesManager({
     if (result.error) {
       const message = `${result.error.message ?? ""} ${result.error.details ?? ""}`.toLowerCase();
       if (message.includes("foreign key") || message.includes("violates")) {
-        setNotice({ type: "error", text: "This category has expenses linked to it and can't be deleted. Move or delete those expenses first." });
+        NotificationService.showError("This category has expenses linked to it and can't be deleted. Move or delete those expenses first.");
         return;
       }
-      setNotice({ type: "error", text: friendlyError(result.error, "Failed to delete expense category.") });
+      NotificationService.showError(friendlyError(result.error, "Failed to delete expense category."));
       return;
     }
     if (editing?.id === category.id) {
@@ -1181,7 +1198,7 @@ export function ExpenseCategoriesManager({
       setEditing(null);
       setName("");
     }
-    setNotice({ type: "success", text: "Category deleted." });
+    NotificationService.showSuccess("Category deleted.");
     await onChange();
   }
 
