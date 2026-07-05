@@ -473,7 +473,11 @@ export function ExpensesFeature({
       <PageHeader
         action={(
           <div className="billing-header-actions">
-            <button className="billing-btn primary" onClick={() => { setEditingExpense(null); setFormOpen(true); }} type="button">
+            <button
+              className={`billing-btn primary${categoryScope === "personal" ? " personal-accent" : ""}`}
+              onClick={() => { setEditingExpense(null); setFormOpen(true); }}
+              type="button"
+            >
               <Plus size={15} /> Add expense
             </button>
           </div>

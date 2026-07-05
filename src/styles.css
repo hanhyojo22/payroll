@@ -6568,6 +6568,14 @@ td {
   background: var(--color-accent-hover);
 }
 
+.billing-btn.primary.personal-accent {
+  background: var(--color-warning);
+}
+
+.billing-btn.primary.personal-accent:hover {
+  background: #e08600;
+}
+
 .billing-btn.outline {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
