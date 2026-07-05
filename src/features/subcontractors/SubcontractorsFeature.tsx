@@ -11,6 +11,7 @@ import { DataTable } from "../../shared/components/DataTable";
 import { MoneyField } from "../../shared/components/MoneyField";
 import { PageHeader, Toolbar } from "../../shared/components/PageLayout";
 import { StatusBadge } from "../../shared/components/StatusBadge";
+import { NotificationService } from "../../shared/notifications/NotificationService";
 import type { Notice, QueueOfflineMutation } from "../../shared/types";
 import { currency } from "../../shared/utils/currency";
 import { monthNames, todayKey } from "../../shared/utils/dates";
@@ -117,21 +118,26 @@ export function SubcontractorsFeature({
       status: nextStatus,
     });
     if (result.error) {
-      setNotice({ type: "error", text: (result.error as { message?: string }).message ?? "Failed to update subcontractor." });
+      NotificationService.showError((result.error as { message?: string }).message ?? "Failed to update subcontractor.");
       return;
     }
-    setNotice({ type: "success", text: nextStatus === "archived" ? "Subcontractor archived." : "Subcontractor restored." });
+    NotificationService.showSuccess(nextStatus === "archived" ? "Subcontractor archived." : "Subcontractor restored.");
     await onChange();
   }
 
   async function markPaymentPaid(payment: PaymentReminder) {
     if (!supabase) return;
+    const confirmed = await NotificationService.showConfirm({
+      title: "Mark payout as paid",
+      message: `Mark ${payment.title} as paid?`,
+    });
+    if (!confirmed) return;
     const result = await markSubconPaymentReminderPaid(supabase, payment.id);
     if (result.error) {
-      setNotice({ type: "error", text: (result.error as { message?: string }).message ?? "Failed to mark payout paid." });
+      NotificationService.showError((result.error as { message?: string }).message ?? "Failed to mark payout paid.");
       return;
     }
-    setNotice({ type: "success", text: `Marked ${payment.title} payout paid.` });
+    NotificationService.showSuccess(`Marked ${payment.title} payout paid.`);
     await onChange();
   }
 
@@ -362,11 +368,11 @@ function SubcontractorAccountPanel({
       ? Number(advanceForm.deduction_per_billing) || 0
       : 0;
     if (amount <= 0) {
-      setNotice({ type: "error", text: "Enter a cash advance amount greater than zero." });
+      NotificationService.showError("Enter a cash advance amount greater than zero.");
       return;
     }
     if (advanceForm.deduction_mode === "per_billing" && deductionPerBilling <= 0) {
-      setNotice({ type: "error", text: "Enter a per-billing deduction amount greater than zero." });
+      NotificationService.showError("Enter a per-billing deduction amount greater than zero.");
       return;
     }
     setAdvanceBusy(true);
@@ -404,10 +410,10 @@ function SubcontractorAccountPanel({
       : await supabase.from("subcontractor_advances").insert(payload);
     setAdvanceBusy(false);
     if (result.error) {
-      setNotice({ type: "error", text: (result.error as { message?: string }).message ?? "Failed to save cash advance." });
+      NotificationService.showError((result.error as { message?: string }).message ?? "Failed to save cash advance.");
       return;
     }
-    setNotice({ type: "success", text: editingAdvance ? "Cash advance updated." : "Cash advance saved." });
+    NotificationService.showSuccess(editingAdvance ? "Cash advance updated." : "Cash advance saved.");
     setEditingAdvance(null);
     setAdvanceForm(emptySubcontractorAdvanceForm(selected.id));
     await onChange();
@@ -895,10 +901,10 @@ function SubcontractorProfileModal({
     });
     setBusy(false);
     if (result.error) {
-      setNotice({ type: "error", text: (result.error as { message?: string }).message ?? "Failed to save subcontractor." });
+      NotificationService.showError((result.error as { message?: string }).message ?? "Failed to save subcontractor.");
       return;
     }
-    setNotice({ type: "success", text: initial ? "Subcontractor updated." : "Subcontractor added." });
+    NotificationService.showSuccess(initial ? "Subcontractor updated." : "Subcontractor added.");
     await onSaved();
   }
 
