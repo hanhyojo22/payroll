@@ -590,12 +590,12 @@ input[type="radio"] {
 
 .toast-stack {
   display: flex;
-  flex-direction: column;
+  flex-direction: column-reverse;
   gap: 10px;
   max-width: min(380px, calc(100vw - 32px));
   position: fixed;
+  bottom: 24px;
   right: 24px;
-  top: 24px;
   z-index: 70;
 }
 
@@ -691,7 +691,7 @@ input[type="radio"] {
 }
 
 @media (max-width: 640px) {
-  .toast-stack { left: 16px; right: 16px; top: 16px; max-width: none; }
+  .toast-stack { left: 16px; right: 16px; bottom: 16px; max-width: none; }
 }
 
 /* ── App Shell ── */

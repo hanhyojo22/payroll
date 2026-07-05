@@ -26,7 +26,7 @@ export function NotificationHost() {
 
   return (
     <>
-      <div className="toast-stack" aria-live="polite">
+      <div className="toast-stack">
         {state.toasts.map((toast) => (
           <div key={toast.id} className={`toast toast-${toast.type}`} role={toast.type === "error" ? "alert" : "status"}>
             {TOAST_ICONS[toast.type]}
@@ -69,7 +69,7 @@ export function NotificationHost() {
       )}
 
       {state.loading && (
-        <div aria-busy="true" className="loading-overlay" role="alert">
+        <div aria-busy="true" className="loading-overlay" role="status">
           <span aria-hidden="true" className="spinner" />
           {state.loading.message && <p>{state.loading.message}</p>}
         </div>
