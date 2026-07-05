@@ -6,7 +6,7 @@ import { MoneyField } from "../../shared/components/MoneyField";
 import { PageHeader, RecordTitle, Toolbar } from "../../shared/components/PageLayout";
 import { StatusBadge } from "../../shared/components/StatusBadge";
 import { NotificationService } from "../../shared/notifications/NotificationService";
-import type { Notice, QueueOfflineMutation } from "../../shared/types";
+import type { QueueOfflineMutation } from "../../shared/types";
 import { currency, toNumber } from "../../shared/utils/currency";
 import { monthNames, todayKey } from "../../shared/utils/dates";
 import { friendlyError } from "../../shared/utils/errors";
@@ -86,7 +86,6 @@ type ExpensesFeatureProps = {
   expenses: Expense[];
   onChange: () => Promise<void>;
   onQueueOfflineMutation: QueueOfflineMutation;
-  setNotice: (notice: Notice) => void;
   userId: string;
 };
 
@@ -97,7 +96,6 @@ export function ExpensesFeature({
   expenses: allExpenses,
   onChange,
   onQueueOfflineMutation,
-  setNotice,
   userId,
 }: ExpensesFeatureProps) {
   const expenseCategories = useMemo(
@@ -1098,13 +1096,11 @@ export function ExpenseCategoriesManager({
   categories,
   onChange,
   onQueueOfflineMutation,
-  setNotice,
   userId,
 }: {
   categories: ExpenseCategory[];
   onChange: () => Promise<void>;
   onQueueOfflineMutation: QueueOfflineMutation;
-  setNotice: (notice: Notice) => void;
   userId: string;
 }) {
   const [activeTab, setActiveTab] = useState<ExpenseCategoryType>("company");

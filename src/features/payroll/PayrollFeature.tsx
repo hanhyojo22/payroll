@@ -14,7 +14,7 @@ import { FormActions, Modal, TextField } from "../../shared/components/FormLayou
 import { DataTable } from "../../shared/components/DataTable";
 import { PageHeader, RecordTitle, Toolbar } from "../../shared/components/PageLayout";
 import { ensurePayrollSettings, savePayrollSettings } from "./payrollRepository";
-import type { Notice, QueueOfflineMutation } from "../../shared/types";
+import type { QueueOfflineMutation } from "../../shared/types";
 import { NotificationService } from "../../shared/notifications/NotificationService";
 import { currency, toNumber } from "../../shared/utils/currency";
 import { currentMonth, currentYear, monthNames, todayKey } from "../../shared/utils/dates";
@@ -214,7 +214,6 @@ export function PayrollFeature({
   payrollSettings,
   positions,
   employeeAdvances,
-  setNotice,
   tabs,
   userId,
 }: {
@@ -229,7 +228,6 @@ export function PayrollFeature({
   payrollSettings: PayrollSettings | null;
   positions: Position[];
   employeeAdvances: EmployeeAdvance[];
-  setNotice: (notice: Notice) => void;
   tabs?: ReactNode;
   userId: string;
 }) {
@@ -965,13 +963,11 @@ export function PayrollSettingsManager({
   employees,
   payrollSettings,
   onChange,
-  setNotice,
   userId,
 }: {
   employees: Employee[];
   payrollSettings: PayrollSettings | null;
   onChange: () => Promise<void>;
-  setNotice: (notice: Notice) => void;
   userId: string;
 }) {
   const [settings, setSettings] = useState<PayrollSettings | null>(payrollSettings);

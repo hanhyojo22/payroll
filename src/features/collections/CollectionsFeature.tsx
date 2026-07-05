@@ -5,7 +5,7 @@ import { isOfflineLikeError } from "../../lib/offlineSync";
 import { supabase } from "../../supabase";
 import { MoneyField } from "../../shared/components/MoneyField";
 import { PageHeader } from "../../shared/components/PageLayout";
-import type { Notice, QueueOfflineMutation } from "../../shared/types";
+import type { QueueOfflineMutation } from "../../shared/types";
 import { NotificationService } from "../../shared/notifications/NotificationService";
 import { currency, formatMoney } from "../../shared/utils/currency";
 import { todayKey } from "../../shared/utils/dates";
@@ -81,7 +81,6 @@ type CollectionFeatureProps = {
   onChange: () => Promise<void>;
   onLocalCollectionsChange: (collections: CollectionReminder[]) => void;
   onQueueOfflineMutation: QueueOfflineMutation;
-  setNotice: (notice: Notice) => void;
   userId: string;
 };
 
@@ -91,7 +90,6 @@ function CollectionWorkspace({
   onChange,
   onLocalCollectionsChange,
   onQueueOfflineMutation,
-  setNotice,
   userId,
 }: CollectionFeatureProps & { historyMode: boolean }) {
   const [query, setQuery] = useState("");

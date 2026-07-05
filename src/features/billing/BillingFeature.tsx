@@ -13,7 +13,7 @@ import { supabase } from "../../supabase";
 import { MoneyField } from "../../shared/components/MoneyField";
 import { PageHeader, Toolbar } from "../../shared/components/PageLayout";
 import { NotificationService } from "../../shared/notifications/NotificationService";
-import type { Notice, QueueOfflineMutation } from "../../shared/types";
+import type { QueueOfflineMutation } from "../../shared/types";
 import { currency } from "../../shared/utils/currency";
 import { currentMonth, currentYear, monthNames, todayKey } from "../../shared/utils/dates";
 import type {
@@ -58,7 +58,6 @@ export type BillingFeatureProps = {
   onOpenSubcontractorAccount: (subcontractorId: string) => void;
   onQueueOfflineMutation: QueueOfflineMutation;
   payments: PaymentReminder[];
-  setNotice: (notice: Notice) => void;
   subconDailyTickets: SubconDailyTicket[];
   subcontractorAdvances: SubcontractorAdvance[];
   subcontractors: Subcontractor[];
@@ -76,7 +75,6 @@ export function BillingFeature({
   onOpenSubcontractorAccount,
   onQueueOfflineMutation,
   payments,
-  setNotice,
   subconDailyTickets,
   tabs,
   subcontractorAdvances,
@@ -1526,12 +1524,10 @@ function BillingForm({
 export function BillingSettingsManager({
   billingSettings,
   onChange,
-  setNotice,
   userId,
 }: {
   billingSettings: BillingSettings | null;
   onChange: () => Promise<void>;
-  setNotice: (notice: Notice) => void;
   userId: string;
 }) {
   const [settings, setSettings] = useState<BillingSettings | null>(billingSettings);

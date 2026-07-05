@@ -5,7 +5,7 @@ import { supabase } from "../../supabase";
 import { DataTable } from "../../shared/components/DataTable";
 import { MoneyField } from "../../shared/components/MoneyField";
 import { StatusBadge } from "../../shared/components/StatusBadge";
-import type { Notice, QueueOfflineMutation } from "../../shared/types";
+import type { QueueOfflineMutation } from "../../shared/types";
 import { NotificationService } from "../../shared/notifications/NotificationService";
 import { currency, toNumber } from "../../shared/utils/currency";
 import { todayKey } from "../../shared/utils/dates";
@@ -51,14 +51,12 @@ export function EmployeeAdvancesFeature({
   employeeAdvances,
   onChange,
   onQueueOfflineMutation,
-  setNotice,
   userId,
 }: {
   employee: Employee;
   employeeAdvances: EmployeeAdvance[];
   onChange: () => Promise<void>;
   onQueueOfflineMutation: QueueOfflineMutation;
-  setNotice: (notice: Notice) => void;
   userId: string;
 }) {
   const [advanceForm, setAdvanceForm] = useState<EmployeeAdvanceFormValues>(() => emptyEmployeeAdvance(employee.id));

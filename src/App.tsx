@@ -93,14 +93,13 @@ import { PayrollFeature, PayrollHistoryFeature, PayrollSettingsManager } from ".
 import { SubcontractorsFeature } from "./features/subcontractors/SubcontractorsFeature";
 import { Sidebar } from "./Sidebar";
 import { MoneyField as MoneyInput } from "./shared/components/MoneyField";
-import { NoticeBanner } from "./shared/components/NoticeBanner";
 import { NotificationService } from "./shared/notifications/NotificationService";
 import { Spinner, SyncIndicator, PageSkeleton } from "./shared/components/Spinner";
 import { StatusBadge as StatusPill } from "./shared/components/StatusBadge";
 import { DataTable } from "./shared/components/DataTable";
 import { PageHeader, RecordTitle, Toolbar } from "./shared/components/PageLayout";
 import { FormActions, Modal, RowActions, TextField } from "./shared/components/FormLayout";
-import type { Notice, QueueOfflineMutation } from "./shared/types";
+import type { QueueOfflineMutation } from "./shared/types";
 import { currency, formatMoney, toNumber } from "./shared/utils/currency";
 import { currentMonth, currentYear, isBeforeToday, isToday, monthNames, todayKey } from "./shared/utils/dates";
 import { friendlyError } from "./shared/utils/errors";
@@ -579,7 +578,6 @@ function Workspace({ session }: { session: Session }) {
   const [subcontractorAccountTab, setSubcontractorAccountTab] = useState<"daily" | "billing" | "payouts" | "advances">("daily");
   const [resourceStatuses, setResourceStatuses] = useState(initialResourceStatuses);
   const [resourceHydration, setResourceHydration] = useState(initialResourceHydration);
-  const [notice, setNotice] = useState<Notice>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
   const [globalSearchQuery, setGlobalSearchQuery] = useState("");
@@ -1101,7 +1099,6 @@ function Workspace({ session }: { session: Session }) {
               view={view}
             />
           )}
-          <NoticeBanner notice={notice} onDismiss={() => setNotice(null)} />
           {showSyncIndicator && <SyncIndicator text="Syncing latest data..." />}
           {showPageSkeleton ? (
             <PageSkeleton />
@@ -1176,14 +1173,12 @@ function Workspace({ session }: { session: Session }) {
                       positions={positions}
                       onChange={refreshDailyTicketsPage}
                       onQueueOfflineMutation={queueOfflineMutation}
-                      setNotice={setNotice}
                       userId={session.user.id}
                     />
                   ) : (
                     <SubconDailyTicketView
                       onChange={refreshDailyTicketsPage}
                       onQueueOfflineMutation={queueOfflineMutation}
-                      setNotice={setNotice}
                       subconDailyTickets={subconDailyTickets}
                       subcontractors={subcontractors}
                       userId={session.user.id}
@@ -1198,7 +1193,6 @@ function Workspace({ session }: { session: Session }) {
                   positions={positions}
                   onChange={refreshAttendancePage}
                   onQueueOfflineMutation={queueOfflineMutation}
-                  setNotice={setNotice}
                   userId={session.user.id}
                 />
               )}
@@ -1217,7 +1211,6 @@ function Workspace({ session }: { session: Session }) {
                       payrollRuns={payrollRuns}
                       positions={positions}
                       employeeAdvances={employeeAdvances}
-                      setNotice={setNotice}
                       tabs={(
                         <div className="page-tabs" role="tablist">
                           <button className="active" onClick={() => navigate("payroll")} role="tab" type="button">Payroll</button>
@@ -1257,7 +1250,6 @@ function Workspace({ session }: { session: Session }) {
                     onLocalBillingRecordsChange={setBillingRecords}
                     onQueueOfflineMutation={queueOfflineMutation}
                     payments={payments}
-                    setNotice={setNotice}
                     subconDailyTickets={subconDailyTickets}
                     subcontractorAdvances={subcontractorAdvances}
                     subcontractors={subcontractors}
@@ -1289,7 +1281,6 @@ function Workspace({ session }: { session: Session }) {
                 <BillingSettingsManager
                   billingSettings={billingSettings}
                   onChange={refreshBillingPage}
-                  setNotice={setNotice}
                   userId={session.user.id}
                 />
               )}
@@ -1298,7 +1289,6 @@ function Workspace({ session }: { session: Session }) {
                   employees={employees}
                   onChange={refreshPayrollPage}
                   payrollSettings={payrollSettings}
-                  setNotice={setNotice}
                   userId={session.user.id}
                 />
               )}
@@ -1310,7 +1300,6 @@ function Workspace({ session }: { session: Session }) {
                   expenses={expenses}
                   onChange={refreshExpensesPage}
                   onQueueOfflineMutation={queueOfflineMutation}
-                  setNotice={setNotice}
                   userId={session.user.id}
                 />
               )}
@@ -1322,7 +1311,6 @@ function Workspace({ session }: { session: Session }) {
                   expenses={expenses}
                   onChange={refreshExpensesPage}
                   onQueueOfflineMutation={queueOfflineMutation}
-                  setNotice={setNotice}
                   userId={session.user.id}
                 />
               )}
@@ -1331,7 +1319,6 @@ function Workspace({ session }: { session: Session }) {
                   categories={expenseCategories}
                   onChange={refreshExpensesPage}
                   onQueueOfflineMutation={queueOfflineMutation}
-                  setNotice={setNotice}
                   userId={session.user.id}
                 />
               )}
@@ -1354,7 +1341,6 @@ function Workspace({ session }: { session: Session }) {
                   onQueueOfflineMutation={queueOfflineMutation}
                   payments={payments}
                   selectedSubcontractorId={selectedSubcontractorId}
-                  setNotice={setNotice}
                   subconDailyTickets={subconDailyTickets}
                   subcontractorAdvances={subcontractorAdvances}
                   subcontractors={subcontractors}
@@ -1373,7 +1359,6 @@ function Workspace({ session }: { session: Session }) {
                       onChange={refreshCollectionsPage}
                       onLocalCollectionsChange={setCollections}
                       onQueueOfflineMutation={queueOfflineMutation}
-                      setNotice={setNotice}
                       userId={session.user.id}
                     />
                   ) : (
@@ -1382,7 +1367,6 @@ function Workspace({ session }: { session: Session }) {
                       onChange={refreshCollectionsPage}
                       onLocalCollectionsChange={setCollections}
                       onQueueOfflineMutation={queueOfflineMutation}
-                      setNotice={setNotice}
                       userId={session.user.id}
                     />
                   )}
@@ -1587,12 +1571,10 @@ function Metric({
 
 function SubcontractorsView({
   onChange,
-  setNotice,
   subcontractors,
   userId,
 }: {
   onChange: () => Promise<void>;
-  setNotice: (notice: Notice) => void;
   subcontractors: Subcontractor[];
   userId: string;
 }) {
@@ -2376,7 +2358,6 @@ export function DailyTicketEntryView({
   positions,
   onChange,
   onQueueOfflineMutation,
-  setNotice,
   userId,
 }: {
   dailyTicketEntries: DailyTicketEntry[];
@@ -2385,7 +2366,6 @@ export function DailyTicketEntryView({
   positions: Position[];
   onChange: () => Promise<void>;
   onQueueOfflineMutation: QueueOfflineMutation;
-  setNotice: (notice: Notice) => void;
   userId: string;
 }) {
   const [entryDate, setEntryDate] = useState(todayKey());
@@ -3168,14 +3148,12 @@ export function DailyTicketEntryView({
 function SubconDailyTicketView({
   onChange,
   onQueueOfflineMutation,
-  setNotice,
   subconDailyTickets,
   subcontractors,
   userId,
 }: {
   onChange: () => Promise<void>;
   onQueueOfflineMutation: QueueOfflineMutation;
-  setNotice: (notice: Notice) => void;
   subconDailyTickets: SubconDailyTicket[];
   subcontractors: Subcontractor[];
   userId: string;
@@ -3582,7 +3560,6 @@ export function AttendanceView({
   positions,
   onChange,
   onQueueOfflineMutation,
-  setNotice,
   userId,
 }: {
   attendanceEntries: AttendanceEntry[];
@@ -3590,7 +3567,6 @@ export function AttendanceView({
   positions: Position[];
   onChange: () => Promise<void>;
   onQueueOfflineMutation: QueueOfflineMutation;
-  setNotice: (notice: Notice) => void;
   userId: string;
 }) {
   const [entryDate, setEntryDate] = useState(todayKey());
@@ -4295,11 +4271,6 @@ export function EmployeesView({
         payrollRuns={payrollRuns}
         positions={positions}
         employeeAdvances={employeeAdvances}
-        setNotice={(notice) => {
-          if (!notice) return;
-          if (notice.type === "error") NotificationService.showError(notice.text);
-          else NotificationService.showSuccess(notice.text);
-        }}
         userId={userId}
       />
     );
@@ -4497,7 +4468,6 @@ export function EmployeeDetailsView({
   payrollRuns,
   positions,
   employeeAdvances,
-  setNotice,
   userId,
 }: {
   employee: Employee;
@@ -4509,7 +4479,6 @@ export function EmployeeDetailsView({
   payrollRuns: PayrollRunWithItems[];
   positions: Position[];
   employeeAdvances: EmployeeAdvance[];
-  setNotice: (notice: Notice) => void;
   userId: string;
 }) {
   const [activeTab, setActiveTab] = useState<"information" | "payroll" | "tickets" | "employee-advances" | "payments" | "documents" | "government-deduction" | "attendance">("information");
@@ -4887,7 +4856,6 @@ export function EmployeeDetailsView({
             employeeAdvances={employeeAdvances}
             onChange={onChange}
             onQueueOfflineMutation={onQueueOfflineMutation}
-            setNotice={setNotice}
             userId={userId}
           />
         )}

@@ -12,7 +12,7 @@ import { MoneyField } from "../../shared/components/MoneyField";
 import { PageHeader, Toolbar } from "../../shared/components/PageLayout";
 import { StatusBadge } from "../../shared/components/StatusBadge";
 import { NotificationService } from "../../shared/notifications/NotificationService";
-import type { Notice, QueueOfflineMutation } from "../../shared/types";
+import type { QueueOfflineMutation } from "../../shared/types";
 import { currency } from "../../shared/utils/currency";
 import { monthNames, todayKey } from "../../shared/utils/dates";
 import type { BillingPeriod, BillingRecord, PaymentReminder, SubconDailyTicket, Subcontractor, SubcontractorAdvance, SubcontractorAdvanceFormValues } from "../../types";
@@ -39,7 +39,6 @@ export function SubcontractorsFeature({
   onSelectSubcontractor,
   payments,
   selectedSubcontractorId,
-  setNotice,
   subconDailyTickets,
   subcontractorAdvances,
   subcontractors,
@@ -52,7 +51,6 @@ export function SubcontractorsFeature({
   onSelectSubcontractor: (subcontractorId: string) => void;
   payments: PaymentReminder[];
   selectedSubcontractorId: string | null;
-  setNotice: (notice: Notice) => void;
   subconDailyTickets: SubconDailyTicket[];
   subcontractorAdvances: SubcontractorAdvance[];
   subcontractors: Subcontractor[];
@@ -223,7 +221,6 @@ export function SubcontractorsFeature({
               tab={tab}
               userId={userId}
               onChange={onChange}
-              setNotice={setNotice}
             />
           )}
         </section>
@@ -237,7 +234,6 @@ export function SubcontractorsFeature({
             setFormOpen(false);
             await onChange();
           }}
-          setNotice={setNotice}
           userId={userId}
         />
       )}
@@ -282,7 +278,6 @@ function SubcontractorAccountPanel({
   payments,
   selected,
   setTab,
-  setNotice,
   subconDailyTickets,
   subcontractorAdvances,
   tab,
@@ -299,7 +294,6 @@ function SubcontractorAccountPanel({
   payments: PaymentReminder[];
   selected: Subcontractor;
   setTab: (tab: AccountTab) => void;
-  setNotice: (notice: Notice) => void;
   subconDailyTickets: SubconDailyTicket[];
   subcontractorAdvances: SubcontractorAdvance[];
   tab: AccountTab;
@@ -870,13 +864,11 @@ function SubcontractorProfileModal({
   initial,
   onClose,
   onSaved,
-  setNotice,
   userId,
 }: {
   initial: Subcontractor | null;
   onClose: () => void;
   onSaved: () => Promise<void>;
-  setNotice: (notice: Notice) => void;
   userId: string;
 }) {
   const [values, setValues] = useState({
