@@ -94,6 +94,7 @@ import { SubcontractorsFeature } from "./features/subcontractors/SubcontractorsF
 import { Sidebar } from "./Sidebar";
 import { MoneyField as MoneyInput } from "./shared/components/MoneyField";
 import { NoticeBanner } from "./shared/components/NoticeBanner";
+import { NotificationService } from "./shared/notifications/NotificationService";
 import { Spinner, SyncIndicator, PageSkeleton } from "./shared/components/Spinner";
 import { StatusBadge as StatusPill } from "./shared/components/StatusBadge";
 import { DataTable } from "./shared/components/DataTable";
@@ -479,13 +480,11 @@ function Login() {
   const [password, setPassword] = useState("");
   const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in");
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<Notice>(null);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (!supabase) return;
     setBusy(true);
-    setNotice(null);
 
     const result =
       mode === "sign-in"
@@ -493,12 +492,9 @@ function Login() {
         : await supabase.auth.signUp({ email, password });
 
     if (result.error) {
-      setNotice({ type: "error", text: friendlyError(result.error) });
+      NotificationService.showError(friendlyError(result.error));
     } else if (mode === "sign-up" && !result.data.session) {
-      setNotice({
-        type: "success",
-        text: "Account created. Check your email if confirmation is enabled.",
-      });
+      NotificationService.showSuccess("Account created. Check your email if confirmation is enabled.");
     }
     setBusy(false);
   }
@@ -537,7 +533,6 @@ function Login() {
               value={password}
             />
           </label>
-          <NoticeBanner notice={notice} onDismiss={() => setNotice(null)} />
           <button className="primary-button" disabled={busy} type="submit">
             {busy && <Spinner size="small" />}
             {busy ? "Please wait..." : mode === "sign-in" ? "Sign in" : "Create admin"}
@@ -642,16 +637,16 @@ function Workspace({ session }: { session: Session }) {
 
   const queueOfflineMutation: QueueOfflineMutation = async (mutation) => {
     await queueMutation({ ...mutation, userId: session.user.id });
-    setNotice({ type: "success", text: "Saved locally. It will sync when online." });
+    NotificationService.showSuccess("Saved locally. It will sync when online.");
   };
 
   async function syncQueuedMutations(showToast = false) {
     if (!supabase || !navigator.onLine) return;
     const result = await flushPendingMutations(supabase, session.user.id);
     if (result.failed.length > 0) {
-      setNotice({ type: "error", text: `${result.failed.length} offline change could not sync. Check the record and try again.` });
+      NotificationService.showError(`${result.failed.length} offline change could not sync. Check the record and try again.`);
     } else if (showToast && result.synced.length > 0) {
-      setNotice({ type: "success", text: `${result.synced.length} offline change${result.synced.length === 1 ? "" : "s"} synced.` });
+      NotificationService.showSuccess(`${result.synced.length} offline change${result.synced.length === 1 ? "" : "s"} synced.`);
     }
     if (result.synced.length > 0) {
       const affected = Array.from(new Set(result.synced.flatMap((mutation) => mutation.affectedResources)));
@@ -709,7 +704,7 @@ function Workspace({ session }: { session: Session }) {
 
     const result = await loadPayrollRunItems(supabase, payrollRunId);
     if (result.error) {
-      setNotice({ type: "error", text: friendlyError(result.error) });
+      NotificationService.showError(friendlyError(result.error));
       return;
     }
 
@@ -890,7 +885,7 @@ function Workspace({ session }: { session: Session }) {
 
       await document.documentElement.requestFullscreen();
     } catch {
-      setNotice({ type: "error", text: "Fullscreen is not available in this browser." });
+      NotificationService.showError("Fullscreen is not available in this browser.");
     }
   }
 
@@ -1128,7 +1123,6 @@ function Workspace({ session }: { session: Session }) {
                   payrollRuns={payrollRuns}
                   positions={positions}
                   employeeAdvances={employeeAdvances}
-                  setNotice={setNotice}
                   userId={session.user.id}
                 />
             )}
@@ -1146,7 +1140,6 @@ function Workspace({ session }: { session: Session }) {
                 payrollRuns={payrollRuns}
                 positions={positions}
                 employeeAdvances={employeeAdvances}
-                setNotice={setNotice}
                 userId={session.user.id}
               />
             )}
@@ -1157,7 +1150,6 @@ function Workspace({ session }: { session: Session }) {
                   onLocalPositionsChange={setPositions}
                   onQueueOfflineMutation={queueOfflineMutation}
                   positions={positions}
-                  setNotice={setNotice}
                   userId={session.user.id}
                 />
               )}
@@ -1643,11 +1635,11 @@ function SubcontractorsView({
     });
     setBusy(false);
     if (result.error) {
-      setNotice({ type: "error", text: (result.error as { message?: string }).message ?? "Failed to save subcontractor." });
+      NotificationService.showError((result.error as { message?: string }).message ?? "Failed to save subcontractor.");
       return;
     }
     setFormOpen(false);
-    setNotice({ type: "success", text: editing ? "Subcontractor updated." : "Subcontractor added." });
+    NotificationService.showSuccess(editing ? "Subcontractor updated." : "Subcontractor added.");
     await onChange();
   }
 
@@ -1655,7 +1647,7 @@ function SubcontractorsView({
     if (!supabase) return;
     const newStatus = s.status === "active" ? "archived" : "active";
     await saveSubcontractor(supabase, userId, { id: s.id, name: s.name, installation_rate: s.installation_rate, repair_rate: s.repair_rate, payable_pct: s.payable_pct, status: newStatus });
-    setNotice({ type: "success", text: newStatus === "archived" ? "Subcontractor archived." : "Subcontractor restored." });
+    NotificationService.showSuccess(newStatus === "archived" ? "Subcontractor archived." : "Subcontractor restored.");
     await onChange();
   }
 
@@ -1978,7 +1970,6 @@ function PositionsView({
   onLocalPositionsChange,
   onQueueOfflineMutation,
   positions,
-  setNotice,
   userId,
 }: {
   employees: Employee[];
@@ -1986,12 +1977,10 @@ function PositionsView({
   onLocalPositionsChange: (positions: Position[]) => void;
   onQueueOfflineMutation: QueueOfflineMutation;
   positions: Position[];
-  setNotice: (notice: Notice) => void;
   userId: string;
 }) {
   const [editing, setEditing] = useState<Position | null>(null);
   const [formOpen, setFormOpen] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState<Position | null>(null);
   const [query, setQuery] = useState("");
   const rows = positions.filter((position) =>
     `${position.name} ${position.department} ${position.pay_mode}`.toLowerCase().includes(query.toLowerCase())
@@ -2016,11 +2005,11 @@ function PositionsView({
       }))
       .filter((category) => category.name);
     if (!values.name.trim()) {
-      setNotice({ type: "error", text: "Position name is required." });
+      NotificationService.showError("Position name is required.");
       return;
     }
     if (needsTickets && categories.filter((category) => category.status === "active").length === 0) {
-      setNotice({ type: "error", text: "Ticket and hybrid positions need at least one active ticket category." });
+      NotificationService.showError("Ticket and hybrid positions need at least one active ticket category.");
       return;
     }
     const positionId = editing?.id ?? crypto.randomUUID();
@@ -2091,13 +2080,13 @@ function PositionsView({
 
     const positionResult = await supabase.from("positions").upsert(payload, { onConflict: "id" });
     if (positionResult.error) {
-      setNotice({ type: "error", text: friendlyError(positionResult.error) });
+      NotificationService.showError(friendlyError(positionResult.error));
       return;
     }
     if (categoryPayloads.length > 0) {
       const categoryResult = await supabase.from("position_ticket_categories").upsert(categoryPayloads, { onConflict: "id" });
       if (categoryResult.error) {
-        setNotice({ type: "error", text: friendlyError(categoryResult.error) });
+        NotificationService.showError(friendlyError(categoryResult.error));
         return;
       }
     }
@@ -2107,11 +2096,11 @@ function PositionsView({
         .update({ status: "archived" })
         .in("id", removedCategories.map((category) => category.id));
       if (archiveResult.error) {
-        setNotice({ type: "error", text: friendlyError(archiveResult.error) });
+        NotificationService.showError(friendlyError(archiveResult.error));
         return;
       }
     }
-    setNotice({ type: "success", text: "Position saved." });
+    NotificationService.showSuccess("Position saved.");
     setFormOpen(false);
     setEditing(null);
     await onChange();
@@ -2124,7 +2113,7 @@ function PositionsView({
       (employee) => employee.position_id === position.id && employee.status === "active",
     ).length;
     if (status === "archived" && assignedActiveEmployees > 0) {
-      setNotice({ type: "error", text: `Reassign ${assignedActiveEmployees} active employee${assignedActiveEmployees === 1 ? "" : "s"} before archiving this position.` });
+      NotificationService.showError(`Reassign ${assignedActiveEmployees} active employee${assignedActiveEmployees === 1 ? "" : "s"} before archiving this position.`);
       return;
     }
     const optimistic = positions.map((item) => item.id === position.id ? { ...item, status } as Position : item);
@@ -2141,16 +2130,34 @@ function PositionsView({
       return;
     }
     const { error } = await supabase.from("positions").update({ status }).eq("id", position.id);
-    setNotice(error ? { type: "error", text: friendlyError(error) } : { type: "success", text: `Position ${status}.` });
+    if (error) {
+      NotificationService.showError(friendlyError(error));
+    } else {
+      NotificationService.showSuccess(`Position ${status}.`);
+    }
     if (!error) await onChange();
+  }
+
+  async function handleDeletePosition(position: Position) {
+    const assignedCount = employees.filter((e) => e.position_id === position.id).length;
+    if (assignedCount > 0) {
+      NotificationService.showWarning(`${assignedCount} employee${assignedCount === 1 ? " is" : "s are"} still assigned — reassign before deleting.`);
+      return;
+    }
+    const confirmed = await NotificationService.showConfirm({
+      title: "Delete position",
+      message: `Are you sure you want to permanently delete "${position.name}"? This action cannot be undone.`,
+      danger: true,
+    });
+    if (!confirmed) return;
+    await deletePosition(position);
   }
 
   async function deletePosition(position: Position) {
     if (!supabase) return;
     const assignedEmployees = employees.filter((e) => e.position_id === position.id).length;
     if (assignedEmployees > 0) {
-      setNotice({ type: "error", text: `Cannot delete "${position.name}" — ${assignedEmployees} employee${assignedEmployees === 1 ? " is" : "s are"} still assigned. Reassign them first.` });
-      setConfirmDelete(null);
+      NotificationService.showError(`Cannot delete "${position.name}" — ${assignedEmployees} employee${assignedEmployees === 1 ? " is" : "s are"} still assigned. Reassign them first.`);
       return;
     }
     if (!navigator.onLine) {
@@ -2169,22 +2176,19 @@ function PositionsView({
         table: "positions",
         recordId: position.id,
       });
-      setConfirmDelete(null);
       return;
     }
     const catResult = await supabase.from("position_ticket_categories").delete().eq("position_id", position.id);
     if (catResult.error) {
-      setNotice({ type: "error", text: friendlyError(catResult.error) });
-      setConfirmDelete(null);
+      NotificationService.showError(friendlyError(catResult.error));
       return;
     }
     const { error } = await supabase.from("positions").delete().eq("id", position.id);
     if (error) {
-      setNotice({ type: "error", text: friendlyError(error) });
-      setConfirmDelete(null);
+      NotificationService.showError(friendlyError(error));
       return;
     }
-    setNotice({ type: "success", text: `"${position.name}" deleted.` });
+    NotificationService.showSuccess(`"${position.name}" deleted.`);
     await onChange();
   }
 
@@ -2211,42 +2215,11 @@ function PositionsView({
           <div className="row-actions" key="actions">
             <button aria-label="Edit position" onClick={() => { setEditing(position); setFormOpen(true); }} title="Edit" type="button"><Pencil size={16} /></button>
             <button aria-label={position.status === "active" ? "Archive position" : "Restore position"} onClick={() => toggleArchive(position)} title={position.status === "active" ? "Archive" : "Restore"} type="button"><History size={16} /></button>
-            <button aria-label="Delete position" className="delete-action" onClick={() => setConfirmDelete(position)} title="Delete" type="button"><Trash2 size={16} /></button>
+            <button aria-label="Delete position" className="delete-action" onClick={() => void handleDeletePosition(position)} title="Delete" type="button"><Trash2 size={16} /></button>
           </div>,
         ])}
       />
       {formOpen && <PositionForm existingDepartments={existingDepartments} initial={editing} onClose={() => { setFormOpen(false); setEditing(null); }} onSubmit={savePosition} />}
-      {confirmDelete && (
-        <div className="modal-backdrop" role="presentation">
-          <section aria-label="Delete position" aria-modal="true" className="modal confirm-modal" role="dialog">
-            <div className="confirm-icon-wrap danger">
-              <Trash2 size={24} />
-            </div>
-            <h2>Delete position</h2>
-            <p>Are you sure you want to permanently delete <strong>{confirmDelete.name}</strong>? This action cannot be undone.</p>
-            {employees.filter((e) => e.position_id === confirmDelete.id).length > 0 && (
-              <div className="confirm-warning">
-                <span>{employees.filter((e) => e.position_id === confirmDelete.id).length} employee{employees.filter((e) => e.position_id === confirmDelete.id).length === 1 ? "" : "s"} assigned — reassign before deleting.</span>
-              </div>
-            )}
-            <div className="confirm-actions">
-              <button className="secondary-button" onClick={() => setConfirmDelete(null)} type="button">Cancel</button>
-              <button
-                className="primary-button danger-button"
-                disabled={employees.filter((e) => e.position_id === confirmDelete.id).length > 0}
-                onClick={async () => {
-                  await deletePosition(confirmDelete);
-                  setConfirmDelete(null);
-                }}
-                type="button"
-              >
-                <Trash2 size={15} />
-                Delete
-              </button>
-            </div>
-          </section>
-        </div>
-      )}
     </div>
   );
 }
@@ -2769,7 +2742,7 @@ export function DailyTicketEntryView({
         });
       }
       // Cache is refreshed by the standard offline queue after synchronization.
-      setNotice({ type: "success", text: `${draft.employee.full_name}'s ticket counts were saved locally.` });
+      NotificationService.showSuccess(`${draft.employee.full_name}'s ticket counts were saved locally.`);
       setBusyEmployeeId("");
       return;
     }
@@ -2780,14 +2753,14 @@ export function DailyTicketEntryView({
       .select("id")
       .single();
     if (headerResult.error) {
-      setNotice({ type: "error", text: friendlyError(headerResult.error) });
+      NotificationService.showError(friendlyError(headerResult.error));
       setBusyEmployeeId("");
       return;
     }
     const persistedEntryId = headerResult.data.id;
     const deleteResult = await supabase.from("daily_ticket_entry_items").delete().eq("daily_ticket_entry_id", persistedEntryId);
     if (deleteResult.error) {
-      setNotice({ type: "error", text: friendlyError(deleteResult.error) });
+      NotificationService.showError(friendlyError(deleteResult.error));
       setBusyEmployeeId("");
       return;
     }
@@ -2795,12 +2768,12 @@ export function DailyTicketEntryView({
     if (persistedDetailPayloads.length > 0) {
       const detailsResult = await supabase.from("daily_ticket_entry_items").insert(persistedDetailPayloads);
       if (detailsResult.error) {
-        setNotice({ type: "error", text: friendlyError(detailsResult.error) });
+        NotificationService.showError(friendlyError(detailsResult.error));
         setBusyEmployeeId("");
         return;
       }
     }
-    setNotice({ type: "success", text: `${draft.employee.full_name}'s ticket counts were saved.` });
+    NotificationService.showSuccess(`${draft.employee.full_name}'s ticket counts were saved.`);
     setBusyEmployeeId("");
     await onChange();
   }
@@ -2810,7 +2783,14 @@ export function DailyTicketEntryView({
 
   return (
     <div className="page-stack">
-      {employees.some((employee) => employee.status === "active" && !employee.position_id) && <NoticeBanner notice={{ type: "error", text: "Some active employees have no position and cannot receive ticket entries." }} onDismiss={() => undefined} />}
+      {employees.some((employee) => employee.status === "active" && !employee.position_id) && (
+        <div className="notice error" role="alert">
+          <div>
+            <strong>Action needed</strong>
+            <p>Some active employees have no position and cannot receive ticket entries.</p>
+          </div>
+        </div>
+      )}
       <section className="subcon-ticket-stats">
         <div className="subcon-ticket-stat">
           <span>Employees</span>
@@ -3321,7 +3301,7 @@ function SubconDailyTicketView({
         payload,
         options: { onConflict: "user_id,entry_date,subcontractor_id" },
       });
-      setNotice({ type: "success", text: `${subcontractor.name}'s subcontractor tickets were saved locally.` });
+      NotificationService.showSuccess(`${subcontractor.name}'s subcontractor tickets were saved locally.`);
       setBusySubconId("");
       return;
     }
@@ -3338,16 +3318,16 @@ function SubconDailyTicketView({
           payload,
           options: { onConflict: "user_id,entry_date,subcontractor_id" },
         });
-        setNotice({ type: "success", text: `${subcontractor.name}'s subcontractor tickets were saved locally.` });
+        NotificationService.showSuccess(`${subcontractor.name}'s subcontractor tickets were saved locally.`);
         setBusySubconId("");
         return;
       }
-      setNotice({ type: "error", text: friendlyError(result.error) });
+      NotificationService.showError(friendlyError(result.error));
       setBusySubconId("");
       return;
     }
 
-    setNotice({ type: "success", text: `${subcontractor.name}'s subcontractor tickets were saved.` });
+    NotificationService.showSuccess(`${subcontractor.name}'s subcontractor tickets were saved.`);
     setBusySubconId("");
     await onChange();
   }
@@ -3762,7 +3742,7 @@ export function AttendanceView({
     const timeIn = trackTime ? timeInFor(emp.id) : "";
     const timeOut = trackTime ? timeOutFor(emp.id) : "";
     if (trackTime && (!timeIn || !timeOut)) {
-      setNotice({ type: "error", text: `Enter Time In and Time Out for ${emp.full_name} before saving.` });
+      NotificationService.showError(`Enter Time In and Time Out for ${emp.full_name} before saving.`);
       return;
     }
     setBusyEmployeeId(emp.id);
@@ -3812,7 +3792,7 @@ export function AttendanceView({
           options: existing ? undefined : { onConflict: "user_id,entry_date,employee_id" },
         });
       } else {
-        setNotice({ type: "error", text: result.error.message ?? "Failed to save attendance." });
+        NotificationService.showError(result.error.message ?? "Failed to save attendance.");
       }
     } else {
       setDrafts((prev) => { const next = { ...prev }; delete next[emp.id]; return next; });
@@ -3831,13 +3811,13 @@ export function AttendanceView({
     if (missingTime.length > 0) {
       const names = missingTime.slice(0, 3).map((emp) => emp.full_name).join(", ");
       const extra = missingTime.length > 3 ? ` and ${missingTime.length - 3} more` : "";
-      setNotice({ type: "error", text: `Fill in Time In and Time Out for: ${names}${extra} before saving all.` });
+      NotificationService.showError(`Fill in Time In and Time Out for: ${names}${extra} before saving all.`);
       return;
     }
     for (const emp of pendingEmployees) {
       await saveEntry(emp);
     }
-    setNotice({ type: "success", text: "Attendance saved." });
+    NotificationService.showSuccess("Attendance saved.");
   }
 
   useEffect(() => {
@@ -4032,7 +4012,7 @@ export function AttendanceView({
               setDrafts({});
               await onChange();
               setRefreshing(false);
-              setNotice({ type: "success", text: "Attendance refreshed." });
+              NotificationService.showSuccess("Attendance refreshed.");
             }}
             type="button"
             aria-label="Refresh attendance"
@@ -4229,7 +4209,6 @@ export function EmployeesView({
   payrollRuns,
   positions,
   employeeAdvances,
-  setNotice,
   userId,
 }: {
   employees: Employee[];
@@ -4245,7 +4224,6 @@ export function EmployeesView({
   payrollRuns: PayrollRunWithItems[];
   positions: Position[];
   employeeAdvances: EmployeeAdvance[];
-  setNotice: (notice: Notice) => void;
   userId: string;
 }) {
   const [query, setQuery] = useState("");
@@ -4317,7 +4295,11 @@ export function EmployeesView({
         payrollRuns={payrollRuns}
         positions={positions}
         employeeAdvances={employeeAdvances}
-        setNotice={setNotice}
+        setNotice={(notice) => {
+          if (!notice) return;
+          if (notice.type === "error") NotificationService.showError(notice.text);
+          else NotificationService.showSuccess(notice.text);
+        }}
         userId={userId}
       />
     );
@@ -4339,13 +4321,13 @@ export function EmployeesView({
     if (!supabase) return;
     const selectedPosition = positions.find((position) => position.id === values.position_id && position.status === "active");
     if (!selectedPosition) {
-      setNotice({ type: "error", text: "Select an active position before saving this employee." });
+      NotificationService.showError("Select an active position before saving this employee.");
       return;
     }
     for (const [field, label] of [["contact_number", "Contact number"], ["emergency_contact_number", "Emergency contact number"]] as const) {
       const digits = values[field];
       if (digits && digits.length !== 10) {
-        setNotice({ type: "error", text: `${label} must be a valid 10-digit Philippine mobile number.` });
+        NotificationService.showError(`${label} must be a valid 10-digit Philippine mobile number.`);
         return;
       }
     }
@@ -4402,7 +4384,7 @@ export function EmployeesView({
         recordId: editing?.id,
         payload,
       });
-      setNotice({ type: "success", text: "Employee saved locally. It will sync when online." });
+      NotificationService.showSuccess("Employee saved locally. It will sync when online.");
       closeForm();
       return;
     }
@@ -4431,10 +4413,10 @@ export function EmployeesView({
         return;
       }
       onLocalEmployeesChange(employees);
-      setNotice({ type: "error", text: friendlyError(result.error) });
+      NotificationService.showError(friendlyError(result.error));
       return;
     }
-    setNotice({ type: "success", text: "Employee saved." });
+    NotificationService.showSuccess("Employee saved.");
     closeForm();
     await onChange();
   }
@@ -4556,7 +4538,7 @@ export function EmployeeDetailsView({
 
     loadEmployeePayrollRuns(supabase, currentEmployee.id).then((result) => {
       if (result.error) {
-        setNotice({ type: "error", text: friendlyError(result.error) });
+        NotificationService.showError(friendlyError(result.error));
         return;
       }
       setEmployeePayrollRuns(result.data);
@@ -4636,7 +4618,7 @@ export function EmployeeDetailsView({
         });
         return;
       }
-      setNotice({ type: "error", text: friendlyError(error) });
+      NotificationService.showError(friendlyError(error));
       return;
     }
 
@@ -4644,7 +4626,7 @@ export function EmployeeDetailsView({
     setCurrentEmployee(nextEmployee);
     onEmployeeUpdate(nextEmployee);
     setEditingRate(null);
-    setNotice({ type: "success", text: `${type === "installation" ? "Installation" : "Repair"} ticket wage saved.` });
+    NotificationService.showSuccess(`${type === "installation" ? "Installation" : "Repair"} ticket wage saved.`);
     await onChange();
   }
 
