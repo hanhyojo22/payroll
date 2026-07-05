@@ -12,6 +12,7 @@ import { isOfflineLikeError } from "../../lib/offlineSync";
 import { supabase } from "../../supabase";
 import { MoneyField } from "../../shared/components/MoneyField";
 import { PageHeader, Toolbar } from "../../shared/components/PageLayout";
+import { NotificationService } from "../../shared/notifications/NotificationService";
 import type { Notice, QueueOfflineMutation } from "../../shared/types";
 import { currency } from "../../shared/utils/currency";
 import { currentMonth, currentYear, monthNames, todayKey } from "../../shared/utils/dates";
@@ -148,7 +149,7 @@ export function BillingFeature({
         payload: rpcPayload,
       });
       setQuickCollecting(null);
-      setNotice({ type: "success", text: "Marked as collected (will sync when online)." });
+      NotificationService.showSuccess("Marked as collected (will sync when online).");
       return;
     }
     const values: CollectionPaymentFormValues = {
@@ -160,11 +161,11 @@ export function BillingFeature({
     };
     const result = await recordReceivablePayment(supabase, collection.id, id, values);
     if (result.error) {
-      setNotice({ type: "error", text: (result.error as { message?: string }).message ?? "Failed to record collection." });
+      NotificationService.showError((result.error as { message?: string }).message ?? "Failed to record collection.");
       return;
     }
     setQuickCollecting(null);
-    setNotice({ type: "success", text: "Collection marked as collected." });
+    NotificationService.showSuccess("Collection marked as collected.");
     await onChange();
   }
 
@@ -343,7 +344,7 @@ export function BillingFeature({
       (record) => record.billing_month === month && record.billing_year === year && record.billing_period === period,
     );
     if (existing) {
-      setNotice({ type: "error", text: `Billing for ${monthNames[month - 1]} ${year} (${periodLabel}) already exists.` });
+      NotificationService.showError(`Billing for ${monthNames[month - 1]} ${year} (${periodLabel}) already exists.`);
       return;
     }
 
@@ -377,7 +378,7 @@ export function BillingFeature({
         },
       });
       setFormOpen(false);
-      setNotice({ type: "success", text: `Billing for ${monthNames[month - 1]} ${year} (${periodLabel}) created.` });
+      NotificationService.showSuccess(`Billing for ${monthNames[month - 1]} ${year} (${periodLabel}) created.`);
       return;
     }
 
@@ -415,12 +416,12 @@ export function BillingFeature({
         setFormOpen(false);
         return;
       }
-      setNotice({ type: "error", text: (result.error as { message?: string }).message ?? "Failed to create billing." });
+      NotificationService.showError((result.error as { message?: string }).message ?? "Failed to create billing.");
       return;
     }
 
     setFormOpen(false);
-    setNotice({ type: "success", text: `Billing for ${monthNames[month - 1]} ${year} (${periodLabel}) created.` });
+    NotificationService.showSuccess(`Billing for ${monthNames[month - 1]} ${year} (${periodLabel}) created.`);
     await onChange();
   }
 
@@ -446,15 +447,12 @@ export function BillingFeature({
       true,
     );
     if (result.error) {
-      setNotice({ type: "error", text: (result.error as { message?: string }).message ?? "Failed to update billing." });
+      NotificationService.showError((result.error as { message?: string }).message ?? "Failed to update billing.");
       return;
     }
 
     setEditingRecord(null);
-    setNotice({
-      type: "success",
-      text: `Billing for ${monthNames[Number(values.billing_month) - 1]} ${values.billing_year} (${periodLabel}) updated.`,
-    });
+    NotificationService.showSuccess(`Billing for ${monthNames[Number(values.billing_month) - 1]} ${values.billing_year} (${periodLabel}) updated.`);
     await onChange();
   }
 
@@ -467,10 +465,10 @@ export function BillingFeature({
       record.collectibles_collection_id ?? null,
     );
     if (result.error) {
-      setNotice({ type: "error", text: (result.error as { message?: string }).message ?? "Failed to delete billing." });
+      NotificationService.showError((result.error as { message?: string }).message ?? "Failed to delete billing.");
       return;
     }
-    setNotice({ type: "success", text: "Billing record deleted." });
+    NotificationService.showSuccess("Billing record deleted.");
     await onChange();
   }
 
@@ -654,7 +652,7 @@ export function BillingFeature({
                                             View account
                                           </button>
                                           {payment?.status === "pending" && (
-                                            <button onClick={() => void markPayoutPaid(payment, setNotice, onChange)} type="button">
+                                            <button onClick={() => void markPayoutPaid(payment, onChange)} type="button">
                                               Mark paid
                                             </button>
                                           )}
@@ -824,16 +822,20 @@ export function BillingHistoryFeature({
 
 async function markPayoutPaid(
   payment: PaymentReminder,
-  setNotice: (notice: Notice) => void,
   onChange: () => Promise<void>,
 ) {
   if (!supabase) return;
+  const confirmed = await NotificationService.showConfirm({
+    title: "Mark payout as paid",
+    message: `Mark ${payment.title} as paid?`,
+  });
+  if (!confirmed) return;
   const result = await markSubconPaymentReminderPaid(supabase, payment.id);
   if (result.error) {
-    setNotice({ type: "error", text: (result.error as { message?: string }).message ?? "Failed to mark payout paid." });
+    NotificationService.showError((result.error as { message?: string }).message ?? "Failed to mark payout paid.");
     return;
   }
-  setNotice({ type: "success", text: `${payment.title} payout marked paid.` });
+  NotificationService.showSuccess(`${payment.title} payout marked paid.`);
   await onChange();
 }
 
@@ -1554,11 +1556,11 @@ export function BillingSettingsManager({
     if (!supabase) return;
     const result = await saveBillingSettings(supabase, userId, payload);
     if (result.error) {
-      setNotice({ type: "error", text: "Failed to save settings." });
+      NotificationService.showError("Failed to save settings.");
       return;
     }
     setSettings((current) => (current ? { ...current, ...payload } : current));
-    setNotice({ type: "success", text: "Billing settings saved." });
+    NotificationService.showSuccess("Billing settings saved.");
     await onChange();
   }
 
