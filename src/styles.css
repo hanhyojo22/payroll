@@ -8209,6 +8209,15 @@ td {
   grid-template-columns: 1fr;
 }
 
+.company-expense-modal {
+  border-top: 3px solid var(--color-accent);
+  max-width: 460px;
+}
+
+.billing-form-fields.company-expense-form-fields {
+  grid-template-columns: 1fr;
+}
+
 .collection-details-modal {
   max-width: 960px;
   width: 96vw;

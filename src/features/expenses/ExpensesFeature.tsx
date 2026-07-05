@@ -715,7 +715,7 @@ function ExpenseFormModal({
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className={`modal billing-form-modal${categoryScope === "personal" ? " personal-expense-modal" : ""}`} onClick={(event) => event.stopPropagation()}>
+      <div className={`modal billing-form-modal${categoryScope === "personal" ? " personal-expense-modal" : " company-expense-modal"}`} onClick={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <h3>{initial ? "Edit" : "Add"} {categoryScope === "personal" ? "Personal" : "Company"} Expense</h3>
           <button aria-label="Close" onClick={onClose} type="button"><X size={18} /></button>
@@ -729,7 +729,7 @@ function ExpenseFormModal({
             setBusy(false);
           }}
         >
-          <div className={`billing-form-fields${categoryScope === "personal" ? " personal-expense-form-fields" : ""}`}>
+          <div className={`billing-form-fields${categoryScope === "personal" ? " personal-expense-form-fields" : " company-expense-form-fields"}`}>
             <label>
               {categoryScope === "personal" ? "What's this for?" : "Employee"}
               {categoryScope === "personal" ? (
