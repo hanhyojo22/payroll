@@ -6,6 +6,7 @@ import { DataTable } from "../../shared/components/DataTable";
 import { MoneyField } from "../../shared/components/MoneyField";
 import { StatusBadge } from "../../shared/components/StatusBadge";
 import type { Notice, QueueOfflineMutation } from "../../shared/types";
+import { NotificationService } from "../../shared/notifications/NotificationService";
 import { currency, toNumber } from "../../shared/utils/currency";
 import { todayKey } from "../../shared/utils/dates";
 import { friendlyError } from "../../shared/utils/errors";
@@ -126,13 +127,13 @@ export function EmployeeAdvancesFeature({
         await onChange();
         return;
       }
-      setNotice({ type: "error", text: friendlyError(result.error) });
+      NotificationService.showError(friendlyError(result.error));
       return;
     }
 
     setEditingAdvance(null);
     setAdvanceForm(emptyEmployeeAdvance(employee.id));
-    setNotice({ type: "success", text: editingAdvance ? "Employee advance updated." : "Employee advance saved." });
+    NotificationService.showSuccess(editingAdvance ? "Employee advance updated." : "Employee advance saved.");
     await onChange();
   }
 
