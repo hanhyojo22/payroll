@@ -772,6 +772,7 @@ function ExpenseFormModal({
     notes: initial?.notes ?? "",
   });
   const [busy, setBusy] = useState(false);
+  const [showMoreOptions, setShowMoreOptions] = useState(false);
   const dueDateHint = (() => {
     if (values.frequency === "one_time") return null;
     if (!values.due_date) return "No due date — recurs indefinitely.";
@@ -783,7 +784,7 @@ function ExpenseFormModal({
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal billing-form-modal" onClick={(event) => event.stopPropagation()}>
+      <div className={`modal billing-form-modal${categoryScope === "personal" ? " personal-expense-modal" : ""}`} onClick={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <h3>{initial ? "Edit" : "Add"} {categoryScope === "personal" ? "Personal" : "Company"} Expense</h3>
           <button aria-label="Close" onClick={onClose} type="button"><X size={18} /></button>
@@ -799,10 +800,10 @@ function ExpenseFormModal({
         >
           <div className="billing-form-fields">
             <label>
-              {categoryScope === "personal" ? "Name" : "Employee"}
+              {categoryScope === "personal" ? "What's this for?" : "Employee"}
               {categoryScope === "personal" ? (
                 <input
-                  placeholder="Who is this expense for?"
+                  placeholder="e.g. Netflix subscription"
                   type="text"
                   value={values.employee_name}
                   onChange={(event) => setValues((current) => ({ ...current, employee_name: event.target.value }))}
@@ -846,13 +847,6 @@ function ExpenseFormModal({
                 <option value="daily">Daily</option>
               </select>
             </label>
-            {categoryScope === "personal" && (
-              <label>
-                {values.frequency === "one_time" ? "Due date (optional)" : "Due date — when this ends (optional)"}
-                <input type="date" value={values.due_date} onChange={(event) => setValues((current) => ({ ...current, due_date: event.target.value }))} />
-                {dueDateHint && <small className="expense-remaining-note">{dueDateHint}</small>}
-              </label>
-            )}
             {categoryScope === "company" && (
               <label>
                 Payment date (optional)
@@ -860,10 +854,36 @@ function ExpenseFormModal({
               </label>
             )}
           </div>
-          <label>
-            Notes
-            <textarea rows={3} value={values.notes} onChange={(event) => setValues((current) => ({ ...current, notes: event.target.value }))} />
-          </label>
+          {categoryScope === "company" && (
+            <label>
+              Notes
+              <textarea rows={3} value={values.notes} onChange={(event) => setValues((current) => ({ ...current, notes: event.target.value }))} />
+            </label>
+          )}
+          {categoryScope === "personal" && (
+            <div className="personal-expense-more">
+              <button
+                className="personal-expense-more-toggle"
+                onClick={() => setShowMoreOptions((current) => !current)}
+                type="button"
+              >
+                {showMoreOptions ? "Hide options" : "More options"}
+              </button>
+              {showMoreOptions && (
+                <div className="personal-expense-more-fields">
+                  <label>
+                    {values.frequency === "one_time" ? "Due date (optional)" : "Due date — when this ends (optional)"}
+                    <input type="date" value={values.due_date} onChange={(event) => setValues((current) => ({ ...current, due_date: event.target.value }))} />
+                    {dueDateHint && <small className="expense-remaining-note">{dueDateHint}</small>}
+                  </label>
+                  <label>
+                    Notes
+                    <textarea rows={3} value={values.notes} onChange={(event) => setValues((current) => ({ ...current, notes: event.target.value }))} />
+                  </label>
+                </div>
+              )}
+            </div>
+          )}
           <div className="form-actions">
             <button className="billing-btn outline" onClick={onClose} type="button">Cancel</button>
             <button

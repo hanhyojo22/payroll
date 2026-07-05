@@ -7307,6 +7307,32 @@ td {
   flex: 0 0 auto;
 }
 
+.personal-expense-more {
+  margin-top: 4px;
+}
+
+.personal-expense-more-toggle {
+  background: transparent;
+  border: 0;
+  color: var(--color-warning);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  padding: 0;
+}
+
+.personal-expense-more-toggle:hover {
+  text-decoration: underline;
+}
+
+.personal-expense-more-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 10px;
+}
+
 .expense-installment-progress {
   color: var(--color-text-tertiary);
   display: block;
