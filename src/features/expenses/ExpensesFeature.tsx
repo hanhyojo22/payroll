@@ -488,18 +488,20 @@ export function ExpensesFeature({
       </div>
 
       <section className="expense-kpi-row">
-        <div className="billing-stat accent">
-          <div className="billing-stat-icon"><Receipt size={21} /></div>
-          <div className="billing-stat-text">
-            <span className="billing-stat-label">Total Expenses</span>
-            <strong className="billing-stat-value">{currency.format(kpis.totalExpensesAmount)}</strong>
-            <span className="billing-stat-helper">Active, non-cancelled</span>
+        {categoryScope === "company" && (
+          <div className="billing-stat accent">
+            <div className="billing-stat-icon"><Receipt size={21} /></div>
+            <div className="billing-stat-text">
+              <span className="billing-stat-label">Total Expenses</span>
+              <strong className="billing-stat-value">{currency.format(kpis.totalExpensesAmount)}</strong>
+              <span className="billing-stat-helper">Active, non-cancelled</span>
+            </div>
           </div>
-        </div>
+        )}
         <div className="billing-stat billing-stat-outstanding">
           <div className="billing-stat-icon"><CalendarClock size={21} /></div>
           <div className="billing-stat-text">
-            <span className="billing-stat-label">Outstanding</span>
+            <span className="billing-stat-label">{categoryScope === "personal" ? "Upcoming" : "Outstanding"}</span>
             <strong className="billing-stat-value">{currency.format(kpis.outstanding)}</strong>
             <span className="billing-stat-helper">Remaining balance</span>
           </div>
@@ -507,7 +509,7 @@ export function ExpensesFeature({
         <div className="billing-stat billing-stat-paid-month">
           <div className="billing-stat-icon"><CheckCircle2 size={21} /></div>
           <div className="billing-stat-text">
-            <span className="billing-stat-label">Paid This Month</span>
+            <span className="billing-stat-label">{categoryScope === "personal" ? "This Month's Spending" : "Paid This Month"}</span>
             <strong className="billing-stat-value">{currency.format(kpis.paidThisMonth)}</strong>
             <span className="billing-stat-helper">{monthNames[Number(todayKey().slice(5, 7)) - 1]}</span>
           </div>
