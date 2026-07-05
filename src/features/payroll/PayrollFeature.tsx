@@ -15,6 +15,7 @@ import { DataTable } from "../../shared/components/DataTable";
 import { PageHeader, RecordTitle, Toolbar } from "../../shared/components/PageLayout";
 import { ensurePayrollSettings, savePayrollSettings } from "./payrollRepository";
 import type { Notice, QueueOfflineMutation } from "../../shared/types";
+import { NotificationService } from "../../shared/notifications/NotificationService";
 import { currency, toNumber } from "../../shared/utils/currency";
 import { currentMonth, currentYear, monthNames, todayKey } from "../../shared/utils/dates";
 import { friendlyError } from "../../shared/utils/errors";
@@ -296,7 +297,7 @@ export function PayrollFeature({
 
     const result = await ensurePayrollSettings(supabase, userId);
     if (result.error) {
-      setNotice({ type: "error", text: friendlyError(result.error) });
+      NotificationService.showError(friendlyError(result.error));
       return null;
     }
 
@@ -332,7 +333,7 @@ export function PayrollFeature({
     }
     const activeTeamEmployees = employees.filter((employee) => employee.status === "active");
     if (activeTeamEmployees.length === 0) {
-      setNotice({ type: "error", text: "Add at least one active employee first." });
+      NotificationService.showError("Add at least one active employee first.");
       return;
     }
     const invalidEmployees = activeTeamEmployees.filter((employee) => {
@@ -340,7 +341,7 @@ export function PayrollFeature({
       return !position || position.status !== "active";
     });
     if (invalidEmployees.length > 0) {
-      setNotice({ type: "error", text: `Assign an active position to: ${invalidEmployees.map((employee) => employee.full_name).join(", ")}.` });
+      NotificationService.showError(`Assign an active position to: ${invalidEmployees.map((employee) => employee.full_name).join(", ")}.`);
       return;
     }
 
@@ -356,10 +357,7 @@ export function PayrollFeature({
     });
 
     if (missingAttendanceEmployees.length > 0) {
-      setNotice({
-        type: "error",
-        text: `Attendance not recorded for: ${missingAttendanceEmployees.map((e) => e.full_name).join(", ")}. Please log attendance before generating payroll.`,
-      });
+      NotificationService.showError(`Attendance not recorded for: ${missingAttendanceEmployees.map((e) => e.full_name).join(", ")}. Please log attendance before generating payroll.`);
       return;
     }
 
@@ -380,7 +378,7 @@ export function PayrollFeature({
     if (existingRun) {
       setSelectedRunId(existingRun.id);
       setFormOpen(false);
-      setNotice({ type: "success", text: "Payroll for this pay period already exists and is now selected." });
+      NotificationService.showSuccess("Payroll for this pay period already exists and is now selected.");
       return;
     }
 
@@ -510,13 +508,13 @@ export function PayrollFeature({
         if (existing.data) {
           setSelectedRunId(existing.data.id);
           setFormOpen(false);
-          setNotice({ type: "success", text: "Payroll for this pay period already exists and has been selected." });
+          NotificationService.showSuccess("Payroll for this pay period already exists and has been selected.");
         } else {
-          setNotice({ type: "error", text: friendlyError(runResult.error) });
+          NotificationService.showError(friendlyError(runResult.error));
         }
         return;
       }
-      setNotice({ type: "error", text: friendlyError(runResult.error) });
+      NotificationService.showError(friendlyError(runResult.error));
       return;
     }
 
@@ -546,18 +544,18 @@ export function PayrollFeature({
     const itemPayloads = employeePayrollItems.map((item) => item.payload);
     const itemResult = await insertPayrollItems(itemPayloads);
     if (itemResult.error) {
-      setNotice({ type: "error", text: friendlyError(itemResult.error) });
+      NotificationService.showError(friendlyError(itemResult.error));
       return;
     }
 
     const advanceDeductions = employeePayrollItems.flatMap((item) => item.advanceDeductions);
     const advanceError = await applyEmployeeAdvancePayrollDeductions(advanceDeductions);
     if (advanceError) {
-      setNotice({ type: "error", text: friendlyError(advanceError) });
+      NotificationService.showError(friendlyError(advanceError));
       return;
     }
 
-    setNotice({ type: "success", text: "Payroll run generated." });
+    NotificationService.showSuccess("Payroll run generated.");
     setFormOpen(false);
     setSelectedRunId(newRun.id);
     await onChange();
@@ -620,7 +618,11 @@ export function PayrollFeature({
       });
       return;
     }
-    setNotice(error ? { type: "error", text: friendlyError(error) } : { type: "success", text: "Payroll item updated." });
+    if (error) {
+      NotificationService.showError(friendlyError(error));
+    } else {
+      NotificationService.showSuccess("Payroll item updated.");
+    }
     await onChange();
   }
 
@@ -687,21 +689,18 @@ export function PayrollFeature({
         });
         return;
       }
-      setNotice({ type: "error", text: friendlyError(error) });
+      NotificationService.showError(friendlyError(error));
       return;
     }
 
     const advanceDeductions = employeePayrollItems.flatMap((item) => item.advanceDeductions);
     const advanceError = await applyEmployeeAdvancePayrollDeductions(advanceDeductions);
     if (advanceError) {
-      setNotice({ type: "error", text: friendlyError(advanceError) });
+      NotificationService.showError(friendlyError(advanceError));
       return;
     }
 
-    setNotice({
-      type: "success",
-      text: `${missingEmployees.length} employee${missingEmployees.length === 1 ? "" : "s"} added to payroll.`,
-    });
+    NotificationService.showSuccess(`${missingEmployees.length} employee${missingEmployees.length === 1 ? "" : "s"} added to payroll.`);
     await onChange();
   }
 
@@ -745,14 +744,14 @@ export function PayrollFeature({
   async function applyMissingPayrollDeductions() {
     if (!supabase || !selectedRun || itemsNeedingPayrollDeductions.length === 0) return;
     if (!navigator.onLine) {
-      setNotice({ type: "error", text: "Connect to the internet to apply payroll deductions to this payroll run." });
+      NotificationService.showError("Connect to the internet to apply payroll deductions to this payroll run.");
       return;
     }
 
     for (const { item, patch } of itemsNeedingPayrollDeductions) {
       const { error } = await supabase.from("payroll_run_items").update(patch.payload).eq("id", item.id);
       if (error) {
-        setNotice({ type: "error", text: friendlyError(error) });
+        NotificationService.showError(friendlyError(error));
         return;
       }
     }
@@ -761,14 +760,11 @@ export function PayrollFeature({
       itemsNeedingPayrollDeductions.flatMap((entry) => entry.patch.advanceDeductions),
     );
     if (advanceError) {
-      setNotice({ type: "error", text: friendlyError(advanceError) });
+      NotificationService.showError(friendlyError(advanceError));
       return;
     }
 
-    setNotice({
-      type: "success",
-      text: `Applied payroll deductions to ${itemsNeedingPayrollDeductions.length} payroll item${itemsNeedingPayrollDeductions.length === 1 ? "" : "s"}.`,
-    });
+    NotificationService.showSuccess(`Applied payroll deductions to ${itemsNeedingPayrollDeductions.length} payroll item${itemsNeedingPayrollDeductions.length === 1 ? "" : "s"}.`);
     await onChange();
   }
 
@@ -867,6 +863,15 @@ function PayrollItemsTable({
   items: PayrollRunItem[];
   onUpdate: (item: PayrollRunItem, patch: Partial<PayrollRunItem>) => Promise<void>;
 }) {
+  async function handleMarkPaid(item: PayrollRunItem) {
+    const confirmed = await NotificationService.showConfirm({
+      title: "Mark as paid",
+      message: "Mark this payroll item as paid?",
+    });
+    if (!confirmed) return;
+    await onUpdate(item, { status: "paid", paid_date: todayKey() });
+  }
+
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "paid">("pending");
 
@@ -941,7 +946,7 @@ function PayrollItemsTable({
           </span>,
           <div className="row-actions" key="actions">
             {item.status !== "paid" ? (
-              <button aria-label="Mark paid" onClick={() => onUpdate(item, { status: "paid", paid_date: todayKey() })} title="Mark paid" type="button">
+              <button aria-label="Mark paid" onClick={() => void handleMarkPaid(item)} title="Mark paid" type="button">
                 <CheckCircle2 size={16} />
               </button>
             ) : (
@@ -1025,7 +1030,7 @@ export function PayrollSettingsManager({
     const result = await savePayrollSettings(supabase, userId, { government_deduction_enabled: enabled, government_deduction_cutoff: cutoff });
     setBusy(false);
     if (result.error) {
-      setNotice({ type: "error", text: "Failed to save payroll settings." });
+      NotificationService.showError("Failed to save payroll settings.");
       return;
     }
 
@@ -1039,7 +1044,7 @@ export function PayrollSettingsManager({
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         }));
-    setNotice({ type: "success", text: "Payroll settings saved." });
+    NotificationService.showSuccess("Payroll settings saved.");
     await onChange();
   }
 
