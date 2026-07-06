@@ -508,7 +508,7 @@ function SubcontractorDetailsView({
     const newPaymentRecord: PaymentReminderPayment = {
       id: paymentId, user_id: userId, payment_reminder_id: payment.id, ...paymentPayload, created_at: new Date().toISOString(),
     };
-    const next = nextPaymentReminderCompletionState(payment, [...payment.payments, newPaymentRecord]);
+    const next = nextPaymentReminderCompletionState(payment, [...(payment.payments ?? []), newPaymentRecord]);
     const complete = next.status === "paid";
 
     if (!navigator.onLine) {
@@ -553,7 +553,7 @@ function SubcontractorDetailsView({
       danger: true,
     });
     if (!confirmed) return;
-    const remainingPayments = payment.payments.filter((item) => item.id !== paymentRecord.id);
+    const remainingPayments = (payment.payments ?? []).filter((item) => item.id !== paymentRecord.id);
     const shouldRevert = payment.status === "paid" && nextPaymentReminderCompletionState(payment, remainingPayments).status !== "paid";
 
     if (!navigator.onLine) {
@@ -1281,7 +1281,7 @@ function PayoutDetailsModal({
   onRecordPayment: () => void;
   payment: PaymentReminder;
 }) {
-  const history = [...payment.payments].sort((a, b) => b.payment_date.localeCompare(a.payment_date) || b.created_at.localeCompare(a.created_at));
+  const history = [...(payment.payments ?? [])].sort((a, b) => b.payment_date.localeCompare(a.payment_date) || b.created_at.localeCompare(a.created_at));
   const displayStatus = paymentReminderDisplayStatus(payment, payment.payments);
   const paidAmount = paymentReminderPaymentsTotal(payment.payments);
   const remainingBalance = paymentReminderRemainingBalance(payment, payment.payments);
