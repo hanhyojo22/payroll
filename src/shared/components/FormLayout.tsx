@@ -4,16 +4,18 @@ import { Spinner } from "./Spinner";
 
 export function Modal({
   children,
+  className,
   onClose,
   title,
 }: {
   children: ReactNode;
+  className?: string;
   onClose: () => void;
   title: string;
 }) {
   return (
     <div className="modal-backdrop" role="presentation">
-      <section aria-label={title} aria-modal="true" className="modal" role="dialog">
+      <section aria-label={title} aria-modal="true" className={`modal${className ? ` ${className}` : ""}`} role="dialog">
         <header>
           <h2>{title}</h2>
           <button aria-label="Close" onClick={onClose} type="button">

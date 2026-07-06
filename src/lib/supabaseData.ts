@@ -288,6 +288,8 @@ export function buildPaymentLedger(
     status: payment.status,
     expenseId: null,
     paymentReminderId: payment.id,
+    expenseAmount: null,
+    expenseFrequency: null,
   }));
   const expenseRows: PaymentLedgerRow[] = expenses.flatMap((expense) =>
     expense.installment_payments.map((payment) => ({
@@ -304,6 +306,8 @@ export function buildPaymentLedger(
       status: "posted",
       expenseId: expense.id,
       paymentReminderId: null,
+      expenseAmount: toNumber(expense.amount),
+      expenseFrequency: expense.frequency,
     })),
   );
   return [...reminderRows, ...expenseRows];
@@ -371,7 +375,7 @@ export async function loadEmployees(supabase: SupabaseClient) {
     "Employees",
     supabase
       .from("employees")
-      .select("id,user_id,full_name,role,position_id,department,contact_number,email,address,profile_photo_url,hire_date,status,wage_category,installation_rate,repair_rate,monthly_salary,gender,sss_number,philhealth_number,pagibig_number,sss_deduction,philhealth_deduction,pagibig_deduction,withholding_tax,tin_number,emergency_contact_name,emergency_contact_number,emergency_contact_relation,notes,created_at,updated_at")
+      .select("id,user_id,full_name,role,position_id,department,contact_number,email,address,profile_photo_url,hire_date,date_of_birth,status,wage_category,installation_rate,repair_rate,monthly_salary,gender,civil_status,sss_number,philhealth_number,pagibig_number,sss_deduction,philhealth_deduction,pagibig_deduction,withholding_tax,tin_number,emergency_contact_name,emergency_contact_number,emergency_contact_relation,notes,created_at,updated_at")
       .order("full_name"),
   );
 }
@@ -503,7 +507,7 @@ export async function loadBillingRecords(supabase: SupabaseClient) {
     "Billing records",
     supabase
       .from("billing_records")
-      .select("id,user_id,invoice_no,billing_month,billing_year,billing_period,install_tickets,repair_tickets,disputed_install,disputed_repair,total_tickets,disputed_tickets,billable_tickets,billing_rate,billing_amount,collections_pct,collections_amount,collectibles_amount,collection_id,collectibles_collection_id,notes,created_at,updated_at,subcon_items:billing_subcon_items(id,user_id,billing_record_id,subcontractor_id,subcon_name,install_tickets,repair_tickets,disputed_install,disputed_repair,installation_rate,repair_rate,billable_tickets,billing_amount,payable_pct,payable_amount,collection_amount,created_at)")
+      .select("id,user_id,invoice_no,billing_month,billing_year,billing_period,install_tickets,repair_tickets,disputed_install,disputed_repair,total_tickets,disputed_tickets,billable_tickets,billing_rate,billing_amount,collections_pct,collections_amount,collectibles_amount,collection_id,collectibles_collection_id,due_date,notes,created_at,updated_at,subcon_items:billing_subcon_items(id,user_id,billing_record_id,subcontractor_id,subcon_name,install_tickets,repair_tickets,disputed_install,disputed_repair,installation_rate,repair_rate,billable_tickets,billing_amount,payable_pct,payable_amount,collection_amount,created_at)")
       .order("billing_year", { ascending: false })
       .order("billing_month", { ascending: false }),
   );

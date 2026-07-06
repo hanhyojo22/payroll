@@ -56,6 +56,7 @@ import {
   normalizeTicketCount,
   ticketGrossPay,
 } from "./domain/tickets";
+import { countSubconTickets, countTicketsByType } from "./domain/billing";
 import { expenseOverdueReferenceDate } from "./domain/expenses";
 import {
   loadAttendanceEntries,
@@ -397,9 +398,11 @@ const emptyEmployee: EmployeeFormValues = {
   address: "",
   profile_photo_url: "",
   hire_date: todayKey(),
+  date_of_birth: "",
   status: "active",
   wage_category: "new",
   gender: "",
+  civil_status: "",
   monthly_salary: "",
   sss_number: "",
   philhealth_number: "",
@@ -1105,7 +1108,7 @@ function Workspace({ session }: { session: Session }) {
           ) : (
           <>
               {view === "dashboard" && (
-                <Dashboard summary={dashboardSummary} />
+                <DashboardModern summary={dashboardSummary} />
               )}
               {view === "employees" && (
                 <EmployeesView
@@ -1377,6 +1380,442 @@ function Workspace({ session }: { session: Session }) {
         </section>
       </div>
     </main>
+  );
+}
+
+function DashboardModern({ summary }: { summary: DashboardSummary }) {
+  const now = new Date();
+  const hour = now.getHours();
+  const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+  const dateStr = now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+
+  const latestRun = summary.latestRun;
+  const latestRunDate = latestRun
+    ? new Date(`${latestRun.generated_date}T00:00:00`).toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" })
+    : "None";
+
+  const actionItems: Array<{ id: string; title: string; amount: number; urgency: "overdue" | "today"; daysInfo: string; kind: "collection" | "bill" | "expense" }> = [];
+  const actionKindLabels: Record<"collection" | "bill" | "expense", string> = {
+    collection: "Collection",
+    bill: "Bill",
+    expense: "Expense",
+  };
+
+  for (const collection of summary.overdueCollections) {
+    const days = Math.max(1, Math.floor((now.getTime() - new Date(collection.due_date).getTime()) / 86400000));
+    actionItems.push({ id: collection.id, title: collection.title, amount: toNumber(collection.outstanding_balance), urgency: "overdue", daysInfo: `${days}d overdue`, kind: "collection" });
+  }
+  for (const payment of summary.overduePayments) {
+    const days = Math.max(1, Math.floor((now.getTime() - new Date(payment.due_date).getTime()) / 86400000));
+    actionItems.push({ id: payment.id, title: payment.title, amount: toNumber(payment.amount), urgency: "overdue", daysInfo: `${days}d overdue`, kind: "bill" });
+  }
+  for (const expense of summary.overdueExpenses) {
+    const referenceDate = expenseOverdueReferenceDate(expense, todayKey());
+    const days = referenceDate ? Math.max(1, Math.floor((now.getTime() - new Date(`${referenceDate}T00:00:00`).getTime()) / 86400000)) : 1;
+    actionItems.push({ id: expense.id, title: `${expense.category_name} - ${expense.employee_name}`, amount: toNumber(expense.amount), urgency: "overdue", daysInfo: `${days}d overdue`, kind: "expense" });
+  }
+  for (const collection of summary.dueTodayCollections) {
+    actionItems.push({ id: collection.id, title: collection.title, amount: toNumber(collection.outstanding_balance), urgency: "today", daysInfo: "due today", kind: "collection" });
+  }
+  for (const payment of summary.dueTodayPayments) {
+    actionItems.push({ id: payment.id, title: payment.title, amount: toNumber(payment.amount), urgency: "today", daysInfo: "due today", kind: "bill" });
+  }
+  for (const expense of summary.dueTodayExpenses) {
+    actionItems.push({ id: expense.id, title: `${expense.category_name} - ${expense.employee_name}`, amount: toNumber(expense.amount), urgency: "today", daysInfo: "due today", kind: "expense" });
+  }
+
+  const billsDueTotal =
+    summary.dueTodayPayments.reduce((sum, payment) => sum + toNumber(payment.amount), 0) +
+    summary.overduePayments.reduce((sum, payment) => sum + toNumber(payment.amount), 0) +
+    summary.dueTodayExpenses.reduce((sum, expense) => sum + toNumber(expense.amount), 0) +
+    summary.overdueExpenses.reduce((sum, expense) => sum + toNumber(expense.amount), 0);
+  const billsDueCount =
+    summary.dueTodayPayments.length +
+    summary.overduePayments.length +
+    summary.dueTodayExpenses.length +
+    summary.overdueExpenses.length;
+  const totalTrackedAmount = summary.pendingCollections + summary.collectedThisMonth + billsDueTotal;
+  const chartSegments = [
+    {
+      color: "#2563eb",
+      helper: summary.overdueCollections.length > 0 ? `${summary.overdueCollections.length} overdue invoices` : "All current receivables",
+      label: "Receivables",
+      value: summary.pendingCollections,
+    },
+    {
+      color: "#059669",
+      helper: "Cash collected in the current month",
+      label: "Collected",
+      value: summary.collectedThisMonth,
+    },
+    {
+      color: "#d97706",
+      helper: billsDueCount > 0 ? `${billsDueCount} bills waiting` : "No bills due right now",
+      label: "Bills due",
+      value: billsDueTotal,
+    },
+  ];
+  const topMetrics = [
+    {
+      accent: "receivables",
+      helper: summary.overdueCollections.length > 0 ? `${summary.overdueCollections.length} overdue to follow up` : "Healthy collection pipeline",
+      icon: <CreditCard size={18} />,
+      label: "Receivables",
+      value: currency.format(summary.pendingCollections),
+    },
+    {
+      accent: "collected",
+      helper: "Cash in for this month",
+      icon: <CheckCircle2 size={18} />,
+      label: "Collected this month",
+      value: currency.format(summary.collectedThisMonth),
+    },
+    {
+      accent: "bills",
+      helper: billsDueCount > 0 ? `${billsDueCount} unpaid items` : "Nothing due right now",
+      icon: <Bell size={18} />,
+      label: "Bills due",
+      value: currency.format(billsDueTotal),
+    },
+    {
+      accent: "payroll",
+      helper: summary.currentPayrollItemCount > 0 ? `${summary.currentPayrollItemCount} payroll item${summary.currentPayrollItemCount === 1 ? "" : "s"} in cycle` : "No current payroll items",
+      icon: <Briefcase size={18} />,
+      label: "Pending payroll",
+      value: currency.format(summary.pendingPayroll),
+    },
+  ];
+  const miniStats = [
+    {
+      helper: "Workforce base",
+      icon: <Users size={16} />,
+      label: "Active employees",
+      value: String(summary.activeEmployeeCount),
+    },
+    {
+      helper: "In the current payroll cycle",
+      icon: <FileText size={16} />,
+      label: "Payroll items",
+      value: String(summary.currentPayrollItemCount),
+    },
+    {
+      helper: "Require attention",
+      icon: <CalendarClock size={16} />,
+      label: "Overdue collections",
+      value: String(summary.overdueCollections.length),
+    },
+    {
+      helper: "Total overdue value",
+      icon: <BadgeDollarSign size={16} />,
+      label: "Overdue amount",
+      value: currency.format(summary.overdueCollectionBalance),
+    },
+  ];
+  const agingValues = [
+    summary.collectionAging.current,
+    summary.collectionAging.days1To30,
+    summary.collectionAging.days31To60,
+    summary.collectionAging.days61To90,
+    summary.collectionAging.daysOver90,
+  ];
+  const agingTotal = agingValues.reduce((sum, value) => sum + value, 0);
+  const agingBuckets = [
+    { label: "Current", value: summary.collectionAging.current, tone: "ag-current" },
+    { label: "1-30d", value: summary.collectionAging.days1To30, tone: "ag-warm" },
+    { label: "31-60d", value: summary.collectionAging.days31To60, tone: "ag-warm" },
+    { label: "61-90d", value: summary.collectionAging.days61To90, tone: "ag-hot" },
+    { label: "90d+", value: summary.collectionAging.daysOver90, tone: "ag-hot" },
+  ];
+  const paidPayrollLabel = summary.paidPayroll > 0 ? currency.format(summary.paidPayroll) : "No paid payroll yet";
+  const dashboardHeadline = totalTrackedAmount > 0
+    ? `${currency.format(totalTrackedAmount)} is being tracked across receivables, collected cash, and due bills.`
+    : "No financial activity is being tracked on the dashboard yet.";
+  const snapshotCards: Array<{
+    accent: "bills" | "payroll" | "receivables";
+    helper: string;
+    icon: ReactNode;
+    title: string;
+    trendValues: number[];
+    value: string;
+  }> = [
+    {
+      accent: "receivables",
+      helper: `${summary.overdueCollections.length} overdue collection${summary.overdueCollections.length === 1 ? "" : "s"}`,
+      icon: <CreditCard size={16} />,
+      title: "Collection status",
+      trendValues: agingValues.map((value) => value || 0),
+      value: agingTotal > 0 && summary.collectionAging.current === agingTotal ? "All current" : "Needs review",
+    },
+    {
+      accent: "payroll",
+      helper: summary.pendingPayroll > 0 ? "Current payroll unpaid" : "All current payroll paid",
+      icon: <Briefcase size={16} />,
+      title: "Payroll progress",
+      trendValues: [
+        summary.paidPayroll || 0,
+        summary.pendingPayroll || 0,
+        summary.paidPayroll || 0,
+        summary.pendingPayroll || 0,
+      ],
+      value: paidPayrollLabel,
+    },
+    {
+      accent: "bills",
+      helper: billsDueCount > 0 ? `${billsDueCount} due bill${billsDueCount === 1 ? "" : "s"} today` : "No due bills today",
+      icon: <BadgeDollarSign size={16} />,
+      title: "Expense pressure",
+      trendValues: [billsDueTotal || 0, summary.pendingCollections || 0, billsDueTotal || 0, summary.collectedThisMonth || 0],
+      value: currency.format(billsDueTotal),
+    },
+  ];
+
+  return (
+    <div className="page-stack dash dash-modern">
+      <PageHeader
+        eyebrow="Executive dashboard"
+        title={greeting}
+        text={dateStr}
+      />
+
+      <section className="dash-modern-kpis">
+        {topMetrics.map((metric) => (
+          <article className={`dash-modern-kpi ${metric.accent}`} key={metric.label}>
+            <div className={`dash-modern-kpi-icon ${metric.accent}`}>{metric.icon}</div>
+            <div className="dash-modern-kpi-text">
+              <span className="dash-modern-kpi-label">{metric.label}</span>
+              <strong className="dash-modern-kpi-value">{metric.value}</strong>
+              <span className="dash-modern-kpi-helper">{metric.helper}</span>
+            </div>
+          </article>
+        ))}
+      </section>
+
+      <section className="dash-modern-analytics-grid">
+        <article className="dash-modern-card dash-modern-chart-card">
+          <div className="dash-modern-card-header">
+            <div>
+              <span className="dash-modern-section-label">Collections mix</span>
+              <h2>Receivables vs cash vs bills</h2>
+            </div>
+            <span className="dash-modern-card-chip">Live summary</span>
+          </div>
+          <div className="dash-modern-chart-layout">
+            <DashboardDonutChart segments={chartSegments} total={totalTrackedAmount} />
+            <div className="dash-modern-chart-legend">
+              {chartSegments.map((segment) => {
+                const percent = totalTrackedAmount > 0 ? `${Math.round((segment.value / totalTrackedAmount) * 100)}%` : "0%";
+                return (
+                  <div className="dash-modern-legend-item" key={segment.label}>
+                    <span className="dash-modern-legend-dot" style={{ background: segment.color }} />
+                    <div className="dash-modern-legend-copy">
+                      <span>{segment.label}</span>
+                      <small>{segment.helper}</small>
+                    </div>
+                    <div className="dash-modern-legend-metric">
+                      <strong>{currency.format(segment.value)}</strong>
+                      <small>{percent}</small>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div className="dash-modern-mini-stats">
+            {miniStats.map((stat) => (
+              <div className="dash-modern-mini-stat" key={stat.label}>
+                <div className="dash-modern-mini-stat-icon">{stat.icon}</div>
+                <div className="dash-modern-mini-stat-copy">
+                  <strong>{stat.value}</strong>
+                  <span>{stat.label}</span>
+                  <small>{stat.helper}</small>
+                </div>
+              </div>
+            ))}
+          </div>
+        </article>
+
+        <article className="dash-modern-card dash-modern-insights-card">
+          <div className="dash-modern-card-header">
+            <div>
+              <span className="dash-modern-section-label">Operational snapshot</span>
+              <h2>Key signals</h2>
+            </div>
+          </div>
+          <div className="dash-modern-insight-list">
+            {snapshotCards.map((card) => (
+              <div className="dash-modern-insight-item" key={card.title}>
+                <div className={`dash-modern-insight-icon ${card.accent}`}>{card.icon}</div>
+                <div className="dash-modern-insight-copy">
+                  <span>{card.title}</span>
+                  <strong>{card.value}</strong>
+                  <small>{card.helper}</small>
+                </div>
+                <DashboardSparkline accent={card.accent} values={card.trendValues} />
+              </div>
+            ))}
+          </div>
+        </article>
+      </section>
+
+      <section className="dash-modern-bottom-grid">
+        <article className="dash-modern-card dash-modern-aging">
+          <div className="dash-modern-card-header">
+            <div>
+              <span className="dash-modern-section-label">Receivable health</span>
+              <h2>Collection aging</h2>
+            </div>
+            <span className="dash-modern-card-chip subtle">Current view</span>
+          </div>
+          <DashboardAreaTrend values={agingValues} />
+          {agingTotal > 0 && (
+            <div className="dash-modern-aging-bar">
+              {agingBuckets.map((bucket) =>
+                bucket.value > 0 ? (
+                  <div
+                    className={`dash-modern-aging-segment ${bucket.tone}`}
+                    key={bucket.label}
+                    style={{ flex: bucket.value / agingTotal }}
+                    title={`${bucket.label}: ${currency.format(bucket.value)}`}
+                  />
+                ) : null,
+              )}
+            </div>
+          )}
+          <div className="dash-modern-aging-legend">
+            {agingBuckets.map((bucket) => (
+              <div className="dash-modern-aging-item" key={bucket.label}>
+                <span className={`dash-modern-aging-swatch ${bucket.tone}`} />
+                <span className="dash-modern-aging-bucket-label">{bucket.label}</span>
+                <strong>{currency.format(bucket.value)}</strong>
+              </div>
+            ))}
+          </div>
+        </article>
+
+        <article className="dash-modern-card dash-modern-actions">
+          <div className="dash-modern-card-header">
+            <div>
+              <span className="dash-modern-section-label">Reminder queue</span>
+              <h2>Upcoming reminders</h2>
+            </div>
+            <span className="dash-modern-actions-count">{actionItems.length}</span>
+          </div>
+          {actionItems.length === 0 ? (
+            <div className="dash-modern-reminders-empty">
+              <div className="dash-modern-reminders-empty-icon"><Bell size={18} /></div>
+              <strong>No upcoming reminders</strong>
+              <span>You're all caught up.</span>
+            </div>
+          ) : (
+            <div className="dash-modern-actions-list">
+              {actionItems.slice(0, 5).map((item) => (
+                <div className="dash-modern-action-row" key={item.id}>
+                  <span className={`dash-modern-action-dot ${item.urgency}`} />
+                  <div className="dash-modern-action-info">
+                    <strong>{item.title}</strong>
+                    <span className="dash-modern-action-meta">
+                      {actionKindLabels[item.kind]} - {item.daysInfo}
+                    </span>
+                  </div>
+                  <span className="dash-modern-action-amount">{currency.format(item.amount)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </article>
+      </section>
+    </div>
+  );
+}
+
+function DashboardSparkline({
+  accent,
+  values,
+}: {
+  accent: "bills" | "collected" | "payroll" | "receivables";
+  values: number[];
+}) {
+  const safeValues = values.length > 1 ? values : [0, 0, 0, 0];
+  const max = Math.max(...safeValues, 1);
+  const points = safeValues.map((value, index) => {
+    const x = (index / (safeValues.length - 1)) * 96;
+    const y = 36 - (value / max) * 28;
+    return `${x},${y}`;
+  }).join(" ");
+  const areaPoints = `0,36 ${points} 96,36`;
+
+  return (
+    <svg className={`dash-modern-sparkline ${accent}`} viewBox="0 0 96 36" aria-hidden="true">
+      <polygon className="dash-modern-sparkline-area" points={areaPoints} />
+      <polyline className="dash-modern-sparkline-line" points={points} />
+    </svg>
+  );
+}
+
+function DashboardAreaTrend({ values }: { values: number[] }) {
+  const safeValues = values.length > 1 ? values : [0, 0, 0, 0, 0];
+  const max = Math.max(...safeValues, 1);
+  const points = safeValues.map((value, index) => {
+    const x = (index / (safeValues.length - 1)) * 320;
+    const y = 120 - (value / max) * 92;
+    return `${x},${y}`;
+  }).join(" ");
+  const areaPoints = `0,120 ${points} 320,120`;
+
+  return (
+    <div className="dash-modern-area-chart" aria-hidden="true">
+      <svg viewBox="0 0 320 120">
+        <polygon className="dash-modern-area-fill" points={areaPoints} />
+        <polyline className="dash-modern-area-line" points={points} />
+      </svg>
+    </div>
+  );
+}
+
+function DashboardDonutChart({
+  segments,
+  total,
+}: {
+  segments: Array<{ color: string; label: string; value: number }>;
+  total: number;
+}) {
+  const radius = 72;
+  const circumference = 2 * Math.PI * radius;
+  let offset = 0;
+
+  return (
+    <div className="dash-modern-donut-wrap" role="img" aria-label="Collections mix chart">
+      <svg className="dash-modern-donut" viewBox="0 0 220 220">
+        <defs>
+          <filter id="dash-modern-donut-shadow" x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="0" dy="10" stdDeviation="10" floodColor="rgba(15, 23, 42, 0.14)" />
+          </filter>
+        </defs>
+        <circle className="dash-modern-donut-track" cx="110" cy="110" r={radius} />
+        {total > 0 ? segments.map((segment) => {
+          const segmentLength = (segment.value / total) * circumference;
+          const circle = (
+            <circle
+              key={segment.label}
+              className="dash-modern-donut-segment"
+              cx="110"
+              cy="110"
+              r={radius}
+              stroke={segment.color}
+              strokeDasharray={`${segmentLength} ${circumference - segmentLength}`}
+              strokeDashoffset={-offset}
+            />
+          );
+          offset += segmentLength;
+          return circle;
+        }) : null}
+        <circle className="dash-modern-donut-center-ring" cx="110" cy="110" r="48" filter="url(#dash-modern-donut-shadow)" />
+      </svg>
+      <div className="dash-modern-donut-center">
+        <span>{total > 0 ? "Tracked total" : "No data"}</span>
+        <strong>{total > 0 ? currency.format(total) : "Waiting for activity"}</strong>
+      </div>
+    </div>
   );
 }
 
@@ -2098,6 +2537,13 @@ function PositionsView({
       NotificationService.showError(`Reassign ${assignedActiveEmployees} active employee${assignedActiveEmployees === 1 ? "" : "s"} before archiving this position.`);
       return;
     }
+    const confirmed = await NotificationService.showConfirm({
+      title: status === "archived" ? "Archive position" : "Restore position",
+      message: status === "archived"
+        ? `Archive "${position.name}"? It will no longer be assignable to employees.`
+        : `Restore "${position.name}" to active status?`,
+    });
+    if (!confirmed) return;
     const optimistic = positions.map((item) => item.id === position.id ? { ...item, status } as Position : item);
     if (!navigator.onLine) {
       onLocalPositionsChange(optimistic);
@@ -2245,48 +2691,50 @@ function PositionForm({
   ).sort((a, b) => a.localeCompare(b));
 
   return (
-    <Modal title={initial ? "Edit position" : "Add position"} onClose={onClose}>
-      <form className="form-grid" onSubmit={async (event) => { event.preventDefault(); setBusy(true); await onSubmit(values); setBusy(false); }}>
-        <TextField label="Position name" value={values.name} onChange={(name) => setValues({ ...values, name })} required />
-        <label>
-          Department
-          <div className="department-field">
-            <select
-              value={values.department}
-              onChange={(event) => setValues({ ...values, department: event.target.value })}
-            >
-              <option value="">No department</option>
-              {departmentOptions.map((department) => (
-                <option key={department} value={department}>{department}</option>
-              ))}
+    <Modal className="billing-form-modal position-form-modal" title={initial ? "Edit position" : "Add position"} onClose={onClose}>
+      <form className="billing-form-body" onSubmit={async (event) => { event.preventDefault(); setBusy(true); await onSubmit(values); setBusy(false); }}>
+        <div className="billing-form-fields position-form-fields">
+          <TextField label="Position name" value={values.name} onChange={(name) => setValues({ ...values, name })} required />
+          <label>
+            Department
+            <div className="department-field">
+              <select
+                value={values.department}
+                onChange={(event) => setValues({ ...values, department: event.target.value })}
+              >
+                <option value="">No department</option>
+                {departmentOptions.map((department) => (
+                  <option key={department} value={department}>{department}</option>
+                ))}
+              </select>
+              <button
+                aria-label="Add new department"
+                className="secondary-button compact"
+                onClick={() => { setNewDepartmentName(""); setShowDepartmentPopup(true); }}
+                type="button"
+              >
+                <Plus size={15} /> New
+              </button>
+            </div>
+          </label>
+          <label>
+            Pay method
+            <select value={values.pay_mode} onChange={(event) => setValues({ ...values, pay_mode: event.target.value as PositionFormValues["pay_mode"] })}>
+              <option value="fixed">Fixed salary</option>
+              <option value="ticket">Per closed ticket</option>
+              <option value="hybrid">Base salary + tickets</option>
+              <option value="daily">Daily wage</option>
             </select>
-            <button
-              aria-label="Add new department"
-              className="secondary-button compact"
-              onClick={() => { setNewDepartmentName(""); setShowDepartmentPopup(true); }}
-              type="button"
-            >
-              <Plus size={15} /> New
-            </button>
-          </div>
-        </label>
+          </label>
+          {(values.pay_mode === "fixed" || values.pay_mode === "hybrid") && <MoneyInput label="Monthly base salary" value={values.monthly_base_salary} onChange={(monthly_base_salary) => setValues({ ...values, monthly_base_salary })} required />}
+          {values.pay_mode === "daily" && <MoneyInput label="Daily rate" value={values.daily_rate} onChange={(daily_rate) => setValues({ ...values, daily_rate })} required />}
+        </div>
         <label>
-          Pay method
-          <select value={values.pay_mode} onChange={(event) => setValues({ ...values, pay_mode: event.target.value as PositionFormValues["pay_mode"] })}>
-            <option value="fixed">Fixed salary</option>
-            <option value="ticket">Per closed ticket</option>
-            <option value="hybrid">Base salary + tickets</option>
-            <option value="daily">Daily wage</option>
-          </select>
-        </label>
-        {(values.pay_mode === "fixed" || values.pay_mode === "hybrid") && <MoneyInput label="Monthly base salary" value={values.monthly_base_salary} onChange={(monthly_base_salary) => setValues({ ...values, monthly_base_salary })} required />}
-        {values.pay_mode === "daily" && <MoneyInput label="Daily rate" value={values.daily_rate} onChange={(daily_rate) => setValues({ ...values, daily_rate })} required />}
-        <label className="full">
           Description
           <textarea rows={3} value={values.description} onChange={(event) => setValues({ ...values, description: event.target.value })} />
         </label>
         {usesTickets && (
-          <section className="full stack">
+          <section className="stack">
             <div className="section-heading"><div><p className="eyebrow">Ticket compensation</p><h3>Closed-ticket categories</h3></div><button className="secondary-button compact" onClick={() => setValues({ ...values, categories: [...values.categories, { name: "", rate: "", ticket_type: "installation" as const, status: "active" }] })} type="button"><Plus size={15} /> Add category</button></div>
             {values.categories.map((category, index) => (
               <div className="inline-fields" key={category.id ?? index}>
@@ -2299,7 +2747,10 @@ function PositionForm({
             ))}
           </section>
         )}
-        <FormActions busy={busy} onClose={onClose} />
+        <div className="form-actions">
+          <button className="billing-btn outline" onClick={onClose} type="button">Cancel</button>
+          <button className="billing-btn primary" disabled={busy} type="submit">{busy ? "Saving..." : initial ? "Save changes" : "Add position"}</button>
+        </div>
       </form>
       {showDepartmentPopup && (
         <Modal title="New department" onClose={() => setShowDepartmentPopup(false)}>
@@ -2565,6 +3016,8 @@ export function DailyTicketEntryView({
     return {
       installationTickets: adjustedInstall.reduce((sum, count) => sum + count, 0),
       repairTickets: adjustedRepair.reduce((sum, count) => sum + count, 0),
+      installationAmount: installationGross,
+      repairAmount: repairGross,
       gross: installationGross + repairGross,
     };
   }
@@ -2589,7 +3042,20 @@ export function DailyTicketEntryView({
         (sum, item, index) => sum + adjustedRepair[index] * toNumber(item.detail.rate),
         0,
       );
-      return { installationTickets, repairTickets, total: installationTickets + repairTickets, gross };
+      return {
+        installationTickets,
+        repairTickets,
+        installationAmount: installationDetails.reduce(
+          (sum, item, index) => sum + adjustedInstall[index] * toNumber(item.detail.rate),
+          0,
+        ),
+        repairAmount: repairDetails.reduce(
+          (sum, item, index) => sum + adjustedRepair[index] * toNumber(item.detail.rate),
+          0,
+        ),
+        total: installationTickets + repairTickets,
+        gross,
+      };
     }
 
     const installationTickets = Math.max(
@@ -2600,8 +3066,10 @@ export function DailyTicketEntryView({
       0,
       normalizeTicketCount(entry.repair_tickets) - Math.min(normalizeTicketCount(entry.repair_tickets), normalizeTicketCount(entry.disputed_repair ?? 0)),
     );
-    const gross = installationTickets * toNumber(entry.installation_rate) + repairTickets * toNumber(entry.repair_rate);
-    return { installationTickets, repairTickets, total: installationTickets + repairTickets, gross };
+    const installationAmount = installationTickets * toNumber(entry.installation_rate);
+    const repairAmount = repairTickets * toNumber(entry.repair_rate);
+    const gross = installationAmount + repairAmount;
+    return { installationTickets, repairTickets, installationAmount, repairAmount, total: installationTickets + repairTickets, gross };
   }
 
   function grossFor(draft: PositionTicketDraft) {
@@ -2758,9 +3226,24 @@ export function DailyTicketEntryView({
     await onChange();
   }
 
-  const loggedCount = drafts.filter((draft) => draft.entry).length;
-  const totalGrossForDate = drafts.reduce((sum, draft) => sum + draftBillableSnapshot(draft).gross, 0);
-
+  const [entryYear, entryMonth, entryDay] = entryDate.split("-").map(Number);
+  const entryBillingPeriod = entryDay <= 15 ? "first_half" : "second_half";
+  const totalRepairForDate = drafts.reduce((sum, draft) => sum + draftBillableSnapshot(draft).repairTickets, 0);
+  const totalRepairForBillingPeriod =
+    countTicketsByType(
+      dailyTicketEntries.filter((entry) => entry.entry_date !== entryDate),
+      entryMonth,
+      entryYear,
+      entryBillingPeriod,
+    ).repair + totalRepairForDate;
+  const totalInstallationForDate = drafts.reduce((sum, draft) => sum + draftBillableSnapshot(draft).installationTickets, 0);
+  const totalInstallationForBillingPeriod =
+    countTicketsByType(
+      dailyTicketEntries.filter((entry) => entry.entry_date !== entryDate),
+      entryMonth,
+      entryYear,
+      entryBillingPeriod,
+    ).installation + totalInstallationForDate;
   return (
     <div className="page-stack">
       {employees.some((employee) => employee.status === "active" && !employee.position_id) && (
@@ -2773,19 +3256,28 @@ export function DailyTicketEntryView({
       )}
       <section className="subcon-ticket-stats">
         <div className="subcon-ticket-stat">
-          <span>Employees</span>
-          <strong>{drafts.length}</strong>
-          <span className="subcon-ticket-stat-helper">Eligible for entries</span>
+          <div className="subcon-ticket-stat-icon"><Users size={20} /></div>
+          <div className="subcon-ticket-stat-text">
+            <span>Employees</span>
+            <strong>{drafts.length}</strong>
+            <span className="subcon-ticket-stat-helper">Eligible for entries</span>
+          </div>
         </div>
         <div className="subcon-ticket-stat logged">
-          <span>Logged for this date</span>
-          <strong>{loggedCount}</strong>
-          <span className="subcon-ticket-stat-helper">Entries saved today</span>
+          <div className="subcon-ticket-stat-icon"><Wrench size={20} /></div>
+          <div className="subcon-ticket-stat-text">
+            <span>Closed Repair Tickets</span>
+            <strong>{totalRepairForBillingPeriod}</strong>
+            <span className="subcon-ticket-stat-helper">Repair count for current billing period</span>
+          </div>
         </div>
         <div className="subcon-ticket-stat total">
-          <span>Total gross</span>
-          <strong>{currency.format(totalGrossForDate)}</strong>
-          <span className="subcon-ticket-stat-helper">For selected date</span>
+          <div className="subcon-ticket-stat-icon"><BadgeDollarSign size={20} /></div>
+          <div className="subcon-ticket-stat-text">
+            <span>Closed Installation Tickets</span>
+            <strong>{totalInstallationForBillingPeriod}</strong>
+            <span className="subcon-ticket-stat-helper">Installation count for current billing period</span>
+          </div>
         </div>
       </section>
       <div className="ticket-toolbar">
@@ -3093,7 +3585,7 @@ export function DailyTicketEntryView({
                   <X size={18} />
                 </button>
               </div>
-              <p className="ticket-detail-sub">{empEntries.length} entr{empEntries.length !== 1 ? "ies" : "y"} · Total gross <strong>{currency.format(totalGross)}</strong></p>
+              <p className="ticket-detail-sub">{empEntries.length} entr{empEntries.length !== 1 ? "ies" : "y"} · Total Installation <strong>{currency.format(totalGross)}</strong></p>
               {empEntries.length === 0 ? (
                 <p className="muted" style={{ padding: "16px 0" }}>No ticket entries found for this employee.</p>
               ) : (
@@ -3326,33 +3818,88 @@ function SubconDailyTicketView({
     setSavingAll(false);
   }
 
-  const loggedCount = activeSubcons.filter((s) => existingEntryFor(s.id)).length;
-  const totalGrossForDate = activeSubcons.reduce((sum, s) => sum + billableGrossFor(s), 0);
+  const [entryYear, entryMonth, entryDay] = entryDate.split("-").map(Number);
+  const entryBillingPeriod = entryDay <= 15 ? "first_half" : "second_half";
+  const totalInstallationForDate = activeSubcons.reduce((sum, s) => sum + normalizeTicketCount(draftValuesFor(s.id).install), 0);
+  const totalRepairForDate = activeSubcons.reduce((sum, s) => sum + normalizeTicketCount(draftValuesFor(s.id).repair), 0);
+  const totalInstallationForBillingPeriod =
+    activeSubcons.reduce(
+      (sum, subcontractor) =>
+        sum + countSubconTickets(
+          subconDailyTickets.filter((entry) => entry.entry_date !== entryDate),
+          subcontractor.id,
+          entryMonth,
+          entryYear,
+          entryBillingPeriod,
+        ).install,
+      0,
+    ) + totalInstallationForDate;
+  const totalRepairForBillingPeriod =
+    activeSubcons.reduce(
+      (sum, subcontractor) =>
+        sum + countSubconTickets(
+          subconDailyTickets.filter((entry) => entry.entry_date !== entryDate),
+          subcontractor.id,
+          entryMonth,
+          entryYear,
+          entryBillingPeriod,
+        ).repair,
+      0,
+    ) + totalRepairForDate;
 
-  function billableGrossFor(subcontractor: Subcontractor) {
+  function subconEntryBillableSnapshot(entry: SubconDailyTicket) {
+    const installationTickets = Math.max(
+      0,
+      normalizeTicketCount(entry.install_tickets) - Math.min(normalizeTicketCount(entry.install_tickets), normalizeTicketCount(entry.disputed_install ?? 0)),
+    );
+    const repairTickets = Math.max(
+      0,
+      normalizeTicketCount(entry.repair_tickets) - Math.min(normalizeTicketCount(entry.repair_tickets), normalizeTicketCount(entry.disputed_repair ?? 0)),
+    );
+    const installationAmount = installationTickets * toNumber(entry.installation_rate);
+    const repairAmount = repairTickets * toNumber(entry.repair_rate);
+    return { installationTickets, repairTickets, installationAmount, repairAmount, gross: installationAmount + repairAmount };
+  }
+
+  function billableSnapshotFor(subcontractor: Subcontractor) {
     const values = draftValuesFor(subcontractor.id);
     const billableInstall = Math.max(0, normalizeTicketCount(values.install) - normalizeTicketCount(values.disputedInstall));
     const billableRepair = Math.max(0, normalizeTicketCount(values.repair) - normalizeTicketCount(values.disputedRepair));
-    return billableInstall * toNumber(subcontractor.installation_rate) + billableRepair * toNumber(subcontractor.repair_rate);
+    const installationAmount = billableInstall * toNumber(subcontractor.installation_rate);
+    const repairAmount = billableRepair * toNumber(subcontractor.repair_rate);
+    return { installationTickets: billableInstall, repairTickets: billableRepair, installationAmount, repairAmount, gross: installationAmount + repairAmount };
+  }
+
+  function billableGrossFor(subcontractor: Subcontractor) {
+    return billableSnapshotFor(subcontractor).gross;
   }
 
   return (
     <div className="page-stack">
       <section className="subcon-ticket-stats">
         <div className="subcon-ticket-stat">
-          <span>Subcontractors</span>
-          <strong>{activeSubcons.length}</strong>
-          <span className="subcon-ticket-stat-helper">Active subcontractors</span>
+          <div className="subcon-ticket-stat-icon"><Wrench size={20} /></div>
+          <div className="subcon-ticket-stat-text">
+            <span>Subcontractors</span>
+            <strong>{activeSubcons.length}</strong>
+            <span className="subcon-ticket-stat-helper">Active subcontractors</span>
+          </div>
         </div>
         <div className="subcon-ticket-stat logged">
-          <span>Logged for this date</span>
-          <strong>{loggedCount}</strong>
-          <span className="subcon-ticket-stat-helper">Entries saved today</span>
+          <div className="subcon-ticket-stat-icon"><Wrench size={20} /></div>
+          <div className="subcon-ticket-stat-text">
+            <span>Closed Repair Tickets</span>
+            <strong>{totalRepairForBillingPeriod}</strong>
+            <span className="subcon-ticket-stat-helper">Repair count for current billing period</span>
+          </div>
         </div>
         <div className="subcon-ticket-stat total">
-          <span>Total gross</span>
-          <strong>{currency.format(totalGrossForDate)}</strong>
-          <span className="subcon-ticket-stat-helper">For selected date</span>
+          <div className="subcon-ticket-stat-icon"><BadgeDollarSign size={20} /></div>
+          <div className="subcon-ticket-stat-text">
+            <span>Closed Installation Tickets</span>
+            <strong>{totalInstallationForBillingPeriod}</strong>
+            <span className="subcon-ticket-stat-helper">Installation count for current billing period</span>
+          </div>
         </div>
       </section>
       <div className="ticket-toolbar">
@@ -4116,7 +4663,6 @@ export function AttendanceView({
               <div className="attendance-footer">
                 <span>Showing {(attendancePage - 1) * attendancePageSize + 1} to {Math.min(attendancePage * attendancePageSize, filteredEmployees.length)} of {filteredEmployees.length} employees</span>
                 <div>
-                  <button type="button">{attendancePageSize} / page</button>
                   <button type="button" disabled={attendancePage === 1} onClick={() => setAttendancePage((page) => Math.max(1, page - 1))}>{"<"}</button>
                   {Array.from({ length: attendancePageCount }, (_, index) => index + 1).map((page) => (
                     <button
@@ -4313,6 +4859,7 @@ export function EmployeesView({
       address: values.address.trim(),
       profile_photo_url: values.profile_photo_url,
       hire_date: values.hire_date || null,
+      date_of_birth: values.date_of_birth || null,
       status: values.status,
       wage_category: values.wage_category,
       monthly_salary: (selectedPosition.pay_mode === "fixed" || selectedPosition.pay_mode === "hybrid")
@@ -4327,6 +4874,7 @@ export function EmployeesView({
       withholding_tax: toNumber(values.withholding_tax),
       tin_number: values.tin_number.trim(),
       gender: values.gender,
+      civil_status: values.civil_status,
       emergency_contact_name: values.emergency_contact_name.trim(),
       emergency_contact_number: values.emergency_contact_number.trim(),
       emergency_contact_relation: values.emergency_contact_relation.trim(),
@@ -4744,6 +5292,8 @@ export function EmployeeDetailsView({
                   <DetailItem icon={<Users size={15} />} label="Full Name" value={currentEmployee.full_name} />
                   <DetailItem icon={<Mail size={15} />} label="Email" value={currentEmployee.email || "Not provided"} />
                   <DetailItem icon={<Phone size={15} />} label="Contact Number" value={currentEmployee.contact_number ? formatPhoneNumber(currentEmployee.contact_number) : "Not provided"} />
+                  <DetailItem icon={<CalendarClock size={15} />} label="Date of Birth" value={currentEmployee.date_of_birth || "Not provided"} />
+                  <DetailItem icon={<Heart size={15} />} label="Civil Status" value={currentEmployee.civil_status ? currentEmployee.civil_status[0].toUpperCase() + currentEmployee.civil_status.slice(1) : "Not provided"} />
                   <DetailItem icon={<MapPin size={15} />} label="Address" value={currentEmployee.address || "Not provided"} />
                   <DetailItem icon={<Users size={15} />} label="Emergency Contact" value={currentEmployee.emergency_contact_name || "Not provided"} />
                   <DetailItem icon={<Phone size={15} />} label="Emergency Number" value={currentEmployee.emergency_contact_number ? formatPhoneNumber(currentEmployee.emergency_contact_number) : "Not provided"} />
@@ -4902,7 +5452,6 @@ export function EmployeeDetailsView({
                 Showing {pageStart + 1} to {pageEnd} of {attendanceTotal} {isTicket ? "ticket" : "attendance"} records
               </span>
               <div>
-                <button type="button">{attendancePageSize} / page</button>
                 <button type="button" disabled={safeAttendancePage === 1} onClick={() => setEmpAttendancePage((page) => Math.max(1, page - 1))}>{"<"}</button>
                 {Array.from({ length: attendancePageCount }, (_, index) => index + 1).map((page) => (
                   <button
@@ -5102,9 +5651,11 @@ function EmployeeForm({
           address: initial.address,
           profile_photo_url: initial.profile_photo_url ?? "",
           hire_date: initial.hire_date ?? "",
+          date_of_birth: initial.date_of_birth ?? "",
           status: initial.status,
           wage_category: initial.wage_category ?? "new",
           gender: initial.gender ?? "",
+          civil_status: initial.civil_status ?? "",
           monthly_salary: String(initial.monthly_salary),
           sss_number: initial.sss_number,
           philhealth_number: initial.philhealth_number,
@@ -5201,52 +5752,76 @@ function EmployeeForm({
 
           {activeTab === "personal" && (
             <div className="emp-form-section">
-              <div className="emp-form-photo-hero">
-                <label
-                  className={values.profile_photo_url ? "emp-photo-upload has-photo" : "emp-photo-upload"}
-                  onDragOver={(event) => event.preventDefault()}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    handlePhotoFile(event.dataTransfer.files[0] ?? null);
-                  }}
-                >
-                  <input
-                    accept="image/png,image/jpeg"
-                    onChange={(event) => handlePhotoFile(event.target.files?.[0] ?? null)}
-                    type="file"
-                  />
-                  <div className="emp-photo-circle">
-                    {values.profile_photo_url ? (
-                      <img alt="Preview" src={values.profile_photo_url} />
-                    ) : (
-                      <span className="emp-photo-placeholder">
-                        {initials || <Plus size={28} />}
-                      </span>
-                    )}
-                    <div className="emp-photo-overlay">
-                      <Upload size={18} />
-                    </div>
-                  </div>
-                  <p className="emp-photo-hint">{values.profile_photo_url ? "Change photo" : "Upload photo"}</p>
-                  {photoError && <small className="emp-photo-error">{photoError}</small>}
-                </label>
-              </div>
-
               <div className="emp-form-group">
                 <h3>Basic Information</h3>
+                <div className="emp-basic-info-layout">
+                  <div className="emp-form-photo-hero">
+                    <label
+                      className={values.profile_photo_url ? "emp-photo-upload has-photo" : "emp-photo-upload"}
+                      onDragOver={(event) => event.preventDefault()}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        handlePhotoFile(event.dataTransfer.files[0] ?? null);
+                      }}
+                    >
+                      <input
+                        accept="image/png,image/jpeg"
+                        onChange={(event) => handlePhotoFile(event.target.files?.[0] ?? null)}
+                        type="file"
+                      />
+                      {values.profile_photo_url ? (
+                        <>
+                          <img alt="Preview" className="emp-photo-full" src={values.profile_photo_url} />
+                          <div className="emp-photo-full-overlay">
+                            <Upload size={16} />
+                            <span>Change photo</span>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="emp-photo-circle">
+                            <span className="emp-photo-placeholder">
+                              {initials || <Plus size={18} />}
+                            </span>
+                            <div className="emp-photo-overlay">
+                              <Upload size={14} />
+                            </div>
+                          </div>
+                          <div className="emp-photo-info">
+                            <p className="emp-photo-hint">Upload photo</p>
+                            <span className="emp-photo-subtext">PNG or JPG, up to 2MB</span>
+                          </div>
+                        </>
+                      )}
+                    </label>
+                    {photoError && <small className="emp-photo-error">{photoError}</small>}
+                  </div>
+                  <div className="emp-form-fields">
+                    <TextField label="Full name" value={values.full_name} onChange={(full_name) => setValues({ ...values, full_name })} required />
+                    <label>
+                      Gender
+                      <select value={values.gender} onChange={(event) => setValues({ ...values, gender: event.target.value })}>
+                        <option value="">Not specified</option>
+                        <option value="male">Male</option>
+                        <option value="female">Female</option>
+                        <option value="other">Other</option>
+                      </select>
+                    </label>
+                    <TextField label="Email address" type="email" value={values.email} onChange={(email) => setValues({ ...values, email })} />
+                    <TextField label="Contact number" type="tel" placeholder="+63 XXXX XXX XXXX" value={formatPhoneNumber(values.contact_number)} onChange={(v) => setValues({ ...values, contact_number: normalizePhoneDigits(v) })} />
+                  </div>
+                </div>
                 <div className="emp-form-fields">
-                  <TextField label="Full name" value={values.full_name} onChange={(full_name) => setValues({ ...values, full_name })} required />
+                  <TextField label="Date of birth" type="date" value={values.date_of_birth} onChange={(date_of_birth) => setValues({ ...values, date_of_birth })} />
                   <label>
-                    Gender
-                    <select value={values.gender} onChange={(event) => setValues({ ...values, gender: event.target.value })}>
+                    Civil status
+                    <select value={values.civil_status} onChange={(event) => setValues({ ...values, civil_status: event.target.value })}>
                       <option value="">Not specified</option>
-                      <option value="male">Male</option>
-                      <option value="female">Female</option>
-                      <option value="other">Other</option>
+                      <option value="single">Single</option>
+                      <option value="married">Married</option>
+                      <option value="widowed">Widowed</option>
                     </select>
                   </label>
-                  <TextField label="Email address" type="email" value={values.email} onChange={(email) => setValues({ ...values, email })} />
-                  <TextField label="Contact number" type="tel" placeholder="+63 XXXX XXX XXXX" value={formatPhoneNumber(values.contact_number)} onChange={(v) => setValues({ ...values, contact_number: normalizePhoneDigits(v) })} />
                   <label className="full">
                     Address
                     <textarea rows={2} value={values.address} onChange={(event) => setValues({ ...values, address: event.target.value })} placeholder="Street, city, province" />

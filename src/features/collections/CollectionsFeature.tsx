@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type InputHTMLAttributes, type ReactNode } from "react";
-import { Archive, CheckCircle2, Eye, Plus, RotateCcw, Search, X } from "lucide-react";
+import { AlertTriangle, Archive, CheckCircle2, Eye, Plus, Receipt, RotateCcw, Search, Wallet, X } from "lucide-react";
 import { collectionAgingBucket, collectionStatus, dateCollectedFor, validateCollectionPayment, withCollectionTotals } from "../../domain/collections";
 import { isOfflineLikeError } from "../../lib/offlineSync";
 import { supabase } from "../../supabase";
@@ -95,6 +95,7 @@ function CollectionWorkspace({
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [agingFilter, setAgingFilter] = useState<AgingFilter>("all");
+  const [collectionsPage, setCollectionsPage] = useState(1);
   const [editing, setEditing] = useState<CollectionReminder | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [payingCollection, setPayingCollection] = useState<CollectionReminder | null>(null);
@@ -110,6 +111,17 @@ function CollectionWorkspace({
     const matchesAging = agingFilter === "all" || collectionAgingBucket(collection.due_date) === agingFilter;
     return matchesMode && searchText.includes(query.toLowerCase()) && matchesStatus && matchesAging;
   }), [agingFilter, collections, historyMode, query, statusFilter]);
+
+  useEffect(() => {
+    setCollectionsPage(1);
+  }, [agingFilter, historyMode, query, statusFilter]);
+
+  const COLLECTIONS_PAGE_SIZE = 10;
+  const collectionsPageCount = Math.max(1, Math.ceil(visible.length / COLLECTIONS_PAGE_SIZE));
+  const safeCollectionsPage = Math.min(collectionsPage, collectionsPageCount);
+  const collectionsPageStart = (safeCollectionsPage - 1) * COLLECTIONS_PAGE_SIZE;
+  const collectionsPageEnd = Math.min(collectionsPageStart + COLLECTIONS_PAGE_SIZE, visible.length);
+  const paginatedCollections = visible.slice(collectionsPageStart, collectionsPageEnd);
 
   const summary = useMemo(() => {
     const active = collections.filter((item) => !item.archived_at && item.outstanding_balance > 0);
@@ -191,6 +203,13 @@ function CollectionWorkspace({
   async function toggleArchive(collection: CollectionReminder) {
     if (!supabase) return;
     const restoring = Boolean(collection.archived_at);
+    const confirmed = await NotificationService.showConfirm({
+      title: restoring ? "Restore receivable" : "Archive receivable",
+      message: restoring
+        ? `Restore ${collection.client_name}'s receivable to active status?`
+        : `Archive ${collection.client_name}'s receivable? It will move out of the active list.`,
+    });
+    if (!confirmed) return;
     const archivedAt = restoring ? null : new Date().toISOString();
     const optimistic = withCollectionTotals({ ...collection, archived_at: archivedAt, updated_at: new Date().toISOString() });
     if (!navigator.onLine) {
@@ -268,9 +287,9 @@ function CollectionWorkspace({
       />
 
       <section className="collection-summary-grid">
-        <SummaryCard label="Outstanding" value={summary.outstanding} />
-        <SummaryCard label="Overdue" value={summary.overdue} tone="danger" />
-        <SummaryCard label="Collected this month" value={summary.collectedMonth} tone="success" />
+        <SummaryCard icon={<Wallet size={21} />} label="Outstanding" value={summary.outstanding} />
+        <SummaryCard icon={<AlertTriangle size={21} />} label="Overdue" value={summary.overdue} tone="danger" />
+        <SummaryCard icon={<CheckCircle2 size={21} />} label="Collected this month" value={summary.collectedMonth} tone="success" />
       </section>
 
       <section className="collection-aging">
@@ -338,7 +357,7 @@ function CollectionWorkspace({
             </tr>
           </thead>
           <tbody>
-            {visible.map((collection) => {
+            {paginatedCollections.map((collection) => {
               const status = collectionStatus(collection);
               const isCollected = status === "collected";
               const isArchived = Boolean(collection.archived_at);
@@ -404,6 +423,27 @@ function CollectionWorkspace({
           </tbody>
         </table>
       </div>
+      {visible.length > COLLECTIONS_PAGE_SIZE && (
+        <div className="attendance-footer">
+          <span>
+            Showing {collectionsPageStart + 1} to {collectionsPageEnd} of {visible.length} receivable{visible.length === 1 ? "" : "s"}
+          </span>
+          <div>
+            <button disabled={safeCollectionsPage === 1} onClick={() => setCollectionsPage((page) => Math.max(1, page - 1))} type="button">{"<"}</button>
+            {Array.from({ length: collectionsPageCount }, (_, index) => index + 1).map((page) => (
+              <button
+                className={page === safeCollectionsPage ? "active" : undefined}
+                key={page}
+                onClick={() => setCollectionsPage(page)}
+                type="button"
+              >
+                {page}
+              </button>
+            ))}
+            <button disabled={safeCollectionsPage === collectionsPageCount} onClick={() => setCollectionsPage((page) => Math.min(collectionsPageCount, page + 1))} type="button">{">"}</button>
+          </div>
+        </div>
+      )}
 
       {formOpen && <ReceivableForm initial={editing} onClose={closeForm} onSubmit={submitReceivable} />}
       {payingCollection && (
@@ -427,6 +467,19 @@ function CollectionDetailsModal({ collection, onClose }: { collection: Collectio
   const status = collectionStatus(collection);
   const dateCollected = dateCollectedFor(collection);
 
+  const sortedPayments = useMemo(() => collection.payments
+    .slice()
+    .sort((a, b) => b.payment_date.localeCompare(a.payment_date) || b.created_at.localeCompare(a.created_at)),
+  [collection.payments]);
+
+  const [paymentsPage, setPaymentsPage] = useState(1);
+  const PAYMENTS_PAGE_SIZE = 10;
+  const paymentsPageCount = Math.max(1, Math.ceil(sortedPayments.length / PAYMENTS_PAGE_SIZE));
+  const safePaymentsPage = Math.min(paymentsPage, paymentsPageCount);
+  const paymentsPageStart = (safePaymentsPage - 1) * PAYMENTS_PAGE_SIZE;
+  const paymentsPageEnd = Math.min(paymentsPageStart + PAYMENTS_PAGE_SIZE, sortedPayments.length);
+  const paginatedPayments = sortedPayments.slice(paymentsPageStart, paymentsPageEnd);
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal collection-details-modal" onClick={(event) => event.stopPropagation()}>
@@ -439,9 +492,9 @@ function CollectionDetailsModal({ collection, onClose }: { collection: Collectio
         </div>
         <div className="collection-details-modal-body">
           <section className="collection-summary-grid">
-            <SummaryCard label="Original amount" value={collection.amount} />
-            <SummaryCard label="Amount paid" value={collection.amount_paid} tone="success" />
-            <SummaryCard label="Outstanding balance" value={collection.outstanding_balance} />
+            <SummaryCard icon={<Receipt size={21} />} label="Original amount" value={collection.amount} />
+            <SummaryCard icon={<CheckCircle2 size={21} />} label="Amount paid" value={collection.amount_paid} tone="success" />
+            <SummaryCard icon={<Wallet size={21} />} label="Outstanding balance" value={collection.outstanding_balance} />
           </section>
 
           <section className="collection-detail-card">
@@ -491,24 +544,21 @@ function CollectionDetailsModal({ collection, onClose }: { collection: Collectio
                   </tr>
                 </thead>
                 <tbody>
-                  {collection.payments
-                    .slice()
-                    .sort((a, b) => b.payment_date.localeCompare(a.payment_date) || b.created_at.localeCompare(a.created_at))
-                    .map((payment) => (
-                      <tr className={payment.is_void ? "void-row" : ""} key={payment.id}>
-                        <td>{payment.payment_date}</td>
-                        <td className="num">{currency.format(payment.amount)}</td>
-                        <td>{paymentMethodLabel(payment.payment_method)}</td>
-                        <td>{payment.reference_number || "—"}</td>
-                        <td>{payment.is_void ? `Void: ${payment.void_reason}` : payment.notes || "—"}</td>
-                        <td>
-                          {payment.is_void
-                            ? <span className="collection-status archived">Void</span>
-                            : <span className="collection-status collected">Posted</span>}
-                        </td>
-                      </tr>
-                    ))}
-                  {collection.payments.length === 0 && (
+                  {paginatedPayments.map((payment) => (
+                    <tr className={payment.is_void ? "void-row" : ""} key={payment.id}>
+                      <td>{payment.payment_date}</td>
+                      <td className="num">{currency.format(payment.amount)}</td>
+                      <td>{paymentMethodLabel(payment.payment_method)}</td>
+                      <td>{payment.reference_number || "—"}</td>
+                      <td>{payment.is_void ? `Void: ${payment.void_reason}` : payment.notes || "—"}</td>
+                      <td>
+                        {payment.is_void
+                          ? <span className="collection-status archived">Void</span>
+                          : <span className="collection-status collected">Posted</span>}
+                      </td>
+                    </tr>
+                  ))}
+                  {sortedPayments.length === 0 && (
                     <tr>
                       <td className="collection-empty" colSpan={6}>No payments recorded.</td>
                     </tr>
@@ -516,6 +566,27 @@ function CollectionDetailsModal({ collection, onClose }: { collection: Collectio
                 </tbody>
               </table>
             </div>
+            {sortedPayments.length > PAYMENTS_PAGE_SIZE && (
+              <div className="attendance-footer">
+                <span>
+                  Showing {paymentsPageStart + 1} to {paymentsPageEnd} of {sortedPayments.length} payments
+                </span>
+                <div>
+                  <button disabled={safePaymentsPage === 1} onClick={() => setPaymentsPage((page) => Math.max(1, page - 1))} type="button">{"<"}</button>
+                  {Array.from({ length: paymentsPageCount }, (_, index) => index + 1).map((page) => (
+                    <button
+                      className={page === safePaymentsPage ? "active" : undefined}
+                      key={page}
+                      onClick={() => setPaymentsPage(page)}
+                      type="button"
+                    >
+                      {page}
+                    </button>
+                  ))}
+                  <button disabled={safePaymentsPage === paymentsPageCount} onClick={() => setPaymentsPage((page) => Math.min(paymentsPageCount, page + 1))} type="button">{">"}</button>
+                </div>
+              </div>
+            )}
           </section>
         </div>
       </div>
@@ -535,21 +606,35 @@ function ReceivableForm({ initial, onClose, onSubmit }: {
   );
   const [busy, setBusy] = useState(false);
   return (
-    <FeatureModal title={initial ? "Edit receivable" : "Add receivable"} onClose={onClose}>
-      <form className="collection-form" onSubmit={async (e) => { e.preventDefault(); setBusy(true); await onSubmit(values); setBusy(false); }}>
-        <Field label="Title" required value={values.title} onChange={(title) => setValues({ ...values, title })} />
-        <Field label="Client / customer" required value={values.client_name} onChange={(client_name) => setValues({ ...values, client_name })} />
-        <Field label="External reference" value={values.external_reference} onChange={(external_reference) => setValues({ ...values, external_reference })} />
-        <MoneyField label="Original amount" required value={values.amount} onChange={(amount) => setValues({ ...values, amount })} />
-        <Field label="Issue date" required type="date" value={values.issue_date} onChange={(issue_date) => setValues({ ...values, issue_date })} />
-        <Field label="Due date" required type="date" value={values.due_date} onChange={(due_date) => setValues({ ...values, due_date })} />
-        <label className="wide">
-          Notes
-          <textarea rows={4} value={values.notes} onChange={(e) => setValues({ ...values, notes: e.target.value })} />
-        </label>
-        <FormButtons busy={busy} onClose={onClose} />
-      </form>
-    </FeatureModal>
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal billing-form-modal collection-form-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-header">
+          <h3>{initial ? "Edit" : "Add"} Receivable</h3>
+          <button aria-label="Close" onClick={onClose} type="button"><X size={18} /></button>
+        </div>
+        <form
+          className="billing-form-body"
+          onSubmit={async (event) => { event.preventDefault(); setBusy(true); await onSubmit(values); setBusy(false); }}
+        >
+          <div className="billing-form-fields collection-form-fields">
+            <Field label="Title" required value={values.title} onChange={(title) => setValues({ ...values, title })} />
+            <Field label="Client / customer" required value={values.client_name} onChange={(client_name) => setValues({ ...values, client_name })} />
+            <Field label="External reference" value={values.external_reference} onChange={(external_reference) => setValues({ ...values, external_reference })} />
+            <MoneyField label="Original amount" required value={values.amount} onChange={(amount) => setValues({ ...values, amount })} />
+            <Field label="Issue date" required type="date" value={values.issue_date} onChange={(issue_date) => setValues({ ...values, issue_date })} />
+            <Field label="Due date" required type="date" value={values.due_date} onChange={(due_date) => setValues({ ...values, due_date })} />
+          </div>
+          <label>
+            Notes
+            <textarea rows={4} value={values.notes} onChange={(e) => setValues({ ...values, notes: e.target.value })} />
+          </label>
+          <div className="form-actions">
+            <button className="billing-btn outline" onClick={onClose} type="button">Cancel</button>
+            <button className="billing-btn primary" disabled={busy} type="submit">{busy ? "Saving..." : initial ? "Save changes" : "Save receivable"}</button>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }
 
@@ -561,47 +646,47 @@ function PaymentForm({ balance, onClose, onSubmit }: {
   const [values, setValues] = useState({ ...emptyPayment(), amount: String(balance) });
   const [busy, setBusy] = useState(false);
   return (
-    <FeatureModal title="Record payment" onClose={onClose}>
-      <form className="collection-form" onSubmit={async (e) => { e.preventDefault(); setBusy(true); await onSubmit(values); setBusy(false); }}>
-        <div className="collection-balance-callout">
-          <span>Outstanding balance</span>
-          <strong>{currency.format(balance)}</strong>
-        </div>
-        <MoneyField label="Payment amount" required value={values.amount} onChange={(amount) => setValues({ ...values, amount })} />
-        <small className="collection-payment-hint wide">Defaults to the full balance — lower it to record a partial payment.</small>
-        <Field label="Payment date" max={todayKey()} required type="date" value={values.payment_date} onChange={(payment_date) => setValues({ ...values, payment_date })} />
-        <label>
-          Payment method
-          <select value={values.payment_method} onChange={(e) => setValues({ ...values, payment_method: e.target.value as CollectionPaymentFormValues["payment_method"] })}>
-            <option value="cash">Cash</option>
-            <option value="bank_transfer">Bank transfer</option>
-            <option value="check">Check</option>
-            <option value="e_wallet">E-wallet</option>
-            <option value="card">Card</option>
-            <option value="other">Other</option>
-          </select>
-        </label>
-        <Field label="Reference number" value={values.reference_number} onChange={(reference_number) => setValues({ ...values, reference_number })} />
-        <label className="wide">
-          Notes
-          <textarea rows={3} value={values.notes} onChange={(e) => setValues({ ...values, notes: e.target.value })} />
-        </label>
-        <FormButtons busy={busy} onClose={onClose} />
-      </form>
-    </FeatureModal>
-  );
-}
-
-function FeatureModal({ children, onClose, title }: { children: ReactNode; onClose: () => void; title: string }) {
-  return (
-    <div className="collection-modal-backdrop">
-      <section aria-label={title} aria-modal="true" className="collection-modal" role="dialog">
-        <header>
-          <h2>{title}</h2>
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal billing-form-modal collection-form-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-header">
+          <h3>Record Payment</h3>
           <button aria-label="Close" onClick={onClose} type="button"><X size={18} /></button>
-        </header>
-        {children}
-      </section>
+        </div>
+        <form
+          className="billing-form-body"
+          onSubmit={async (event) => { event.preventDefault(); setBusy(true); await onSubmit(values); setBusy(false); }}
+        >
+          <div className="collection-balance-callout">
+            <span>Outstanding balance</span>
+            <strong>{currency.format(balance)}</strong>
+          </div>
+          <div className="billing-form-fields collection-form-fields">
+            <MoneyField label="Payment amount" required value={values.amount} onChange={(amount) => setValues({ ...values, amount })} />
+            <small className="collection-payment-hint">Defaults to the full balance — lower it to record a partial payment.</small>
+            <Field label="Payment date" max={todayKey()} required type="date" value={values.payment_date} onChange={(payment_date) => setValues({ ...values, payment_date })} />
+            <label>
+              Payment method
+              <select value={values.payment_method} onChange={(e) => setValues({ ...values, payment_method: e.target.value as CollectionPaymentFormValues["payment_method"] })}>
+                <option value="cash">Cash</option>
+                <option value="bank_transfer">Bank transfer</option>
+                <option value="check">Check</option>
+                <option value="e_wallet">E-wallet</option>
+                <option value="card">Card</option>
+                <option value="other">Other</option>
+              </select>
+            </label>
+            <Field label="Reference number" value={values.reference_number} onChange={(reference_number) => setValues({ ...values, reference_number })} />
+          </div>
+          <label>
+            Notes
+            <textarea rows={3} value={values.notes} onChange={(e) => setValues({ ...values, notes: e.target.value })} />
+          </label>
+          <div className="form-actions">
+            <button className="billing-btn outline" onClick={onClose} type="button">Cancel</button>
+            <button className="billing-btn primary" disabled={busy} type="submit">{busy ? "Saving..." : "Record payment"}</button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }
@@ -610,22 +695,14 @@ function Field({ label, onChange, ...props }: { label: string; onChange: (value:
   return <label>{label}<input {...props} onChange={(e) => onChange(e.target.value)} /></label>;
 }
 
-function FormButtons({ busy, destructive, onClose, submitLabel = "Save" }: { busy: boolean; destructive?: boolean; onClose: () => void; submitLabel?: string }) {
-  return (
-    <div className="collection-form-actions">
-      <button className="collection-secondary" onClick={onClose} type="button">Cancel</button>
-      <button className={destructive ? "collection-danger" : "collection-primary"} disabled={busy} type="submit">
-        {busy ? "Saving..." : submitLabel}
-      </button>
-    </div>
-  );
-}
-
-function SummaryCard({ label, tone, value }: { label: string; tone?: "danger" | "success"; value: number }) {
+function SummaryCard({ icon, label, tone, value }: { icon: ReactNode; label: string; tone?: "danger" | "success"; value: number }) {
   return (
     <div className={`collection-summary-card ${tone ?? ""}`}>
-      <span>{label}</span>
-      <strong>{currency.format(value)}</strong>
+      <div className="collection-summary-icon">{icon}</div>
+      <div className="collection-summary-text">
+        <span>{label}</span>
+        <strong>{currency.format(value)}</strong>
+      </div>
     </div>
   );
 }

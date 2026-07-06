@@ -1939,3 +1939,16 @@ check (frequency in ('one_time', 'monthly', 'daily'));
 -- system-managed when an expense's balance is fully settled).
 alter table public.expenses
 add column if not exists payment_date date;
+
+-- Optional date of birth on employees
+alter table public.employees
+add column if not exists date_of_birth date;
+
+-- Optional civil status on employees
+alter table public.employees
+add column if not exists civil_status text not null default ''
+check (civil_status in ('', 'single', 'married', 'widowed'));
+
+-- Editable due date on billing records, synced to their linked collections
+alter table public.billing_records
+add column if not exists due_date date;

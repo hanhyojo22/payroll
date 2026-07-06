@@ -463,7 +463,7 @@ export function ExpensesFeature({
         action={(
           <div className="billing-header-actions">
             <button
-              className={`billing-btn primary${categoryScope === "personal" ? " personal-accent" : ""}`}
+              className="billing-btn primary"
               onClick={() => { setEditingExpense(null); setFormOpen(true); }}
               type="button"
             >
@@ -651,6 +651,7 @@ export function ExpensesFeature({
       )}
       {payingInstallmentExpense && (
         <InstallmentPaymentForm
+          categoryScope={categoryScope}
           expense={payingInstallmentExpense}
           onClose={() => setPayingInstallmentExpense(null)}
           onSubmit={(values) => handlePayInstallment(payingInstallmentExpense, values)}
@@ -838,10 +839,12 @@ function ExpenseFormModal({
 }
 
 function InstallmentPaymentForm({
+  categoryScope,
   expense,
   onClose,
   onSubmit,
 }: {
+  categoryScope: ExpenseCategoryType;
   expense: Expense;
   onClose: () => void;
   onSubmit: (values: InstallmentPaymentFormValues) => Promise<void>;
@@ -864,7 +867,7 @@ function InstallmentPaymentForm({
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(event) => event.stopPropagation()}>
+      <div className={`modal billing-form-modal${categoryScope === "personal" ? " personal-expense-modal" : " company-expense-modal"}`} onClick={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <div>
             <h3>Record Payment</h3>
@@ -873,57 +876,54 @@ function InstallmentPaymentForm({
           <button aria-label="Close" onClick={onClose} type="button"><X size={18} /></button>
         </div>
         <form
-          className="form-grid"
+          className="billing-form-body"
           onSubmit={async (event) => { event.preventDefault(); setBusy(true); await onSubmit(values); setBusy(false); }}
-          style={{ padding: 20 }}
         >
-          <label className="full">
-            Expense
-            <input disabled type="text" value={`${expense.category_name} — ${expense.employee_name}`} />
-          </label>
-          <p className="full expense-remaining-note">
+          <p className="expense-remaining-note">
             {remainingBalance == null ? "No balance cap — open-ended recurring expense." : `Remaining balance: ${currency.format(remainingBalance)}`}
           </p>
-          <MoneyField label="Amount" onChange={(amount) => setValues((current) => ({ ...current, amount }))} required value={values.amount} />
+          <div className={`billing-form-fields${categoryScope === "personal" ? " personal-expense-form-fields" : " company-expense-form-fields"}`}>
+            <MoneyField label="Amount" onChange={(amount) => setValues((current) => ({ ...current, amount }))} required value={values.amount} />
+            <label>
+              Payment date
+              <input
+                max={todayKey()}
+                onChange={(event) => setValues((current) => ({ ...current, payment_date: event.target.value }))}
+                required
+                type="date"
+                value={values.payment_date}
+              />
+            </label>
+            <label>
+              Payment method
+              <select
+                onChange={(event) => setValues((current) => ({ ...current, payment_method: event.target.value as CollectionPaymentMethod }))}
+                value={values.payment_method}
+              >
+                <option value="cash">Cash</option>
+                <option value="bank_transfer">Bank transfer</option>
+                <option value="check">Check</option>
+                <option value="e_wallet">E-wallet</option>
+                <option value="card">Card</option>
+                <option value="other">Other</option>
+              </select>
+            </label>
+            <label>
+              Reference number
+              <input
+                onChange={(event) => setValues((current) => ({ ...current, reference_number: event.target.value }))}
+                type="text"
+                value={values.reference_number}
+              />
+            </label>
+          </div>
           <label>
-            Payment date
-            <input
-              max={todayKey()}
-              onChange={(event) => setValues((current) => ({ ...current, payment_date: event.target.value }))}
-              required
-              type="date"
-              value={values.payment_date}
-            />
-          </label>
-          <label>
-            Payment method
-            <select
-              onChange={(event) => setValues((current) => ({ ...current, payment_method: event.target.value as CollectionPaymentMethod }))}
-              value={values.payment_method}
-            >
-              <option value="cash">Cash</option>
-              <option value="bank_transfer">Bank transfer</option>
-              <option value="check">Check</option>
-              <option value="e_wallet">E-wallet</option>
-              <option value="card">Card</option>
-              <option value="other">Other</option>
-            </select>
-          </label>
-          <label>
-            Reference number
-            <input
-              onChange={(event) => setValues((current) => ({ ...current, reference_number: event.target.value }))}
-              type="text"
-              value={values.reference_number}
-            />
-          </label>
-          <label className="full">
             Notes
             <textarea onChange={(event) => setValues((current) => ({ ...current, notes: event.target.value }))} rows={3} value={values.notes} />
           </label>
-          <div className="form-actions full">
-            <button className="secondary-button" onClick={onClose} type="button">Cancel</button>
-            <button className="primary-button" disabled={busy} type="submit">{busy ? "Saving..." : "Record payment"}</button>
+          <div className="form-actions">
+            <button className="billing-btn outline" onClick={onClose} type="button">Cancel</button>
+            <button className="billing-btn primary" disabled={busy} type="submit">{busy ? "Saving..." : "Record payment"}</button>
           </div>
         </form>
       </div>

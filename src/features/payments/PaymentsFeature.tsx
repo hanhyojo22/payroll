@@ -1,11 +1,12 @@
 import { useMemo, useState } from "react";
-import { Eye, X } from "lucide-react";
+import { CheckCircle2, Eye, Receipt, Wallet, X } from "lucide-react";
 import { buildPaymentLedger } from "../../lib/supabaseData";
 import { paymentMethodLabel } from "../../domain/expenses";
 import { DataTable } from "../../shared/components/DataTable";
 import { PageHeader, RecordTitle } from "../../shared/components/PageLayout";
 import { StatusBadge } from "../../shared/components/StatusBadge";
 import { currency } from "../../shared/utils/currency";
+import { monthNames, todayKey } from "../../shared/utils/dates";
 import type { Expense, ExpenseCategory, ExpenseCategoryType, PaymentLedgerRow } from "../../types";
 
 export function PaymentsFeature({ expenseCategories, expenses }: { expenseCategories: ExpenseCategory[]; expenses: Expense[] }) {
@@ -29,24 +30,47 @@ export function PaymentsFeature({ expenseCategories, expenses }: { expenseCatego
     ),
   ]);
   const paidTotal = paidLedgerRows.reduce((sum, row) => sum + row.amount, 0);
+  const thisMonthPrefix = todayKey().slice(0, 7);
+  const thisMonthTotal = paidLedgerRows
+    .filter((row) => row.paymentDate.slice(0, 7) === thisMonthPrefix)
+    .reduce((sum, row) => sum + row.amount, 0);
 
   return (
     <div className="page-stack">
       <PageHeader
         eyebrow="Completed payments"
-        text="Payment records for expenses that are fully paid."
+        text="Read-only record of payments for expenses that are fully paid. Partial payments stay on the expense until it's fully settled."
         title="Payment History"
       />
       <div className="page-tabs" role="tablist">
         <button className={activeTab === "company" ? "active" : ""} onClick={() => setActiveTab("company")} role="tab" type="button">Company</button>
         <button className={activeTab === "personal" ? "active" : ""} onClick={() => setActiveTab("personal")} role="tab" type="button">Personal</button>
       </div>
-      <section className="summary-band">
-        <div>
-          <p className="eyebrow">Total paid</p>
-          <h2>{currency.format(paidTotal)}</h2>
+      <section className="expense-kpi-row">
+        <div className="billing-stat accent">
+          <div className="billing-stat-icon"><Wallet size={21} /></div>
+          <div className="billing-stat-text">
+            <span className="billing-stat-label">Total Paid</span>
+            <strong className="billing-stat-value">{currency.format(paidTotal)}</strong>
+            <span className="billing-stat-helper">{activeTab === "personal" ? "Personal" : "Company"} expenses</span>
+          </div>
         </div>
-        <p>Read-only record of payments for expenses that are fully paid. Partial payments stay on the expense until it's fully settled.</p>
+        <div className="billing-stat billing-stat-paid-month">
+          <div className="billing-stat-icon"><CheckCircle2 size={21} /></div>
+          <div className="billing-stat-text">
+            <span className="billing-stat-label">This Month</span>
+            <strong className="billing-stat-value">{currency.format(thisMonthTotal)}</strong>
+            <span className="billing-stat-helper">{monthNames[Number(todayKey().slice(5, 7)) - 1]}</span>
+          </div>
+        </div>
+        <div className="billing-stat billing-stat-outstanding">
+          <div className="billing-stat-icon"><Receipt size={21} /></div>
+          <div className="billing-stat-text">
+            <span className="billing-stat-label">Payment Count</span>
+            <strong className="billing-stat-value">{paidLedgerRows.length}</strong>
+            <span className="billing-stat-helper">Total transactions</span>
+          </div>
+        </div>
       </section>
       <DataTable
         empty={activeTab === "personal" ? "No paid personal expenses yet." : "No paid company expenses yet."}
@@ -69,33 +93,53 @@ function PaymentLedgerDetailsModal({ onClose, row }: { onClose: () => void; row:
           </div>
           <button aria-label="Close" onClick={onClose} type="button"><X size={18} /></button>
         </div>
-        <div className="expense-detail-card" style={{ margin: 20 }}>
-          <div>
-            <span>Category</span>
-            <strong>{row.category}</strong>
-          </div>
-          <div>
-            <span>Date</span>
-            <strong>{row.paymentDate}</strong>
-          </div>
-          <div>
-            <span>Amount</span>
-            <strong>{currency.format(row.amount)}</strong>
-          </div>
-          <div>
-            <span>Method</span>
-            <strong>{row.method ? paymentMethodLabel(row.method) : "—"}</strong>
-          </div>
-          <div>
-            <span>Reference number</span>
-            <strong>{row.referenceNumber || "—"}</strong>
-          </div>
-          <div>
-            <span>Status</span>
-            <StatusBadge status={row.status} />
-          </div>
+        <div className="expense-details-modal-body">
+          <section className="expense-summary-grid payment-summary-grid">
+            <PaymentSummaryCard label="Amount paid" tone="success" value={row.amount} />
+            {row.expenseAmount != null && (
+              <PaymentSummaryCard label="Original expense amount" value={row.expenseAmount} />
+            )}
+          </section>
+
+          <section className="expense-detail-card">
+            <div>
+              <span>Category</span>
+              <strong>{row.category}</strong>
+            </div>
+            <div>
+              <span>Date</span>
+              <strong>{row.paymentDate}</strong>
+            </div>
+            {row.expenseFrequency && (
+              <div>
+                <span>Frequency</span>
+                <strong>{row.expenseFrequency === "monthly" ? "Monthly" : row.expenseFrequency === "daily" ? "Daily" : "One-time"}</strong>
+              </div>
+            )}
+            <div>
+              <span>Method</span>
+              <strong>{row.method ? paymentMethodLabel(row.method) : "—"}</strong>
+            </div>
+            <div>
+              <span>Reference number</span>
+              <strong>{row.referenceNumber || "—"}</strong>
+            </div>
+            <div>
+              <span>Status</span>
+              <StatusBadge status={row.status} />
+            </div>
+          </section>
         </div>
       </div>
+    </div>
+  );
+}
+
+function PaymentSummaryCard({ label, tone, value }: { label: string; tone?: "danger" | "success"; value: number }) {
+  return (
+    <div className={`expense-summary-card ${tone ?? ""}`}>
+      <span>{label}</span>
+      <strong>{currency.format(value)}</strong>
     </div>
   );
 }

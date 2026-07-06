@@ -6,7 +6,6 @@ import {
   computeSubconItem,
   countSubconTickets,
   countTicketsByType,
-  lastDayOfMonth,
 } from "../../domain/billing";
 import { isOfflineLikeError } from "../../lib/offlineSync";
 import { supabase } from "../../supabase";
@@ -15,7 +14,7 @@ import { PageHeader, Toolbar } from "../../shared/components/PageLayout";
 import { NotificationService } from "../../shared/notifications/NotificationService";
 import type { QueueOfflineMutation } from "../../shared/types";
 import { currency } from "../../shared/utils/currency";
-import { currentMonth, currentYear, monthNames, todayKey } from "../../shared/utils/dates";
+import { addDays, currentMonth, currentYear, monthNames, todayKey } from "../../shared/utils/dates";
 import type {
   BillingFormValues,
   BillingRecord,
@@ -192,8 +191,7 @@ export function BillingFeature({
     const billingAmount = billableInstall * settings!.installation_rate + billableRepair * settings!.repair_rate;
     const collectionsAmount = Math.round((billingAmount * settings!.collections_pct) / 100 * 100) / 100;
     const collectiblesAmount = Math.round((billingAmount - collectionsAmount) * 100) / 100;
-    const periodEnd = period === "first_half" ? `${year}-${String(month).padStart(2, "0")}-15` : lastDayOfMonth(month, year);
-    const dueDate = periodEnd < todayKey() ? todayKey() : periodEnd;
+    const dueDate = values.due_date || addDays(todayKey(), 15);
 
     const subconItems: BillingSubconItem[] = values.subcon_items.map((item) => {
       const computed = computeSubconItem(
@@ -246,6 +244,7 @@ export function BillingFeature({
       collectibles_amount: collectiblesAmount,
       collection_id: ids.collectionId,
       collectibles_collection_id: ids.collectiblesCollectionId,
+      due_date: dueDate,
       subcon_items: subconItems,
       notes: values.notes.trim(),
     };
@@ -345,6 +344,12 @@ export function BillingFeature({
       NotificationService.showError(`Billing for ${monthNames[month - 1]} ${year} (${periodLabel}) already exists.`);
       return;
     }
+
+    const confirmed = await NotificationService.showConfirm({
+      title: "Create billing",
+      message: `Create billing for ${monthNames[month - 1]} ${year} (${periodLabel})? This generates collections and subcontractor payouts for the period.`,
+    });
+    if (!confirmed) return;
 
     const ids = {
       billingId: crypto.randomUUID(),
@@ -456,6 +461,12 @@ export function BillingFeature({
 
   async function removeBilling(record: BillingRecord) {
     if (!supabase) return;
+    const confirmed = await NotificationService.showConfirm({
+      title: "Delete billing record",
+      message: "Delete this billing record? This also removes its linked collections. This action cannot be undone.",
+      danger: true,
+    });
+    if (!confirmed) return;
     const result = await deleteBillingRecord(
       supabase,
       record.id,
@@ -539,8 +550,8 @@ export function BillingFeature({
                 <th className="num">Disputed</th>
                 <th className="num">Billable</th>
                 <th className="num">Amount</th>
+                <th className="num">Payable</th>
                 <th className="num">Collection</th>
-                <th className="num">Collectibles</th>
                 <th>Action</th>
               </tr>
             </thead>
@@ -587,8 +598,8 @@ export function BillingFeature({
                         </div>
                       </td>
                       <td className="num">{currency.format(record.billing_amount)}</td>
-                      <td className="num">{currency.format(record.collections_amount)}</td>
                       <td className="num">{currency.format(record.collectibles_amount)}</td>
+                      <td className="num">{currency.format(record.collections_amount)}</td>
                       <td>
                         <div className="billing-row-actions">
                           <button aria-label="View details" onClick={() => setDetailsRecord(record)} type="button" title="View details">
@@ -766,8 +777,8 @@ export function BillingHistoryFeature({
                 <th>Invoice No.</th>
                 <th>Period</th>
                 <th className="num">Billing Amount</th>
+                <th className="num">Payable</th>
                 <th className="num">Collection</th>
-                <th className="num">Collectibles</th>
                 <th>Status</th>
                 <th>Action</th>
               </tr>
@@ -784,8 +795,8 @@ export function BillingHistoryFeature({
                     <td className="billing-invoice-no">{record.invoice_no}</td>
                     <td>{monthNames[record.billing_month - 1]} {record.billing_year} · {billingPeriodLabel(record.billing_period)}</td>
                     <td className="num">{currency.format(record.billing_amount)}</td>
-                    <td className="num">{currency.format(record.collections_amount)}</td>
                     <td className="num">{currency.format(record.collectibles_amount)}</td>
+                    <td className="num">{currency.format(record.collections_amount)}</td>
                     <td>
                       <span className={`collection-status ${isFullyPaid ? "collected" : "pending"}`}>
                         {isFullyPaid ? "Paid" : "Pending"}
@@ -850,7 +861,13 @@ function BillingDetailsModal({
   record: BillingRecord;
   settings: BillingSettings;
 }) {
-  const employeeRows = employeeTicketRowsForBilling(record, dailyTicketEntries, settings);
+  const employeeRows = employeeTicketRowsForPeriod(
+    dailyTicketEntries,
+    settings,
+    record.billing_month,
+    record.billing_year,
+    record.billing_period,
+  );
   const employeeTotals = employeeRows.reduce(
     (sum, row) => ({
       install: sum.install + row.install,
@@ -925,6 +942,13 @@ function BillingDetailsModal({
             </div>
             <div className="billing-details-table-wrap">
               <table className="billing-details-table">
+                <colgroup>
+                  <col style={{ width: "40%" }} />
+                  <col style={{ width: "15%" }} />
+                  <col style={{ width: "15%" }} />
+                  <col style={{ width: "15%" }} />
+                  <col style={{ width: "15%" }} />
+                </colgroup>
                 <thead>
                   <tr>
                     <th>Employee</th>
@@ -968,8 +992,8 @@ function BillingDetailsModal({
                     <th className="num">Disputed</th>
                     <th className="num">Billable</th>
                     <th className="num">Gross</th>
+                    <th className="num">Payable</th>
                     <th className="num">Collection</th>
-                    <th className="num">Collectibles</th>
                     <th>Payout</th>
                   </tr>
                 </thead>
@@ -985,8 +1009,8 @@ function BillingDetailsModal({
                         <td className="num">{item.disputed_install + item.disputed_repair} <span>I:{item.disputed_install} R:{item.disputed_repair}</span></td>
                         <td className="num">{item.billable_tickets}</td>
                         <td className="num">{currency.format(item.billing_amount)}</td>
-                        <td className="num">{currency.format(item.collection_amount)}</td>
                         <td className="num">{currency.format(item.payable_amount)}</td>
+                        <td className="num">{currency.format(item.collection_amount)}</td>
                         <td>
                           {payment ? (
                             <>
@@ -1032,16 +1056,18 @@ function BillingDetailsModal({
   );
 }
 
-function employeeTicketRowsForBilling(
-  record: BillingRecord,
+function employeeTicketRowsForPeriod(
   dailyTicketEntries: DailyTicketEntry[],
   settings: BillingSettings,
+  month: number,
+  year: number,
+  period: BillingRecord["billing_period"],
 ) {
   const rows = new Map<string, { employeeId: string; employeeName: string; install: number; repair: number; gross: number }>();
   const matchesPeriod = (entryDate: string) => {
-    const [year, month, day] = entryDate.split("-").map(Number);
-    if (year !== record.billing_year || month !== record.billing_month) return false;
-    return record.billing_period === "first_half" ? day <= 15 : day >= 16;
+    const [entryYear, entryMonth, entryDay] = entryDate.split("-").map(Number);
+    if (entryYear !== year || entryMonth !== month) return false;
+    return period === "first_half" ? entryDay <= 15 : entryDay >= 16;
   };
 
   dailyTicketEntries.filter((entry) => matchesPeriod(entry.entry_date)).forEach((entry) => {
@@ -1207,6 +1233,7 @@ function BillingForm({
         repair_tickets: String(initial.repair_tickets),
         disputed_install: String(initial.disputed_install),
         disputed_repair: String(initial.disputed_repair),
+        due_date: initial.due_date ?? "",
         subcon_items: buildSubconItems(initial.billing_month, initial.billing_year, initial.billing_period),
         notes: initial.notes,
       };
@@ -1225,6 +1252,7 @@ function BillingForm({
       repair_tickets: String(employeeCounts.repair + subconRepair),
       disputed_install: "0",
       disputed_repair: "0",
+      due_date: addDays(todayKey(), 15),
       subcon_items: subconItems,
       notes: "",
     };
@@ -1254,6 +1282,22 @@ function BillingForm({
     Number(values.billing_month),
     Number(values.billing_year),
     values.billing_period,
+  );
+  const employeeRows = employeeTicketRowsForPeriod(
+    dailyTicketEntries,
+    settings,
+    Number(values.billing_month),
+    Number(values.billing_year),
+    values.billing_period,
+  );
+  const employeeTotals = employeeRows.reduce(
+    (sum, row) => ({
+      install: sum.install + row.install,
+      repair: sum.repair + row.repair,
+      tickets: sum.tickets + row.install + row.repair,
+      gross: sum.gross + row.gross,
+    }),
+    { install: 0, repair: 0, tickets: 0, gross: 0 },
   );
   const subconInstall = values.subcon_items.reduce((sum, item) => sum + (Number(item.install_tickets) || 0), 0);
   const subconRepair = values.subcon_items.reduce((sum, item) => sum + (Number(item.repair_tickets) || 0), 0);
@@ -1342,12 +1386,21 @@ function BillingForm({
                     16th - End
                   </button>
                 </div>
+                <div className="cbf-due-date-row">
+                  <label className="cbf-field-label" htmlFor="billing-due-date">Due date</label>
+                  <input
+                    className="cbf-input"
+                    id="billing-due-date"
+                    onChange={(event) => setValues({ ...values, due_date: event.target.value })}
+                    type="date"
+                    value={values.due_date}
+                  />
+                </div>
               </section>
 
               <section className="cbf-section cbf-section-card">
                 <div className="cbf-section-heading">
                   <p className="cbf-section-label">Ticket Sources</p>
-                  <span className="cbf-section-helper">Where this billing period gets its ticket counts</span>
                 </div>
                 <div className="billing-ticket-source-grid">
                   <div className="billing-ticket-source-card">
@@ -1377,29 +1430,89 @@ function BillingForm({
                 </div>
               </section>
 
+              <section className="cbf-section cbf-section-card">
+                <div className="cbf-section-heading">
+                  <p className="cbf-section-label">Employee Tickets</p>
+                </div>
+                <div className="billing-details-section-head">
+                  <div>
+                    <h4>Employee Ticket Reference</h4>
+                    <p>Closed employee tickets included in this billing period.</p>
+                  </div>
+                  <strong>{employeeTotals.tickets} tickets · {currency.format(employeeTotals.gross)}</strong>
+                </div>
+                <div className="billing-details-table-wrap">
+                  <table className="billing-details-table billing-employee-reference-table">
+                    <colgroup>
+                      <col style={{ width: "40%" }} />
+                      <col style={{ width: "15%" }} />
+                      <col style={{ width: "15%" }} />
+                      <col style={{ width: "15%" }} />
+                      <col style={{ width: "15%" }} />
+                    </colgroup>
+                    <thead>
+                      <tr>
+                        <th>Employee</th>
+                        <th className="billing-col-center">Install</th>
+                        <th className="billing-col-center">Repair</th>
+                        <th className="billing-col-center">Total</th>
+                        <th className="billing-col-right">Gross</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {employeeRows.length === 0 ? (
+                        <tr><td colSpan={5}>No employee ticket entries for this period.</td></tr>
+                      ) : employeeRows.map((row) => (
+                        <tr key={row.employeeId}>
+                          <td className="billing-col-left">{row.employeeName}</td>
+                          <td className="billing-col-center">{row.install}</td>
+                          <td className="billing-col-center">{row.repair}</td>
+                          <td className="billing-col-center">{row.install + row.repair}</td>
+                          <td className="billing-col-right">{currency.format(row.gross)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+
               <section className="cbf-section cbf-section-card cbf-section--dispute">
                 <div className="cbf-section-heading">
                   <p className="cbf-section-label">Disputed Totals <span className="cbf-section-sub">deducted from billable</span></p>
-                  <span className="cbf-section-helper">Enter only the tickets that should not be billed this cutoff.</span>
+                </div>
+                <div className="cbf-dispute-summary">
+                  <div className="cbf-dispute-summary-item">
+                    <span>Installation tickets</span>
+                    <strong>{installTickets}</strong>
+                  </div>
+                  <div className="cbf-dispute-summary-item">
+                    <span>Repair tickets</span>
+                    <strong>{repairTickets}</strong>
+                  </div>
                 </div>
                 <div className="cbf-ticket-pair">
                   <div className="cbf-ticket-card cbf-ticket-card--dispute">
-                    <span className="cbf-ticket-type">Installation</span>
-                    <input className="cbf-ticket-input cbf-ticket-input--dispute" min="0" type="number" value={values.disputed_install} onChange={(event) => setValues({ ...values, disputed_install: event.target.value })} />
-                    <span className="cbf-ticket-hint">Available to dispute: <b>{installTickets}</b></span>
+                    <label className="cbf-ticket-field">
+                      <span className="cbf-ticket-type">Installation</span>
+                      <span className="cbf-ticket-input-wrap">
+                        <input className="cbf-ticket-input cbf-ticket-input--dispute" min="0" type="number" value={values.disputed_install} onChange={(event) => setValues({ ...values, disputed_install: event.target.value })} />
+                      </span>
+                    </label>
                   </div>
                   <div className="cbf-ticket-card cbf-ticket-card--dispute">
-                    <span className="cbf-ticket-type">Repair</span>
-                    <input className="cbf-ticket-input cbf-ticket-input--dispute" min="0" type="number" value={values.disputed_repair} onChange={(event) => setValues({ ...values, disputed_repair: event.target.value })} />
-                    <span className="cbf-ticket-hint">Available to dispute: <b>{repairTickets}</b></span>
+                    <label className="cbf-ticket-field">
+                      <span className="cbf-ticket-type">Repair</span>
+                      <span className="cbf-ticket-input-wrap">
+                        <input className="cbf-ticket-input cbf-ticket-input--dispute" min="0" type="number" value={values.disputed_repair} onChange={(event) => setValues({ ...values, disputed_repair: event.target.value })} />
+                      </span>
+                    </label>
                   </div>
                 </div>
               </section>
 
               <section className="cbf-section cbf-section-card">
                 <div className="cbf-section-heading">
-                  <p className="cbf-section-label">Subcontractor Billing Rows</p>
-                  <span className="cbf-section-helper">Review counts, disputes, net amount, and collectibles amount for each subcontractor.</span>
+                  <p className="cbf-section-label">Subcontractor Tickets</p>
                 </div>
                 <div className="billing-subcon-form-scroll">
                   <div className="billing-subcon-form-table">
@@ -1459,7 +1572,7 @@ function BillingForm({
               <section className="cbf-section cbf-section-card">
                 <label className="cbf-section-label">
                   Notes <span className="cbf-section-sub">optional</span>
-                  <textarea className="cbf-textarea" rows={3} value={values.notes} onChange={(event) => setValues({ ...values, notes: event.target.value })} />
+                  <textarea className="cbf-textarea" rows={2} value={values.notes} onChange={(event) => setValues({ ...values, notes: event.target.value })} />
                 </label>
               </section>
             </div>

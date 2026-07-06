@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { AlertTriangle, CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, Pencil, Plus, ReceiptText, Ticket, Trash2, WalletCards, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, Pencil, Plus, ReceiptText, Ticket, Trash2, Users, WalletCards, X } from "lucide-react";
 import {
   billingPeriodLabel,
   buildSubcontractorAccountSummary,
@@ -9,7 +9,7 @@ import { markSubconPaymentReminderPaid, saveSubcontractor } from "../billing/bil
 import { supabase } from "../../supabase";
 import { DataTable } from "../../shared/components/DataTable";
 import { MoneyField } from "../../shared/components/MoneyField";
-import { PageHeader, Toolbar } from "../../shared/components/PageLayout";
+import { PageHeader, RecordTitle, Toolbar } from "../../shared/components/PageLayout";
 import { StatusBadge } from "../../shared/components/StatusBadge";
 import { NotificationService } from "../../shared/notifications/NotificationService";
 import type { QueueOfflineMutation } from "../../shared/types";
@@ -29,6 +29,10 @@ function emptySubcontractorAdvanceForm(subcontractorId: string): SubcontractorAd
     status: "active",
     notes: "",
   };
+}
+
+function subconInitials(name: string) {
+  return name.split(" ").filter(Boolean).slice(0, 2).map((word) => word[0]).join("").toUpperCase() || "S";
 }
 
 export function SubcontractorsFeature({
@@ -70,26 +74,12 @@ export function SubcontractorsFeature({
     if (initialTab) setTab(initialTab);
   }, [initialTab]);
 
-  const filtered = useMemo(() => {
-    return subcontractors.filter((subcontractor) =>
-      subcontractor.name.toLowerCase().includes(query.toLowerCase()),
-    );
-  }, [query, subcontractors]);
-
   const selected = useMemo(() => {
-    return subcontractors.find((subcontractor) => subcontractor.id === selectedSubcontractorId)
-      ?? filtered[0]
-      ?? null;
-  }, [filtered, selectedSubcontractorId, subcontractors]);
+    return subcontractors.find((subcontractor) => subcontractor.id === selectedSubcontractorId) ?? null;
+  }, [selectedSubcontractorId, subcontractors]);
 
-  useEffect(() => {
-    if (!selectedSubcontractorId && filtered[0]) {
-      onSelectSubcontractor(filtered[0].id);
-    }
-  }, [filtered, onSelectSubcontractor, selectedSubcontractorId]);
-
-  const listRows = useMemo(() => {
-    return filtered.map((subcontractor) => {
+  const summaries = useMemo(() => {
+    return subcontractors.map((subcontractor) => {
       const account = buildSubcontractorAccountSummary({
         subcontractor,
         billingRecords,
@@ -100,13 +90,41 @@ export function SubcontractorsFeature({
       const advanceBalance = subcontractorAdvances
         .filter((advance) => advance.subcontractor_id === subcontractor.id && advance.status === "active")
         .reduce((sum, advance) => sum + Number(advance.balance), 0);
-      return { subcontractor, pending: account.netPending, tickets: account.ticketsThisPeriod, advanceBalance };
+      return {
+        subcontractor,
+        pending: account.netPending,
+        tickets: account.ticketsThisPeriod,
+        paidThisMonth: account.paidThisMonth,
+        advanceBalance,
+      };
     });
-  }, [billingRecords, filtered, payments, subconDailyTickets, subcontractorAdvances]);
+  }, [billingRecords, payments, subconDailyTickets, subcontractorAdvances, subcontractors]);
+
+  const listRows = useMemo(() => {
+    return summaries.filter((row) => row.subcontractor.name.toLowerCase().includes(query.toLowerCase()));
+  }, [query, summaries]);
+
+  const listTotals = useMemo(() => {
+    return summaries.reduce(
+      (sum, row) => ({
+        pending: sum.pending + row.pending,
+        paidThisMonth: sum.paidThisMonth + row.paidThisMonth,
+        advanceBalance: sum.advanceBalance + row.advanceBalance,
+      }),
+      { pending: 0, paidThisMonth: 0, advanceBalance: 0 },
+    );
+  }, [summaries]);
 
   async function toggleArchive(subcontractor: Subcontractor) {
     if (!supabase) return;
     const nextStatus = subcontractor.status === "active" ? "archived" : "active";
+    const confirmed = await NotificationService.showConfirm({
+      title: nextStatus === "archived" ? "Archive subcontractor" : "Restore subcontractor",
+      message: nextStatus === "archived"
+        ? `Archive ${subcontractor.name}? They'll no longer appear in active subcontractor lists.`
+        : `Restore ${subcontractor.name} to active status?`,
+    });
+    if (!confirmed) return;
     const result = await saveSubcontractor(supabase, userId, {
       id: subcontractor.id,
       name: subcontractor.name,
@@ -153,78 +171,36 @@ export function SubcontractorsFeature({
   }
 
   return (
-    <div className="page-stack subcon-workspace-page">
-      <PageHeader
-        eyebrow="Partner accounts"
-        title="Subcontractors"
-        text="Review each subcontractor's ticket history, net payable, and payout status in one workspace."
-        action={(
-          <button className="primary-button compact" onClick={() => { setEditing(null); setFormOpen(true); }} type="button">
-            <Plus size={16} />
-            Add subcontractor
-          </button>
-        )}
-      />
-
-      <div className="subcon-workspace">
-        <aside className="subcon-rail">
-          <Toolbar query={query} setQuery={setQuery} />
-          <div className="subcon-rail-list">
-            {listRows.length === 0 ? (
-              <div className="subcon-empty-state">
-                <p>No subcontractors found.</p>
-                <span>Try a different search or add a new subcontractor.</span>
-              </div>
-            ) : (
-              listRows.map(({ subcontractor, pending, tickets, advanceBalance }) => (
-                <button
-                  className={selected?.id === subcontractor.id ? "subcon-rail-card active" : "subcon-rail-card"}
-                  key={subcontractor.id}
-                  onClick={() => onSelectSubcontractor(subcontractor.id)}
-                  type="button"
-                >
-                  <div className="subcon-rail-card-head">
-                    <strong>{subcontractor.name}</strong>
-                    <StatusBadge status={subcontractor.status} />
-                  </div>
-                  <div className="subcon-rail-card-meta">
-                    <span>{tickets} tickets · advances {currency.format(advanceBalance)}</span>
-                    <strong>{currency.format(pending)}</strong>
-                  </div>
-                </button>
-              ))
-            )}
-          </div>
-        </aside>
-
-        <section className="subcon-account-panel">
-          {!selected ? (
-            <div className="billing-empty">
-              <WalletCards size={32} />
-              <p>Select a subcontractor</p>
-              <span>Select a subcontractor to view tickets, net pay, and payout status.</span>
-            </div>
-          ) : (
-            <SubcontractorAccountPanel
-              billingRecords={billingRecords}
-              onArchive={toggleArchive}
-              onEdit={(subcontractor) => { setEditing(subcontractor); setFormOpen(true); }}
-              onMarkPaymentPaid={markPaymentPaid}
-              onMarkLatestPendingPaid={markLatestPendingPaid}
-              onOpenBillingRow={setDrawerRow}
-              onQueueOfflineMutation={onQueueOfflineMutation}
-              payments={payments}
-              selected={selected}
-              setTab={setTab}
-              subconDailyTickets={subconDailyTickets}
-              subcontractorAdvances={subcontractorAdvances}
-              tab={tab}
-              userId={userId}
-              onChange={onChange}
-            />
-          )}
-        </section>
-      </div>
+    <>
+      {selected ? (
+        <SubcontractorDetailsView
+          billingRecords={billingRecords}
+          onArchive={toggleArchive}
+          onBack={() => onSelectSubcontractor("")}
+          onChange={onChange}
+          onEdit={(subcontractor) => { setEditing(subcontractor); setFormOpen(true); }}
+          onMarkLatestPendingPaid={markLatestPendingPaid}
+          onMarkPaymentPaid={markPaymentPaid}
+          onOpenBillingRow={setDrawerRow}
+          onQueueOfflineMutation={onQueueOfflineMutation}
+          payments={payments}
+          selected={selected}
+          setTab={setTab}
+          subconDailyTickets={subconDailyTickets}
+          subcontractorAdvances={subcontractorAdvances}
+          tab={tab}
+          userId={userId}
+        />
+      ) : (
+        <SubcontractorsListView
+          listRows={listRows}
+          onAdd={() => { setEditing(null); setFormOpen(true); }}
+          onSelect={onSelectSubcontractor}
+          query={query}
+          setQuery={setQuery}
+          totals={listTotals}
+        />
+      )}
 
       {formOpen && (
         <SubcontractorProfileModal
@@ -262,14 +238,98 @@ export function SubcontractorsFeature({
           </aside>
         </div>
       )}
+    </>
+  );
+}
+
+function SubcontractorsListView({
+  listRows,
+  onAdd,
+  onSelect,
+  query,
+  setQuery,
+  totals,
+}: {
+  listRows: Array<{ subcontractor: Subcontractor; pending: number; tickets: number; paidThisMonth: number; advanceBalance: number }>;
+  onAdd: () => void;
+  onSelect: (subcontractorId: string) => void;
+  query: string;
+  setQuery: (query: string) => void;
+  totals: { pending: number; paidThisMonth: number; advanceBalance: number };
+}) {
+  const activeCount = listRows.filter((row) => row.subcontractor.status === "active").length;
+
+  return (
+    <div className="page-stack">
+      <PageHeader
+        eyebrow="Partner accounts"
+        title="Subcontractors"
+        text="Review each subcontractor's ticket history, net payable, and payout status."
+        action={(
+          <button className="primary-button compact" onClick={onAdd} type="button">
+            <Plus size={16} />
+            Add subcontractor
+          </button>
+        )}
+      />
+
+      <section className="metric-grid">
+        <SubconMetric helperText={`${activeCount} active`} icon={<Users size={18} />} label="Subcontractors" value={listRows.length} />
+        <SubconMetric icon={<WalletCards size={18} />} label="Net pending" tone="warning" value={currency.format(totals.pending)} />
+        <SubconMetric icon={<CheckCircle2 size={18} />} label="Paid this month" tone="success" value={currency.format(totals.paidThisMonth)} />
+        <SubconMetric icon={<ReceiptText size={18} />} label="Cash advance balance" value={currency.format(totals.advanceBalance)} />
+      </section>
+
+      <section className="panel employee-list-panel">
+        <Toolbar query={query} setQuery={setQuery} />
+        <DataTable
+          empty="No subcontractors found."
+          headers={["No.", "Subcontractor", "Tickets this period", "Net pending", "Advance balance", "Status"]}
+          onRowClick={(index) => onSelect(listRows[index].subcontractor.id)}
+          rows={listRows.map((row, index) => [
+            index + 1,
+            <div className="employee-list-identity" key="identity">
+              <div className="employee-list-avatar"><span>{subconInitials(row.subcontractor.name)}</span></div>
+              <RecordTitle
+                title={row.subcontractor.name}
+                notes={`Install ${currency.format(row.subcontractor.installation_rate)} · Repair ${currency.format(row.subcontractor.repair_rate)}`}
+              />
+            </div>,
+            row.tickets,
+            currency.format(row.pending),
+            currency.format(row.advanceBalance),
+            <StatusBadge key="status" status={row.subcontractor.status} />,
+          ])}
+        />
+      </section>
     </div>
   );
 }
 
-function SubcontractorAccountPanel({
+function SubconMetric({ helperText, icon, label, tone, value }: {
+  helperText?: string;
+  icon: ReactNode;
+  label: string;
+  tone?: "danger" | "success" | "warning";
+  value: number | string;
+}) {
+  return (
+    <div className={`subcon-metric ${tone ?? ""}`}>
+      <div className={`subcon-metric-icon ${tone ?? "neutral"}`}>{icon}</div>
+      <div className="subcon-metric-text">
+        <span>{label}</span>
+        <strong>{value}</strong>
+        {helperText ? <span className="subcon-metric-helper">{helperText}</span> : null}
+      </div>
+    </div>
+  );
+}
+
+function SubcontractorDetailsView({
   billingRecords,
   onChange,
   onArchive,
+  onBack,
   onEdit,
   onMarkLatestPendingPaid,
   onMarkPaymentPaid,
@@ -286,6 +346,7 @@ function SubcontractorAccountPanel({
   billingRecords: BillingRecord[];
   onChange: () => Promise<void>;
   onArchive: (subcontractor: Subcontractor) => Promise<void>;
+  onBack: () => void;
   onEdit: (subcontractor: Subcontractor) => void;
   onMarkLatestPendingPaid: () => Promise<void>;
   onMarkPaymentPaid: (payment: PaymentReminder) => Promise<void>;
@@ -302,6 +363,7 @@ function SubcontractorAccountPanel({
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [periodFilter, setPeriodFilter] = useState<"all" | BillingPeriod>("all");
+  const [dailyPage, setDailyPage] = useState(1);
   const [activeCalendar, setActiveCalendar] = useState<"start" | "end" | null>(null);
   const [calendarYear, setCalendarYear] = useState(() => Number(todayKey().split("-")[0]));
   const [calendarMonth, setCalendarMonth] = useState(() => Number(todayKey().split("-")[1]));
@@ -333,6 +395,17 @@ function SubcontractorAccountPanel({
       .filter((entry) => isMatchingPeriod(entry.entry_date))
       .sort((a, b) => b.entry_date.localeCompare(a.entry_date));
   }, [endDate, periodFilter, selected.id, startDate, subconDailyTickets]);
+
+  useEffect(() => {
+    setDailyPage(1);
+  }, [endDate, periodFilter, selected.id, startDate]);
+
+  const DAILY_TICKETS_PAGE_SIZE = 10;
+  const dailyPageCount = Math.max(1, Math.ceil(filteredTickets.length / DAILY_TICKETS_PAGE_SIZE));
+  const safeDailyPage = Math.min(dailyPage, dailyPageCount);
+  const dailyPageStart = (safeDailyPage - 1) * DAILY_TICKETS_PAGE_SIZE;
+  const dailyPageEnd = Math.min(dailyPageStart + DAILY_TICKETS_PAGE_SIZE, filteredTickets.length);
+  const paginatedTickets = filteredTickets.slice(dailyPageStart, dailyPageEnd);
 
   const subconPayments = useMemo(() => {
     return payments
@@ -549,313 +622,354 @@ function SubcontractorAccountPanel({
   }
 
   return (
-    <>
-      <div className="subcon-account-header">
-        <div>
-          <p className="eyebrow">Subcontractor account</p>
-          <h2>{selected.name}</h2>
-        </div>
-        <div className="subcon-account-actions">
-          <button className="secondary-button compact" onClick={() => onEdit(selected)} type="button"><Pencil size={16} /> Edit profile</button>
-          <button className="secondary-button compact" onClick={() => void onArchive(selected)} type="button">
-            {selected.status === "active" ? <><Trash2 size={16} /> Archive</> : <><Plus size={16} /> Restore</>}
+    <div className="page-stack">
+      <div className="subcon-details">
+        <header className="subcon-header">
+          <button aria-label="Back to subcontractors" className="subcon-back" onClick={onBack} type="button">
+            <ArrowLeft size={16} />
           </button>
-          <button className="primary-button compact" disabled={displaySummary.netPending <= 0} onClick={() => void onMarkLatestPendingPaid()} type="button">
-            <CheckCircle2 size={16} />
-            Mark latest payout paid
-          </button>
-        </div>
-      </div>
-
-      <div className="subcon-kpi-grid">
-        <KpiCard icon={<Ticket size={18} />} label="Tickets this period" value={String(displaySummary.ticketsThisPeriod)} />
-        <KpiCard icon={<WalletCards size={18} />} label="Net pending" value={currency.format(displaySummary.netPending)} emphasis />
-        <KpiCard icon={<CheckCircle2 size={18} />} label="Paid this month" value={currency.format(displaySummary.paidThisMonth)} />
-        <KpiCard icon={<ReceiptText size={18} />} label="Cash advance balance" value={currency.format(activeAdvanceBalance)} />
-      </div>
-
-      <div className="page-tabs subcon-account-tabs" role="tablist">
-        <button className={tab === "daily" ? "active" : ""} onClick={() => setTab("daily")} role="tab" type="button">Daily Tickets</button>
-        <button className={tab === "billing" ? "active" : ""} onClick={() => setTab("billing")} role="tab" type="button">Billing & Net</button>
-        <button className={tab === "payouts" ? "active" : ""} onClick={() => setTab("payouts")} role="tab" type="button">Payouts</button>
-        <button className={tab === "advances" ? "active" : ""} onClick={() => setTab("advances")} role="tab" type="button">Cash Advances</button>
-      </div>
-
-      {tab === "daily" && (
-        <div className="page-stack">
-          <div className="subcon-filters" ref={calendarRef}>
-            <label>
-              Start date
-              <div className="att-cal-wrap">
-                <button
-                  className="subcon-date-trigger att-cal-trigger"
-                  onClick={() => openCalendar("start")}
-                  type="button"
-                >
-                  <CalendarClock size={16} />
-                  <span>{startDate ? displayDate(startDate) : "Select start date"}</span>
-                </button>
-                {activeCalendar === "start" && (
-                  <div className="att-cal">
-                    <div className="att-cal-header">
-                      <button onClick={prevCalendarMonth} type="button"><ChevronLeft size={14} /></button>
-                      <span>{monthNames[calendarMonth - 1]} {calendarYear}</span>
-                      <button onClick={nextCalendarMonth} type="button"><ChevronRight size={14} /></button>
-                    </div>
-                    <div className="att-cal-grid">
-                      {["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map((day) => (
-                        <span key={day} className="att-cal-day-name">{day}</span>
-                      ))}
-                      {getCalendarDays(calendarYear, calendarMonth).map(({ currentMonth, dateKey, day }) => (
-                        <button
-                          key={dateKey}
-                          className={[
-                            "att-cal-day",
-                            !currentMonth ? "other-month" : "",
-                            dateKey === startDate ? "selected" : "",
-                            dateKey === todayKey() ? "today" : "",
-                          ].filter(Boolean).join(" ")}
-                          onClick={() => selectCalendarDate(dateKey)}
-                          type="button"
-                        >
-                          {day}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="att-cal-footer">
-                      <span>Today: {displayDate(todayKey())}</span>
-                      <button
-                        onClick={() => {
-                          const today = todayKey();
-                          const [year, month] = today.split("-").map(Number);
-                          setCalendarYear(year);
-                          setCalendarMonth(month);
-                          setStartDate(today);
-                          setActiveCalendar(null);
-                        }}
-                        type="button"
-                      >
-                        Go to today
-                      </button>
-                    </div>
-                  </div>
-                )}
+          <div className="subcon-identity">
+            <div className="subcon-avatar"><span>{subconInitials(selected.name)}</span></div>
+            <div className="subcon-name-group">
+              <strong className="subcon-name">{selected.name}</strong>
+              <StatusBadge status={selected.status} />
+              <div className="subcon-meta-row">
+                <div className="subcon-meta-item">
+                  <span>Installation rate</span>
+                  <strong>{currency.format(selected.installation_rate)}</strong>
+                </div>
+                <div className="subcon-meta-item">
+                  <span>Repair rate</span>
+                  <strong>{currency.format(selected.repair_rate)}</strong>
+                </div>
+                <div className="subcon-meta-item">
+                  <span>Payable %</span>
+                  <strong>{selected.payable_pct}%</strong>
+                </div>
               </div>
-            </label>
-            <label>
-              End date
-              <div className="att-cal-wrap">
-                <button
-                  className="subcon-date-trigger att-cal-trigger"
-                  onClick={() => openCalendar("end")}
-                  type="button"
-                >
-                  <CalendarClock size={16} />
-                  <span>{endDate ? displayDate(endDate) : "Select end date"}</span>
-                </button>
-                {activeCalendar === "end" && (
-                  <div className="att-cal">
-                    <div className="att-cal-header">
-                      <button onClick={prevCalendarMonth} type="button"><ChevronLeft size={14} /></button>
-                      <span>{monthNames[calendarMonth - 1]} {calendarYear}</span>
-                      <button onClick={nextCalendarMonth} type="button"><ChevronRight size={14} /></button>
-                    </div>
-                    <div className="att-cal-grid">
-                      {["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map((day) => (
-                        <span key={day} className="att-cal-day-name">{day}</span>
-                      ))}
-                      {getCalendarDays(calendarYear, calendarMonth).map(({ currentMonth, dateKey, day }) => (
-                        <button
-                          key={dateKey}
-                          className={[
-                            "att-cal-day",
-                            !currentMonth ? "other-month" : "",
-                            dateKey === endDate ? "selected" : "",
-                            dateKey === todayKey() ? "today" : "",
-                          ].filter(Boolean).join(" ")}
-                          onClick={() => selectCalendarDate(dateKey)}
-                          type="button"
-                        >
-                          {day}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="att-cal-footer">
-                      <span>Today: {displayDate(todayKey())}</span>
-                      <button
-                        onClick={() => {
-                          const today = todayKey();
-                          const [year, month] = today.split("-").map(Number);
-                          setCalendarYear(year);
-                          setCalendarMonth(month);
-                          setEndDate(today);
-                          setActiveCalendar(null);
-                        }}
-                        type="button"
-                      >
-                        Go to today
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </label>
-            <label>
-              Billing period
-              <select value={periodFilter} onChange={(event) => setPeriodFilter(event.target.value as typeof periodFilter)}>
-                <option value="all">All</option>
-                <option value="first_half">1st - 15th</option>
-                <option value="second_half">16th - End</option>
-              </select>
-            </label>
+            </div>
           </div>
-          <DataTable
-            empty="No daily tickets for this subcontractor yet."
-            headers={["Date", "Install", "Repair", "Total", "Total net"]}
-            rows={filteredTickets.map((entry) => [
-              entry.entry_date,
-              entry.install_tickets,
-              entry.repair_tickets,
-              entry.install_tickets + entry.repair_tickets,
-              currency.format(
-                Math.round(
-                  (
-                    (entry.install_tickets * entry.installation_rate +
-                      entry.repair_tickets * entry.repair_rate) *
-                    (selected.payable_pct / 100)
-                  ) * 100,
-                ) / 100,
-              ),
-            ])}
-          />
-        </div>
-      )}
+          <div className="subcon-header-actions">
+            <button className="secondary-button compact" onClick={() => onEdit(selected)} type="button"><Pencil size={16} /> Edit profile</button>
+            <button className="secondary-button compact" onClick={() => void onArchive(selected)} type="button">
+              {selected.status === "active" ? <><Trash2 size={16} /> Archive</> : <><Plus size={16} /> Restore</>}
+            </button>
+            <button className="primary-button compact" disabled={displaySummary.netPending <= 0} onClick={() => void onMarkLatestPendingPaid()} type="button">
+              <CheckCircle2 size={16} />
+              Mark latest payout paid
+            </button>
+          </div>
+        </header>
 
-      {tab === "billing" && (
-        <DataTable
-          empty="No billing rows for this subcontractor yet."
-          headers={["Period", "Tickets", "Disputed", "Billable", "Gross billed", "Split", "Net payable", "Payout"]}
-          onRowClick={(index) => onOpenBillingRow(latestBillingRows[index])}
-          rows={latestBillingRows.map((row) => {
-            const payment = paymentByItemId.get(row.id);
-            return [
-              `${monthNames[row.billing_month - 1]} ${row.billing_year} · ${billingPeriodLabel(row.billing_period)}`,
-              `${row.install_tickets + row.repair_tickets} (I:${row.install_tickets} R:${row.repair_tickets})`,
-              row.disputed_install + row.disputed_repair,
-              row.billable_tickets,
-              currency.format(row.billing_amount),
-              `${100 - row.payable_pct}% collection · ${row.payable_pct}% payable`,
-              <strong className="subcon-net-value" key={`${row.id}-net`}>{currency.format(row.payable_amount)}</strong>,
-              payment
-                ? <StatusBadge key={`${row.id}-status`} status={payment.status} />
-                : <span className="subcon-missing-payment"><AlertTriangle size={14} /> Missing payout</span>,
-            ];
-          })}
-        />
-      )}
+        <section className="metric-grid">
+          <SubconMetric icon={<Ticket size={18} />} label="Tickets this period" value={String(displaySummary.ticketsThisPeriod)} />
+          <SubconMetric icon={<WalletCards size={18} />} label="Net pending" tone="warning" value={currency.format(displaySummary.netPending)} />
+          <SubconMetric icon={<CheckCircle2 size={18} />} label="Paid this month" tone="success" value={currency.format(displaySummary.paidThisMonth)} />
+          <SubconMetric icon={<ReceiptText size={18} />} label="Cash advance balance" value={currency.format(activeAdvanceBalance)} />
+        </section>
 
-      {tab === "payouts" && (
-        <DataTable
-          empty="No payout records yet."
-          headers={["Period", "Net amount", "Due date", "Status", "Paid date", "Notes", "Action"]}
-          rows={subconPayments.map((payment) => [
-            payment.billing_month != null
-              ? `${monthNames[payment.billing_month - 1]} ${payment.billing_year} · ${billingPeriodLabel(payment.billing_period!)}`
-              : payment.notes || "—",
-            <strong className="subcon-net-value" key={`${payment.id}-net`}>{currency.format(payment.amount)}</strong>,
-            payment.due_date,
-            <StatusBadge key={`${payment.id}-status`} status={payment.status} />,
-            payment.status === "paid" ? payment.updated_at.slice(0, 10) : "—",
-            payment.notes || "—",
-            payment.status === "pending"
-              ? <button className="secondary-button compact" key={`${payment.id}-action`} onClick={() => void onMarkPaymentPaid(payment)} type="button">Mark paid</button>
-              : "—",
-          ])}
-        />
-      )}
+        <nav className="subcon-tabs" role="tablist">
+          <button className={tab === "daily" ? "active" : ""} onClick={() => setTab("daily")} role="tab" type="button">Daily Tickets</button>
+          <button className={tab === "billing" ? "active" : ""} onClick={() => setTab("billing")} role="tab" type="button">Billing & Net</button>
+          <button className={tab === "payouts" ? "active" : ""} onClick={() => setTab("payouts")} role="tab" type="button">Payouts</button>
+          <button className={tab === "advances" ? "active" : ""} onClick={() => setTab("advances")} role="tab" type="button">Cash Advances</button>
+        </nav>
 
-      {tab === "advances" && (
-        <div className="page-stack">
-          <form className="employee-advance-form" onSubmit={saveAdvance}>
-            <div className="employee-advance-selected-employee">
-              <span>{editingAdvance ? "Edit cash advance" : "New cash advance"}</span>
-              <strong>{selected.name}</strong>
-              {editingAdvance && (
-                <button aria-label="Cancel editing cash advance" onClick={() => {
-                  setEditingAdvance(null);
-                  setAdvanceForm(emptySubcontractorAdvanceForm(selected.id));
-                }} type="button">
-                  <X size={14} />
-                </button>
+        {tab === "daily" && (
+          <section className="emp-content-card">
+            <div className="page-stack">
+              <div className="subcon-filters" ref={calendarRef}>
+                <label>
+                  Start date
+                  <div className="att-cal-wrap">
+                    <button
+                      className="subcon-date-trigger att-cal-trigger"
+                      onClick={() => openCalendar("start")}
+                      type="button"
+                    >
+                      <CalendarClock size={16} />
+                      <span>{startDate ? displayDate(startDate) : "Select start date"}</span>
+                    </button>
+                    {activeCalendar === "start" && (
+                      <div className="att-cal">
+                        <div className="att-cal-header">
+                          <button onClick={prevCalendarMonth} type="button"><ChevronLeft size={14} /></button>
+                          <span>{monthNames[calendarMonth - 1]} {calendarYear}</span>
+                          <button onClick={nextCalendarMonth} type="button"><ChevronRight size={14} /></button>
+                        </div>
+                        <div className="att-cal-grid">
+                          {["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map((day) => (
+                            <span key={day} className="att-cal-day-name">{day}</span>
+                          ))}
+                          {getCalendarDays(calendarYear, calendarMonth).map(({ currentMonth, dateKey, day }) => (
+                            <button
+                              key={dateKey}
+                              className={[
+                                "att-cal-day",
+                                !currentMonth ? "other-month" : "",
+                                dateKey === startDate ? "selected" : "",
+                                dateKey === todayKey() ? "today" : "",
+                              ].filter(Boolean).join(" ")}
+                              onClick={() => selectCalendarDate(dateKey)}
+                              type="button"
+                            >
+                              {day}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="att-cal-footer">
+                          <span>Today: {displayDate(todayKey())}</span>
+                          <button
+                            onClick={() => {
+                              const today = todayKey();
+                              const [year, month] = today.split("-").map(Number);
+                              setCalendarYear(year);
+                              setCalendarMonth(month);
+                              setStartDate(today);
+                              setActiveCalendar(null);
+                            }}
+                            type="button"
+                          >
+                            Go to today
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </label>
+                <label>
+                  End date
+                  <div className="att-cal-wrap">
+                    <button
+                      className="subcon-date-trigger att-cal-trigger"
+                      onClick={() => openCalendar("end")}
+                      type="button"
+                    >
+                      <CalendarClock size={16} />
+                      <span>{endDate ? displayDate(endDate) : "Select end date"}</span>
+                    </button>
+                    {activeCalendar === "end" && (
+                      <div className="att-cal">
+                        <div className="att-cal-header">
+                          <button onClick={prevCalendarMonth} type="button"><ChevronLeft size={14} /></button>
+                          <span>{monthNames[calendarMonth - 1]} {calendarYear}</span>
+                          <button onClick={nextCalendarMonth} type="button"><ChevronRight size={14} /></button>
+                        </div>
+                        <div className="att-cal-grid">
+                          {["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map((day) => (
+                            <span key={day} className="att-cal-day-name">{day}</span>
+                          ))}
+                          {getCalendarDays(calendarYear, calendarMonth).map(({ currentMonth, dateKey, day }) => (
+                            <button
+                              key={dateKey}
+                              className={[
+                                "att-cal-day",
+                                !currentMonth ? "other-month" : "",
+                                dateKey === endDate ? "selected" : "",
+                                dateKey === todayKey() ? "today" : "",
+                              ].filter(Boolean).join(" ")}
+                              onClick={() => selectCalendarDate(dateKey)}
+                              type="button"
+                            >
+                              {day}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="att-cal-footer">
+                          <span>Today: {displayDate(todayKey())}</span>
+                          <button
+                            onClick={() => {
+                              const today = todayKey();
+                              const [year, month] = today.split("-").map(Number);
+                              setCalendarYear(year);
+                              setCalendarMonth(month);
+                              setEndDate(today);
+                              setActiveCalendar(null);
+                            }}
+                            type="button"
+                          >
+                            Go to today
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </label>
+                <label>
+                  Billing period
+                  <select value={periodFilter} onChange={(event) => setPeriodFilter(event.target.value as typeof periodFilter)}>
+                    <option value="all">All</option>
+                    <option value="first_half">1st - 15th</option>
+                    <option value="second_half">16th - End</option>
+                  </select>
+                </label>
+              </div>
+              <DataTable
+                empty="No daily tickets for this subcontractor yet."
+                headers={["Date", "Install", "Repair", "Total", "Total net"]}
+                rows={paginatedTickets.map((entry) => [
+                  entry.entry_date,
+                  entry.install_tickets,
+                  entry.repair_tickets,
+                  entry.install_tickets + entry.repair_tickets,
+                  currency.format(
+                    Math.round(
+                      (
+                        (entry.install_tickets * entry.installation_rate +
+                          entry.repair_tickets * entry.repair_rate) *
+                        (selected.payable_pct / 100)
+                      ) * 100,
+                    ) / 100,
+                  ),
+                ])}
+              />
+              {filteredTickets.length > DAILY_TICKETS_PAGE_SIZE && (
+                <div className="attendance-footer">
+                  <span>
+                    Showing {dailyPageStart + 1} to {dailyPageEnd} of {filteredTickets.length} ticket entries
+                  </span>
+                  <div>
+                    <button disabled={safeDailyPage === 1} onClick={() => setDailyPage((page) => Math.max(1, page - 1))} type="button">{"<"}</button>
+                    {Array.from({ length: dailyPageCount }, (_, index) => index + 1).map((page) => (
+                      <button
+                        className={page === safeDailyPage ? "active" : undefined}
+                        key={page}
+                        onClick={() => setDailyPage(page)}
+                        type="button"
+                      >
+                        {page}
+                      </button>
+                    ))}
+                    <button disabled={safeDailyPage === dailyPageCount} onClick={() => setDailyPage((page) => Math.min(dailyPageCount, page + 1))} type="button">{">"}</button>
+                  </div>
+                </div>
               )}
             </div>
-            <label>
-              Date Granted *
-              <input required type="date" value={advanceForm.date_granted} onChange={(event) => setAdvanceForm({ ...advanceForm, date_granted: event.target.value })} />
-            </label>
-            <MoneyField label="Amount *" onChange={(amountValue) => setAdvanceForm({ ...advanceForm, amount: amountValue })} required value={advanceForm.amount} />
-            <label>
-              Deduction Method
-              <select value={advanceForm.deduction_mode} onChange={(event) => setAdvanceForm({ ...advanceForm, deduction_mode: event.target.value as SubcontractorAdvance["deduction_mode"] })}>
-                <option value="full_payout">Full paid from payout</option>
-                <option value="per_billing">Per billing deduction</option>
-              </select>
-            </label>
-            <MoneyField
-              disabled={advanceForm.deduction_mode !== "per_billing"}
-              label="Deduction Per Billing"
-              onChange={(value) => setAdvanceForm({ ...advanceForm, deduction_per_billing: value })}
-              required={advanceForm.deduction_mode === "per_billing"}
-              value={advanceForm.deduction_per_billing}
-            />
-            <label>
-              Status
-              <select value={advanceForm.status} onChange={(event) => setAdvanceForm({ ...advanceForm, status: event.target.value as SubcontractorAdvance["status"] })}>
-                <option value="active">Active</option>
-                <option value="completed">Completed</option>
-                <option value="archived">Archived</option>
-              </select>
-            </label>
-            <label className="employee-advance-form-wide">
-              Notes
-              <textarea placeholder="Purpose, release details, or reminders..." value={advanceForm.notes} onChange={(event) => setAdvanceForm({ ...advanceForm, notes: event.target.value })} />
-            </label>
-            <div className="employee-advance-form-actions">
-              <button className="secondary-button" onClick={() => {
-                setEditingAdvance(null);
-                setAdvanceForm(emptySubcontractorAdvanceForm(selected.id));
-              }} type="button">Clear</button>
-              <button className="primary-button" disabled={advanceBusy} type="submit">{advanceBusy ? "Saving..." : editingAdvance ? "Update advance" : "Save cash advance"}</button>
-            </div>
-          </form>
-          <DataTable
-            empty="No cash advances for this subcontractor yet."
-            headers={["Reference", "Date", "Amount", "Balance", "Deduction", "Status", "Notes", "Action"]}
-            rows={selectedAdvances.map((advance) => [
-              advance.advance_id,
-              advance.date_granted,
-              currency.format(Number(advance.amount)),
-              <strong className="subcon-net-value" key={`${advance.id}-balance`}>{currency.format(Number(advance.balance))}</strong>,
-              advance.deduction_mode === "per_billing"
-                ? `${currency.format(Number(advance.deduction_per_billing))} / billing`
-                : "Full paid from payout",
-              <StatusBadge key={`${advance.id}-status`} status={advance.status} />,
-              advance.notes || "-",
-              <button className="secondary-button compact" key={`${advance.id}-edit`} onClick={() => editAdvance(advance)} type="button"><Pencil size={14} /> Edit</button>,
-            ])}
-          />
-        </div>
-      )}
-    </>
-  );
-}
+          </section>
+        )}
 
-function KpiCard({ emphasis, icon, label, value }: { emphasis?: boolean; icon: ReactNode; label: string; value: string }) {
-  return (
-    <div className={emphasis ? "subcon-kpi-card emphasis" : "subcon-kpi-card"}>
-      <div className="subcon-kpi-icon">{icon}</div>
-      <span>{label}</span>
-      <strong>{value}</strong>
+        {tab === "billing" && (
+          <section className="emp-content-card">
+            <DataTable
+              empty="No billing rows for this subcontractor yet."
+              headers={["Period", "Tickets", "Disputed", "Billable", "Gross billed", "Split", "Net payable", "Payout"]}
+              onRowClick={(index) => onOpenBillingRow(latestBillingRows[index])}
+              rows={latestBillingRows.map((row) => {
+                const payment = paymentByItemId.get(row.id);
+                return [
+                  `${monthNames[row.billing_month - 1]} ${row.billing_year} · ${billingPeriodLabel(row.billing_period)}`,
+                  `${row.install_tickets + row.repair_tickets} (I:${row.install_tickets} R:${row.repair_tickets})`,
+                  row.disputed_install + row.disputed_repair,
+                  row.billable_tickets,
+                  currency.format(row.billing_amount),
+                  `${100 - row.payable_pct}% collection · ${row.payable_pct}% payable`,
+                  <strong className="subcon-net-value" key={`${row.id}-net`}>{currency.format(row.payable_amount)}</strong>,
+                  payment
+                    ? <StatusBadge key={`${row.id}-status`} status={payment.status} />
+                    : <span className="subcon-missing-payment"><AlertTriangle size={14} /> Missing payout</span>,
+                ];
+              })}
+            />
+          </section>
+        )}
+
+        {tab === "payouts" && (
+          <section className="emp-content-card">
+            <DataTable
+              empty="No payout records yet."
+              headers={["Period", "Net amount", "Due date", "Status", "Paid date", "Notes", "Action"]}
+              rows={subconPayments.map((payment) => [
+                payment.billing_month != null
+                  ? `${monthNames[payment.billing_month - 1]} ${payment.billing_year} · ${billingPeriodLabel(payment.billing_period!)}`
+                  : payment.notes || "—",
+                <strong className="subcon-net-value" key={`${payment.id}-net`}>{currency.format(payment.amount)}</strong>,
+                payment.due_date,
+                <StatusBadge key={`${payment.id}-status`} status={payment.status} />,
+                payment.status === "paid" ? payment.updated_at.slice(0, 10) : "—",
+                payment.notes || "—",
+                payment.status === "pending"
+                  ? <button className="secondary-button compact" key={`${payment.id}-action`} onClick={() => void onMarkPaymentPaid(payment)} type="button">Mark paid</button>
+                  : "—",
+              ])}
+            />
+          </section>
+        )}
+
+        {tab === "advances" && (
+          <section className="emp-content-card">
+            <div className="page-stack">
+              <form className="employee-advance-form" onSubmit={saveAdvance}>
+                <div className="employee-advance-selected-employee">
+                  <span>{editingAdvance ? "Edit cash advance" : "New cash advance"}</span>
+                  <strong>{selected.name}</strong>
+                  {editingAdvance && (
+                    <button aria-label="Cancel editing cash advance" onClick={() => {
+                      setEditingAdvance(null);
+                      setAdvanceForm(emptySubcontractorAdvanceForm(selected.id));
+                    }} type="button">
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+                <label>
+                  Date Granted *
+                  <input required type="date" value={advanceForm.date_granted} onChange={(event) => setAdvanceForm({ ...advanceForm, date_granted: event.target.value })} />
+                </label>
+                <MoneyField label="Amount *" onChange={(amountValue) => setAdvanceForm({ ...advanceForm, amount: amountValue })} required value={advanceForm.amount} />
+                <label>
+                  Deduction Method
+                  <select value={advanceForm.deduction_mode} onChange={(event) => setAdvanceForm({ ...advanceForm, deduction_mode: event.target.value as SubcontractorAdvance["deduction_mode"] })}>
+                    <option value="full_payout">Full paid from payout</option>
+                    <option value="per_billing">Per billing deduction</option>
+                  </select>
+                </label>
+                <MoneyField
+                  disabled={advanceForm.deduction_mode !== "per_billing"}
+                  label="Deduction Per Billing"
+                  onChange={(value) => setAdvanceForm({ ...advanceForm, deduction_per_billing: value })}
+                  required={advanceForm.deduction_mode === "per_billing"}
+                  value={advanceForm.deduction_per_billing}
+                />
+                <label>
+                  Status
+                  <select value={advanceForm.status} onChange={(event) => setAdvanceForm({ ...advanceForm, status: event.target.value as SubcontractorAdvance["status"] })}>
+                    <option value="active">Active</option>
+                    <option value="completed">Completed</option>
+                    <option value="archived">Archived</option>
+                  </select>
+                </label>
+                <label className="employee-advance-form-wide">
+                  Notes
+                  <textarea placeholder="Purpose, release details, or reminders..." value={advanceForm.notes} onChange={(event) => setAdvanceForm({ ...advanceForm, notes: event.target.value })} />
+                </label>
+                <div className="employee-advance-form-actions">
+                  <button className="secondary-button" onClick={() => {
+                    setEditingAdvance(null);
+                    setAdvanceForm(emptySubcontractorAdvanceForm(selected.id));
+                  }} type="button">Clear</button>
+                  <button className="primary-button" disabled={advanceBusy} type="submit">{advanceBusy ? "Saving..." : editingAdvance ? "Update advance" : "Save cash advance"}</button>
+                </div>
+              </form>
+              <DataTable
+                empty="No cash advances for this subcontractor yet."
+                headers={["Reference", "Date", "Amount", "Balance", "Deduction", "Status", "Notes", "Action"]}
+                rows={selectedAdvances.map((advance) => [
+                  advance.advance_id,
+                  advance.date_granted,
+                  currency.format(Number(advance.amount)),
+                  <strong className="subcon-net-value" key={`${advance.id}-balance`}>{currency.format(Number(advance.balance))}</strong>,
+                  advance.deduction_mode === "per_billing"
+                    ? `${currency.format(Number(advance.deduction_per_billing))} / billing`
+                    : "Full paid from payout",
+                  <StatusBadge key={`${advance.id}-status`} status={advance.status} />,
+                  advance.notes || "-",
+                  <button className="secondary-button compact" key={`${advance.id}-edit`} onClick={() => editAdvance(advance)} type="button"><Pencil size={14} /> Edit</button>,
+                ])}
+              />
+            </div>
+          </section>
+        )}
+      </div>
     </div>
   );
 }
@@ -902,29 +1016,34 @@ function SubcontractorProfileModal({
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(event) => event.stopPropagation()}>
+      <div className="modal billing-form-modal subcon-form-modal" onClick={(event) => event.stopPropagation()}>
         <div className="modal-header">
-          <h3>{initial ? "Edit subcontractor" : "Add subcontractor"}</h3>
+          <h3>{initial ? "Edit" : "Add"} Subcontractor</h3>
           <button onClick={onClose} type="button" aria-label="Close"><X size={18} /></button>
         </div>
-        <form className="form-grid" onSubmit={handleSubmit} style={{ padding: 20 }}>
-          <label className="full">
-            Name
-            <input value={values.name} onChange={(event) => setValues((current) => ({ ...current, name: event.target.value }))} required />
-          </label>
-          <MoneyField label="Installation rate (PHP)" value={values.installation_rate} onChange={(value) => setValues((current) => ({ ...current, installation_rate: value }))} required />
-          <MoneyField label="Repair rate (PHP)" value={values.repair_rate} onChange={(value) => setValues((current) => ({ ...current, repair_rate: value }))} required />
-          <label>
-            Payable % (default 30)
-            <input max="100" min="0" type="number" value={values.payable_pct} onChange={(event) => setValues((current) => ({ ...current, payable_pct: event.target.value }))} required />
-          </label>
-          <label>
-            Collection % (derived)
-            <input disabled type="number" value={100 - (Number(values.payable_pct) || 0)} />
-          </label>
-          <div className="form-actions full">
-            <button className="secondary-button" onClick={onClose} type="button">Cancel</button>
-            <button className="primary-button" disabled={busy} type="submit">{busy ? "Saving..." : initial ? "Update" : "Add"}</button>
+        <form
+          className="billing-form-body"
+          onSubmit={handleSubmit}
+        >
+          <div className="billing-form-fields subcon-form-fields">
+            <label>
+              Name
+              <input value={values.name} onChange={(event) => setValues((current) => ({ ...current, name: event.target.value }))} required />
+            </label>
+            <MoneyField label="Installation rate (PHP)" value={values.installation_rate} onChange={(value) => setValues((current) => ({ ...current, installation_rate: value }))} required />
+            <MoneyField label="Repair rate (PHP)" value={values.repair_rate} onChange={(value) => setValues((current) => ({ ...current, repair_rate: value }))} required />
+            <label>
+              Payable % (default 30)
+              <input max="100" min="0" type="number" value={values.payable_pct} onChange={(event) => setValues((current) => ({ ...current, payable_pct: event.target.value }))} required />
+            </label>
+            <label>
+              Collection % (derived)
+              <input disabled type="number" value={100 - (Number(values.payable_pct) || 0)} />
+            </label>
+          </div>
+          <div className="form-actions">
+            <button className="billing-btn outline" onClick={onClose} type="button">Cancel</button>
+            <button className="billing-btn primary" disabled={busy} type="submit">{busy ? "Saving..." : initial ? "Update" : "Add"}</button>
           </div>
         </form>
       </div>

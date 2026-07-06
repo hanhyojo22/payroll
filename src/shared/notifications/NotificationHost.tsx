@@ -1,7 +1,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { AlertTriangle, CheckCircle2, HelpCircle, Info, X, XCircle } from "lucide-react";
 import { dismissToast, getSnapshot, resolveConfirm, subscribe } from "./notificationStore";
-import type { ToastType } from "./notificationStore";
+import type { ToastItem, ToastType } from "./notificationStore";
 
 const TOAST_ICONS: Record<ToastType, JSX.Element> = {
   success: <CheckCircle2 size={18} />,
@@ -10,9 +10,29 @@ const TOAST_ICONS: Record<ToastType, JSX.Element> = {
   info: <Info size={18} />,
 };
 
+function ToastStack({ className, toasts }: { className: string; toasts: ToastItem[] }) {
+  if (toasts.length === 0) return null;
+
+  return (
+    <div className={className}>
+      {toasts.map((toast) => (
+        <div key={toast.id} className={`toast toast-${toast.type}`} role={toast.type === "error" ? "alert" : "status"}>
+          {TOAST_ICONS[toast.type]}
+          <p>{toast.message}</p>
+          <button aria-label="Dismiss notification" onClick={() => dismissToast(toast.id)} type="button">
+            <X size={14} />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function NotificationHost() {
   const state = useSyncExternalStore(subscribe, getSnapshot);
   const confirmRequest = state.confirmRequest;
+  const successInfoToasts = state.toasts.filter((toast) => toast.type === "success" || toast.type === "info");
+  const attentionToasts = state.toasts.filter((toast) => toast.type === "warning" || toast.type === "error");
 
   useEffect(() => {
     if (!confirmRequest) return;
@@ -26,17 +46,8 @@ export function NotificationHost() {
 
   return (
     <>
-      <div className="toast-stack">
-        {state.toasts.map((toast) => (
-          <div key={toast.id} className={`toast toast-${toast.type}`} role={toast.type === "error" ? "alert" : "status"}>
-            {TOAST_ICONS[toast.type]}
-            <p>{toast.message}</p>
-            <button aria-label="Dismiss notification" onClick={() => dismissToast(toast.id)} type="button">
-              <X size={14} />
-            </button>
-          </div>
-        ))}
-      </div>
+      <ToastStack className="toast-stack toast-stack-top-right toast-stack-success-info" toasts={successInfoToasts} />
+      <ToastStack className="toast-stack toast-stack-top-center toast-stack-attention" toasts={attentionToasts} />
 
       {confirmRequest && (
         <div className="modal-backdrop" onClick={() => resolveConfirm(confirmRequest.id, false)} role="presentation">

@@ -10,7 +10,7 @@ import {
 import { netPay, normalizeTicketCount, ticketGrossPay } from "../../domain/tickets";
 import { isOfflineLikeError } from "../../lib/offlineSync";
 import { supabase } from "../../supabase";
-import { FormActions, Modal, TextField } from "../../shared/components/FormLayout";
+import { Modal, TextField } from "../../shared/components/FormLayout";
 import { DataTable } from "../../shared/components/DataTable";
 import { PageHeader, RecordTitle, Toolbar } from "../../shared/components/PageLayout";
 import { ensurePayrollSettings, savePayrollSettings } from "./payrollRepository";
@@ -359,6 +359,12 @@ export function PayrollFeature({
       return;
     }
 
+    const confirmed = await NotificationService.showConfirm({
+      title: "Generate payroll",
+      message: `Generate payroll for ${monthNames[periodMonth - 1]} ${periodYear} (${payPeriod === "first_half" ? "1st - 15th" : "16th - End"})? This creates payroll items for ${activeTeamEmployees.length} active employee${activeTeamEmployees.length === 1 ? "" : "s"}.`,
+    });
+    if (!confirmed) return;
+
     const runPayload = {
       user_id: userId,
       period_month: Number(values.period_month),
@@ -626,6 +632,11 @@ export function PayrollFeature({
 
   async function addMissingEmployees() {
     if (!supabase || !selectedRun || missingEmployees.length === 0) return;
+    const confirmed = await NotificationService.showConfirm({
+      title: "Add missing employees",
+      message: `Add ${missingEmployees.length} missing employee${missingEmployees.length === 1 ? "" : "s"} to this payroll run?`,
+    });
+    if (!confirmed) return;
     const resolvedPayrollSettings = await resolvePayrollSettings();
     if (!resolvedPayrollSettings) {
       return;
@@ -745,6 +756,11 @@ export function PayrollFeature({
       NotificationService.showError("Connect to the internet to apply payroll deductions to this payroll run.");
       return;
     }
+    const confirmed = await NotificationService.showConfirm({
+      title: "Apply deductions",
+      message: `Apply advance deductions to ${itemsNeedingPayrollDeductions.length} payroll item${itemsNeedingPayrollDeductions.length === 1 ? "" : "s"}?`,
+    });
+    if (!confirmed) return;
 
     for (const { item, patch } of itemsNeedingPayrollDeductions) {
       const { error } = await supabase.from("payroll_run_items").update(patch.payload).eq("id", item.id);
@@ -763,6 +779,31 @@ export function PayrollFeature({
     }
 
     NotificationService.showSuccess(`Applied payroll deductions to ${itemsNeedingPayrollDeductions.length} payroll item${itemsNeedingPayrollDeductions.length === 1 ? "" : "s"}.`);
+    await onChange();
+  }
+
+  async function markAllPaid() {
+    if (!supabase || !selectedRun || pendingItems.length === 0) return;
+    if (!navigator.onLine) {
+      NotificationService.showError("Connect to the internet to mark all payroll items as paid.");
+      return;
+    }
+    const confirmed = await NotificationService.showConfirm({
+      title: "Pay all",
+      message: `Mark all ${pendingItems.length} pending payroll item${pendingItems.length === 1 ? "" : "s"} as paid?`,
+    });
+    if (!confirmed) return;
+
+    const paidDate = todayKey();
+    for (const item of pendingItems) {
+      const { error } = await supabase.from("payroll_run_items").update({ status: "paid", paid_date: paidDate }).eq("id", item.id);
+      if (error) {
+        NotificationService.showError(friendlyError(error));
+        return;
+      }
+    }
+
+    NotificationService.showSuccess(`Marked ${pendingItems.length} payroll item${pendingItems.length === 1 ? "" : "s"} as paid.`);
     await onChange();
   }
 
@@ -837,6 +878,15 @@ export function PayrollFeature({
         </div>
       )}
 
+      {selectedRun && pendingItems.length > 0 && (
+        <div className="payroll-bulk-bar">
+          <span className="payroll-bulk-count">{pendingItems.length} pending payroll item{pendingItems.length === 1 ? "" : "s"}</span>
+          <button className="primary-button compact" onClick={() => void markAllPaid()} type="button">
+            <CheckCircle2 size={14} /> Pay all
+          </button>
+        </div>
+      )}
+
       {selectedRun ? (
         <PayrollItemsTable employees={employees} items={allItems} onUpdate={updateItem} />
       ) : (
@@ -870,12 +920,33 @@ function PayrollItemsTable({
     await onUpdate(item, { status: "paid", paid_date: todayKey() });
   }
 
+  async function handleMarkPending(item: PayrollRunItem) {
+    const confirmed = await NotificationService.showConfirm({
+      title: "Mark as pending",
+      message: "Mark this payroll item as pending? This reverts it to unpaid.",
+    });
+    if (!confirmed) return;
+    await onUpdate(item, { status: "pending", paid_date: null });
+  }
+
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "paid">("pending");
+  const [payrollPage, setPayrollPage] = useState(1);
 
   const visibleItems = items
     .filter((i) => statusFilter === "all" || i.status === statusFilter)
     .filter((i) => `${i.employee_name} ${i.position_name}`.toLowerCase().includes(query.toLowerCase()));
+
+  useEffect(() => {
+    setPayrollPage(1);
+  }, [query, statusFilter]);
+
+  const PAYROLL_ITEMS_PAGE_SIZE = 10;
+  const payrollPageCount = Math.max(1, Math.ceil(visibleItems.length / PAYROLL_ITEMS_PAGE_SIZE));
+  const safePayrollPage = Math.min(payrollPage, payrollPageCount);
+  const payrollPageStart = (safePayrollPage - 1) * PAYROLL_ITEMS_PAGE_SIZE;
+  const payrollPageEnd = Math.min(payrollPageStart + PAYROLL_ITEMS_PAGE_SIZE, visibleItems.length);
+  const paginatedItems = visibleItems.slice(payrollPageStart, payrollPageEnd);
 
   const employeeCodeMap = useMemo(() => {
     const sorted = [...employees].sort((a, b) => a.created_at.localeCompare(b.created_at));
@@ -920,8 +991,8 @@ function PayrollItemsTable({
       <DataTable
         empty="No payroll items match the current filter."
         headers={["No.", "Employee ID", "Employee", "Pay Basis", "Gross", "Deductions", "Net", "Status", "Actions"]}
-        rows={visibleItems.map((item, index) => [
-          index + 1,
+        rows={paginatedItems.map((item, index) => [
+          payrollPageStart + index + 1,
           empCode(item.employee_id ?? null),
           <div key="employee" className="employee-list-identity">
             <EmpAvatar employees={employees} employeeId={item.employee_id ?? null} employeeName={item.employee_name} />
@@ -948,13 +1019,34 @@ function PayrollItemsTable({
                 <CheckCircle2 size={16} />
               </button>
             ) : (
-              <button aria-label="Mark pending" onClick={() => onUpdate(item, { status: "pending", paid_date: null })} title="Mark pending" type="button">
+              <button aria-label="Mark pending" onClick={() => void handleMarkPending(item)} title="Mark pending" type="button">
                 <CalendarClock size={16} />
               </button>
             )}
           </div>,
         ])}
       />
+      {visibleItems.length > PAYROLL_ITEMS_PAGE_SIZE && (
+        <div className="attendance-footer">
+          <span>
+            Showing {payrollPageStart + 1} to {payrollPageEnd} of {visibleItems.length} payroll items
+          </span>
+          <div>
+            <button disabled={safePayrollPage === 1} onClick={() => setPayrollPage((page) => Math.max(1, page - 1))} type="button">{"<"}</button>
+            {Array.from({ length: payrollPageCount }, (_, index) => index + 1).map((page) => (
+              <button
+                className={page === safePayrollPage ? "active" : undefined}
+                key={page}
+                onClick={() => setPayrollPage(page)}
+                type="button"
+              >
+                {page}
+              </button>
+            ))}
+            <button disabled={safePayrollPage === payrollPageCount} onClick={() => setPayrollPage((page) => Math.min(payrollPageCount, page + 1))} type="button">{">"}</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1260,32 +1352,37 @@ function PayrollRunForm({
   }
 
   return (
-    <Modal onClose={onClose} title="Generate payroll">
-      <form className="form-grid" onSubmit={handleSubmit}>
+    <Modal className="billing-form-modal payroll-run-modal" onClose={onClose} title="Generate payroll">
+      <form className="billing-form-body" onSubmit={handleSubmit}>
+        <div className="billing-form-fields payroll-run-form-fields">
+          <label>
+            Payroll month
+            <select value={values.period_month} onChange={(event) => setValues({ ...values, period_month: event.target.value })}>
+              {monthNames.map((month, index) => (
+                <option key={month} value={index + 1}>
+                  {month}
+                </option>
+              ))}
+            </select>
+          </label>
+          <TextField label="Payroll year" max="2200" min="1900" onChange={(period_year) => setValues({ ...values, period_year })} required type="number" value={values.period_year} />
+          <label>
+            Pay period
+            <select value={values.pay_period} onChange={(event) => setValues({ ...values, pay_period: event.target.value as PayrollRunFormValues["pay_period"] })}>
+              <option value="first_half">First half</option>
+              <option value="second_half">Second half</option>
+            </select>
+          </label>
+          <TextField label="Generated date" onChange={(generated_date) => setValues({ ...values, generated_date })} required type="date" value={values.generated_date} />
+        </div>
         <label>
-          Payroll month
-          <select value={values.period_month} onChange={(event) => setValues({ ...values, period_month: event.target.value })}>
-            {monthNames.map((month, index) => (
-              <option key={month} value={index + 1}>
-                {month}
-              </option>
-            ))}
-          </select>
-        </label>
-        <TextField label="Payroll year" max="2200" min="1900" onChange={(period_year) => setValues({ ...values, period_year })} required type="number" value={values.period_year} />
-        <label>
-          Pay period
-          <select value={values.pay_period} onChange={(event) => setValues({ ...values, pay_period: event.target.value as PayrollRunFormValues["pay_period"] })}>
-            <option value="first_half">First half</option>
-            <option value="second_half">Second half</option>
-          </select>
-        </label>
-        <TextField label="Generated date" onChange={(generated_date) => setValues({ ...values, generated_date })} required type="date" value={values.generated_date} />
-        <label className="full">
           Notes
           <textarea rows={3} value={values.notes} onChange={(event) => setValues({ ...values, notes: event.target.value })} />
         </label>
-        <FormActions busy={busy} onClose={onClose} />
+        <div className="form-actions">
+          <button className="billing-btn outline" onClick={onClose} type="button">Cancel</button>
+          <button className="billing-btn primary" disabled={busy} type="submit">{busy ? "Generating..." : "Generate payroll"}</button>
+        </div>
       </form>
     </Modal>
   );

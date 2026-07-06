@@ -166,6 +166,8 @@ export type PaymentLedgerRow = {
   status: string;
   expenseId: string | null;
   paymentReminderId: string | null;
+  expenseAmount: number | null;
+  expenseFrequency: ExpenseFrequency | null;
 };
 
 export type CollectionReminder = {
@@ -235,6 +237,7 @@ export type Employee = {
   address: string;
   profile_photo_url: string;
   hire_date: string;
+  date_of_birth: string;
   status: EmployeeStatus;
   wage_category: EmployeeWageCategory;
   installation_rate?: number;
@@ -249,6 +252,7 @@ export type Employee = {
   withholding_tax: number;
   tin_number: string;
   gender: string;
+  civil_status: string;
   emergency_contact_name: string;
   emergency_contact_number: string;
   emergency_contact_relation: string;
@@ -519,6 +523,7 @@ export type BillingRecord = {
   collectibles_amount: number;
   collection_id: string | null;
   collectibles_collection_id: string | null;
+  due_date: string;
   subcon_items: BillingSubconItem[];
   notes: string;
   created_at: string;
@@ -528,6 +533,7 @@ export type BillingRecord = {
 export type BillingFormValues = {
   billing_month: string;
   billing_year: string;
+  due_date: string;
   billing_period: BillingPeriod;
   install_tickets: string;
   repair_tickets: string;
@@ -608,9 +614,11 @@ export type EmployeeFormValues = {
   address: string;
   profile_photo_url: string;
   hire_date: string;
+  date_of_birth: string;
   status: EmployeeStatus;
   wage_category: EmployeeWageCategory;
   gender: string;
+  civil_status: string;
   monthly_salary: string;
   sss_number: string;
   philhealth_number: string;
