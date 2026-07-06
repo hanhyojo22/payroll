@@ -1,7 +1,7 @@
 import type { ResourceKey } from "../types";
 
 export type PendingMutationStatus = "pending" | "failed";
-export type PendingMutationOperation = "insert" | "update" | "delete" | "upsert" | "payroll_group" | "payroll_items_group" | "billing_group" | "collection_payment" | "collection_payment_void" | "expense_payment_group";
+export type PendingMutationOperation = "insert" | "update" | "delete" | "upsert" | "payroll_group" | "payroll_items_group" | "billing_group" | "collection_payment" | "collection_payment_void" | "expense_payment_group" | "payment_reminder_payment_group";
 
 export type PendingMutation = {
   id: string;

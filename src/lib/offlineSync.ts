@@ -127,6 +127,19 @@ async function applyMutation(supabase: SupabaseClient, mutation: PendingMutation
       if (expenseResult.error) return expenseResult;
       return { error: null };
     }
+    case "payment_reminder_payment_group": {
+      const payload = mutation.payload as {
+        paymentPayload: Record<string, unknown>;
+        reminderUpdate: { id: string; payload: Record<string, unknown> } | null;
+      };
+      const paymentResult = await supabase.from("payment_reminder_payments").insert(payload.paymentPayload);
+      if (paymentResult.error) return paymentResult;
+      if (payload.reminderUpdate) {
+        const reminderResult = await supabase.from("payment_reminders").update(payload.reminderUpdate.payload).eq("id", payload.reminderUpdate.id);
+        if (reminderResult.error) return reminderResult;
+      }
+      return { error: null };
+    }
     case "collection_payment":
       return supabase.rpc("record_collection_payment", mutation.payload as {
         collection_record_id: string;
