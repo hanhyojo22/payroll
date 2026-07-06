@@ -745,8 +745,11 @@ git commit -m "feat: add offline sync support for payout payment recording"
 
 ### Task 8: UI — Payouts tab Record Payment flow
 
+**Amendment (found during Task 5 implementation):** `src/features/billing/BillingFeature.tsx` has its OWN independent "Mark paid" button for subcontractor payouts (in the Billing view's expanded billing-record row, separate from the Subcontractor Profile Payouts tab this feature was designed around) — it also called the now-removed `markSubconPaymentReminderPaid`. Decision: keep it as a one-click convenience shortcut, but back it with a real payment record instead of a bare status flip — it records a single payment for the full remaining balance (today's date, method "cash", no form) via the same `recordPaymentReminderPayment` API, then marks the payout complete. This task now also fixes that call site.
+
 **Files:**
 - Modify: `src/features/subcontractors/SubcontractorsFeature.tsx` (imports, remove old mark-paid logic, add new handlers and components)
+- Modify: `src/features/billing/BillingFeature.tsx:35` (import), `:664` (call site), `:832-849` (`markPayoutPaid` function)
 
 **Interfaces:**
 - Consumes: everything produced by Tasks 3, 5, 7 (`paymentReminderDisplayStatus`, `paymentReminderPaymentsTotal`, `paymentReminderRemainingBalance`, `nextPaymentReminderCompletionState`, `validatePaymentReminderPayment`, `paymentMethodLabel` from `../../domain/paymentReminders`; `recordPaymentReminderPayment`, `deletePaymentReminderPayment`, `updatePaymentReminderCompletion` from `../billing/billingRepository`; `"payment_reminder_payment_group"` operation).
@@ -1315,20 +1318,88 @@ function SummaryCard({ label, tone, value }: { label: string; tone?: "success"; 
 }
 ```
 
-- [ ] **Step 12: Type-check**
+- [ ] **Step 12: Fix `BillingFeature.tsx`'s "Mark paid" button**
+
+Replace the `billingRepository` import (`src/features/billing/BillingFeature.tsx:32-40`):
+
+```ts
+import {
+  deleteBillingRecord,
+  ensureBillingSettings,
+  recordPaymentReminderPayment,
+  saveBillingRecord,
+  saveBillingSettings,
+  saveBillingSubconItems,
+  saveSubconPaymentReminders,
+  updatePaymentReminderCompletion,
+} from "./billingRepository";
+```
+
+Add a new import for the remaining-balance helper, immediately after the existing domain import (`src/features/billing/BillingFeature.tsx:3-9`):
+
+```ts
+import { paymentReminderRemainingBalance } from "../../domain/paymentReminders";
+```
+
+Replace the `markPayoutPaid` function (`src/features/billing/BillingFeature.tsx:832-849`):
+
+```ts
+async function markPayoutPaid(
+  payment: PaymentReminder,
+  userId: string,
+  onChange: () => Promise<void>,
+) {
+  if (!supabase) return;
+  const remainingBalance = paymentReminderRemainingBalance(payment, payment.payments);
+  const confirmed = await NotificationService.showConfirm({
+    title: "Mark payout as paid",
+    message: `Record a full payment of ${currency.format(remainingBalance)} for ${payment.title}?`,
+  });
+  if (!confirmed) return;
+  const paymentResult = await recordPaymentReminderPayment(supabase, userId, payment.id, {
+    amount: remainingBalance,
+    payment_date: todayKey(),
+    payment_method: "cash",
+    reference_number: "",
+    notes: "",
+  });
+  if (paymentResult.error) {
+    NotificationService.showError((paymentResult.error as { message?: string }).message ?? "Failed to record the payment.");
+    return;
+  }
+  const completionResult = await updatePaymentReminderCompletion(supabase, payment.id, "paid");
+  if (completionResult.error) {
+    NotificationService.showError((completionResult.error as { message?: string }).message ?? "Payment recorded, but failed to mark the payout complete.");
+    await onChange();
+    return;
+  }
+  NotificationService.showSuccess(`${payment.title} payout marked paid.`);
+  await onChange();
+}
+```
+
+Update the call site (`src/features/billing/BillingFeature.tsx:664`):
+
+```tsx
+                                            <button onClick={() => void markPayoutPaid(payment, userId, onChange)} type="button">
+```
+
+`userId` is already a destructured prop of the enclosing `BillingFeature` component (`src/features/billing/BillingFeature.tsx:81`), so it's in scope at this call site without any new prop threading. `currency` and `todayKey` are already imported in this file (lines 16-17).
+
+- [ ] **Step 13: Type-check**
 
 Run: `npx tsc --noEmit`
 Expected: No errors.
 
-- [ ] **Step 13: Run the domain test suite**
+- [ ] **Step 14: Run the domain test suite**
 
 Run: `npm test`
 Expected: PASS (all domain tests, including the ones from Tasks 3 and 4).
 
-- [ ] **Step 14: Commit**
+- [ ] **Step 15: Commit**
 
 ```bash
-git add src/features/subcontractors/SubcontractorsFeature.tsx
+git add src/features/subcontractors/SubcontractorsFeature.tsx src/features/billing/BillingFeature.tsx
 git commit -m "feat: replace payout Mark Paid with a Record Payment flow"
 ```
 
@@ -1363,6 +1434,7 @@ Run: `npm run dev`, then in the browser:
 6. From the details modal, delete the most recent payment → confirm the payout reverts to "partial" and "Record Payment" reappears.
 7. Confirm the header's "Record payout payment" button opens the form pre-filled with the correct remaining balance for the latest outstanding payout, and is disabled when there's no net pending amount.
 8. Confirm the "Billing & Net" tab's payout status badge reflects partial/paid correctly.
+9. Go to Billing → expand a billing record with a pending subcontractor payout row → click "Mark paid" → confirm it records a full payment and flips the row to "paid" (check back in the Subcontractor Profile Payouts tab that a payment history entry now exists for it, dated today, method "cash").
 
 - [ ] **Step 5: Report results**
 
