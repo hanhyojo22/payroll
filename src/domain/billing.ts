@@ -187,7 +187,7 @@ export function buildSubcontractorPaymentPayloads(args: {
   items: BillingSubconItem[];
   existingPayments?: PaymentReminder[];
   monthName: string;
-}): Array<Omit<PaymentReminder, "created_at" | "updated_at">> {
+}): Array<Omit<PaymentReminder, "created_at" | "updated_at" | "payments">> {
   return buildSubcontractorPayoutArtifacts(args).payoutPayloads;
 }
 
@@ -204,7 +204,7 @@ export function buildSubcontractorPayoutArtifacts(args: {
   monthName: string;
   subcontractorAdvances?: SubcontractorAdvance[];
 }): {
-  payoutPayloads: Array<Omit<PaymentReminder, "created_at" | "updated_at">>;
+  payoutPayloads: Array<Omit<PaymentReminder, "created_at" | "updated_at" | "payments">>;
   advanceUpdates: SubcontractorAdvanceUpdate[];
 } {
   const paymentByItemId = new Map(

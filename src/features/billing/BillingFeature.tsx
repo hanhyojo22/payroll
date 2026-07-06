@@ -297,7 +297,7 @@ export function BillingFeature({
     billingPayload: Omit<BillingRecord, "created_at" | "updated_at" | "invoice_no">,
     collectionPayload: Record<string, unknown>,
     collectiblesCollectionPayload: Record<string, unknown>,
-    payoutPayloads: Array<Omit<PaymentReminder, "created_at" | "updated_at">>,
+    payoutPayloads: Array<Omit<PaymentReminder, "created_at" | "updated_at" | "payments">>,
     advanceUpdates: Array<{ id: string; payload: Pick<SubcontractorAdvance, "balance" | "status"> }>,
     isUpdate: boolean,
   ) {
