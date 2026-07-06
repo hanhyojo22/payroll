@@ -155,7 +155,7 @@ export async function loadDashboardSummary(supabase: SupabaseClient) {
       "Open payment reminders",
       supabase
         .from("payment_reminders")
-        .select("id,user_id,title,type,amount,due_date,status,notes,subcontractor_id,billing_subcon_item_id,billing_month,billing_year,billing_period,created_at,updated_at")
+        .select("id,user_id,title,type,amount,due_date,status,notes,subcontractor_id,billing_subcon_item_id,billing_month,billing_year,billing_period,created_at,updated_at,payments:payment_reminder_payments(id,user_id,payment_reminder_id,amount,payment_date,payment_method,reference_number,notes,created_at)")
         .neq("status", "paid")
         .lte("due_date", today)
         .order("due_date"),
@@ -254,7 +254,7 @@ export async function loadPayments(supabase: SupabaseClient) {
     "Payments",
     supabase
       .from("payment_reminders")
-      .select("id,user_id,title,type,amount,due_date,status,notes,subcontractor_id,billing_subcon_item_id,billing_month,billing_year,billing_period,created_at,updated_at")
+      .select("id,user_id,title,type,amount,due_date,status,notes,subcontractor_id,billing_subcon_item_id,billing_month,billing_year,billing_period,created_at,updated_at,payments:payment_reminder_payments(id,user_id,payment_reminder_id,amount,payment_date,payment_method,reference_number,notes,created_at)")
       .order("due_date"),
   );
 }
