@@ -102,6 +102,19 @@ export type PaymentReminder = {
   billing_period: BillingPeriod | null;
   created_at: string;
   updated_at: string;
+  payments: PaymentReminderPayment[];
+};
+
+export type PaymentReminderPayment = {
+  id: string;
+  user_id: string;
+  payment_reminder_id: string;
+  amount: number;
+  payment_date: string;
+  payment_method: CollectionPaymentMethod;
+  reference_number: string;
+  notes: string;
+  created_at: string;
 };
 
 export type ExpenseCategory = {
