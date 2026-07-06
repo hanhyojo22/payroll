@@ -7,6 +7,7 @@ import {
   countSubconTickets,
   countTicketsByType,
 } from "../../domain/billing";
+import { paymentReminderRemainingBalance } from "../../domain/paymentReminders";
 import { isOfflineLikeError } from "../../lib/offlineSync";
 import { supabase } from "../../supabase";
 import { MoneyField } from "../../shared/components/MoneyField";
@@ -32,11 +33,12 @@ import type {
 import {
   deleteBillingRecord,
   ensureBillingSettings,
-  markSubconPaymentReminderPaid,
+  recordPaymentReminderPayment,
   saveBillingRecord,
   saveBillingSettings,
   saveBillingSubconItems,
   saveSubconPaymentReminders,
+  updatePaymentReminderCompletion,
 } from "./billingRepository";
 import { recordReceivablePayment } from "../collections/collectionRepository";
 
@@ -661,7 +663,7 @@ export function BillingFeature({
                                             View account
                                           </button>
                                           {payment?.status === "pending" && (
-                                            <button onClick={() => void markPayoutPaid(payment, onChange)} type="button">
+                                            <button onClick={() => void markPayoutPaid(payment, userId, onChange)} type="button">
                                               Mark paid
                                             </button>
                                           )}
@@ -831,17 +833,31 @@ export function BillingHistoryFeature({
 
 async function markPayoutPaid(
   payment: PaymentReminder,
+  userId: string,
   onChange: () => Promise<void>,
 ) {
   if (!supabase) return;
+  const remainingBalance = paymentReminderRemainingBalance(payment, payment.payments);
   const confirmed = await NotificationService.showConfirm({
     title: "Mark payout as paid",
-    message: `Mark ${payment.title} as paid?`,
+    message: `Record a full payment of ${currency.format(remainingBalance)} for ${payment.title}?`,
   });
   if (!confirmed) return;
-  const result = await markSubconPaymentReminderPaid(supabase, payment.id);
-  if (result.error) {
-    NotificationService.showError((result.error as { message?: string }).message ?? "Failed to mark payout paid.");
+  const paymentResult = await recordPaymentReminderPayment(supabase, userId, payment.id, {
+    amount: remainingBalance,
+    payment_date: todayKey(),
+    payment_method: "cash",
+    reference_number: "",
+    notes: "",
+  });
+  if (paymentResult.error) {
+    NotificationService.showError((paymentResult.error as { message?: string }).message ?? "Failed to record the payment.");
+    return;
+  }
+  const completionResult = await updatePaymentReminderCompletion(supabase, payment.id, "paid");
+  if (completionResult.error) {
+    NotificationService.showError((completionResult.error as { message?: string }).message ?? "Payment recorded, but failed to mark the payout complete.");
+    await onChange();
     return;
   }
   NotificationService.showSuccess(`${payment.title} payout marked paid.`);

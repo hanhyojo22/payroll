@@ -1,11 +1,19 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { AlertTriangle, ArrowLeft, CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, Pencil, Plus, ReceiptText, Ticket, Trash2, Users, WalletCards, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, Eye, Pencil, Plus, ReceiptText, Ticket, Trash2, Users, WalletCards, X } from "lucide-react";
 import {
   billingPeriodLabel,
   buildSubcontractorAccountSummary,
   filterSubcontractorDailyTickets,
 } from "../../domain/billing";
-import { markSubconPaymentReminderPaid, saveSubcontractor } from "../billing/billingRepository";
+import {
+  nextPaymentReminderCompletionState,
+  paymentMethodLabel,
+  paymentReminderDisplayStatus,
+  paymentReminderPaymentsTotal,
+  paymentReminderRemainingBalance,
+  validatePaymentReminderPayment,
+} from "../../domain/paymentReminders";
+import { deletePaymentReminderPayment, recordPaymentReminderPayment, saveSubcontractor, updatePaymentReminderCompletion } from "../billing/billingRepository";
 import { supabase } from "../../supabase";
 import { DataTable } from "../../shared/components/DataTable";
 import { MoneyField } from "../../shared/components/MoneyField";
@@ -13,11 +21,19 @@ import { PageHeader, RecordTitle, Toolbar } from "../../shared/components/PageLa
 import { StatusBadge } from "../../shared/components/StatusBadge";
 import { NotificationService } from "../../shared/notifications/NotificationService";
 import type { QueueOfflineMutation } from "../../shared/types";
-import { currency } from "../../shared/utils/currency";
+import { currency, toNumber } from "../../shared/utils/currency";
 import { monthNames, todayKey } from "../../shared/utils/dates";
-import type { BillingPeriod, BillingRecord, PaymentReminder, SubconDailyTicket, Subcontractor, SubcontractorAdvance, SubcontractorAdvanceFormValues } from "../../types";
+import type { BillingPeriod, BillingRecord, CollectionPaymentMethod, PaymentReminder, PaymentReminderPayment, SubconDailyTicket, Subcontractor, SubcontractorAdvance, SubcontractorAdvanceFormValues } from "../../types";
 
 type AccountTab = "daily" | "billing" | "payouts" | "advances";
+
+type PayoutPaymentFormValues = {
+  amount: string;
+  payment_date: string;
+  payment_method: CollectionPaymentMethod;
+  reference_number: string;
+  notes: string;
+};
 
 function emptySubcontractorAdvanceForm(subcontractorId: string): SubcontractorAdvanceFormValues {
   return {
@@ -141,35 +157,6 @@ export function SubcontractorsFeature({
     await onChange();
   }
 
-  async function markPaymentPaid(payment: PaymentReminder) {
-    if (!supabase) return;
-    const confirmed = await NotificationService.showConfirm({
-      title: "Mark payout as paid",
-      message: `Mark ${payment.title} as paid?`,
-    });
-    if (!confirmed) return;
-    const result = await markSubconPaymentReminderPaid(supabase, payment.id);
-    if (result.error) {
-      NotificationService.showError((result.error as { message?: string }).message ?? "Failed to mark payout paid.");
-      return;
-    }
-    NotificationService.showSuccess(`Marked ${payment.title} payout paid.`);
-    await onChange();
-  }
-
-  async function markLatestPendingPaid() {
-    if (!selected) return;
-    const latestPending = payments
-      .filter((payment) => payment.type === "subcontractor" && payment.subcontractor_id === selected.id && payment.status === "pending")
-      .sort((a, b) =>
-        `${b.billing_year ?? 0}-${String(b.billing_month ?? 0).padStart(2, "0")}-${b.billing_period ?? ""}`.localeCompare(
-          `${a.billing_year ?? 0}-${String(a.billing_month ?? 0).padStart(2, "0")}-${a.billing_period ?? ""}`,
-        ),
-      )[0];
-    if (!latestPending) return;
-    await markPaymentPaid(latestPending);
-  }
-
   return (
     <>
       {selected ? (
@@ -179,8 +166,6 @@ export function SubcontractorsFeature({
           onBack={() => onSelectSubcontractor("")}
           onChange={onChange}
           onEdit={(subcontractor) => { setEditing(subcontractor); setFormOpen(true); }}
-          onMarkLatestPendingPaid={markLatestPendingPaid}
-          onMarkPaymentPaid={markPaymentPaid}
           onOpenBillingRow={setDrawerRow}
           onQueueOfflineMutation={onQueueOfflineMutation}
           payments={payments}
@@ -331,8 +316,6 @@ function SubcontractorDetailsView({
   onArchive,
   onBack,
   onEdit,
-  onMarkLatestPendingPaid,
-  onMarkPaymentPaid,
   onOpenBillingRow,
   onQueueOfflineMutation,
   payments,
@@ -348,8 +331,6 @@ function SubcontractorDetailsView({
   onArchive: (subcontractor: Subcontractor) => Promise<void>;
   onBack: () => void;
   onEdit: (subcontractor: Subcontractor) => void;
-  onMarkLatestPendingPaid: () => Promise<void>;
-  onMarkPaymentPaid: (payment: PaymentReminder) => Promise<void>;
   onOpenBillingRow: (row: BillingRecord["subcon_items"][number] & { billing_month: number; billing_year: number; billing_period: BillingPeriod }) => void;
   onQueueOfflineMutation: QueueOfflineMutation;
   payments: PaymentReminder[];
@@ -370,6 +351,8 @@ function SubcontractorDetailsView({
   const [editingAdvance, setEditingAdvance] = useState<SubcontractorAdvance | null>(null);
   const [advanceForm, setAdvanceForm] = useState<SubcontractorAdvanceFormValues>(() => emptySubcontractorAdvanceForm(selected.id));
   const [advanceBusy, setAdvanceBusy] = useState(false);
+  const [payingPayout, setPayingPayout] = useState<PaymentReminder | null>(null);
+  const [viewingPayout, setViewingPayout] = useState<PaymentReminder | null>(null);
   const calendarRef = useRef<HTMLDivElement>(null);
   const isMatchingPeriod = (value: string) => {
     if (periodFilter === "all") return true;
@@ -486,6 +469,132 @@ function SubcontractorDetailsView({
     await onChange();
   }
 
+  function openLatestPayoutPaymentForm() {
+    const latestOutstanding = payments
+      .filter((payment) => payment.type === "subcontractor" && payment.subcontractor_id === selected.id)
+      .filter((payment) => paymentReminderDisplayStatus(payment, payment.payments) !== "paid")
+      .sort((a, b) =>
+        `${b.billing_year ?? 0}-${String(b.billing_month ?? 0).padStart(2, "0")}-${b.billing_period ?? ""}`.localeCompare(
+          `${a.billing_year ?? 0}-${String(a.billing_month ?? 0).padStart(2, "0")}-${a.billing_period ?? ""}`,
+        ),
+      )[0];
+    if (!latestOutstanding) return;
+    setPayingPayout(latestOutstanding);
+  }
+
+  async function handleRecordPayoutPayment(payment: PaymentReminder, values: PayoutPaymentFormValues) {
+    if (!supabase) return;
+    const amount = toNumber(values.amount);
+    const remainingBalance = paymentReminderRemainingBalance(payment, payment.payments);
+    const validationError = validatePaymentReminderPayment({
+      amount,
+      remainingBalance,
+      paymentDate: values.payment_date,
+      today: todayKey(),
+    });
+    if (validationError) {
+      NotificationService.showError(validationError);
+      return;
+    }
+
+    const paymentId = crypto.randomUUID();
+    const paymentPayload = {
+      amount,
+      payment_date: values.payment_date,
+      payment_method: values.payment_method,
+      reference_number: values.reference_number.trim(),
+      notes: values.notes.trim(),
+    };
+    const newPaymentRecord: PaymentReminderPayment = {
+      id: paymentId, user_id: userId, payment_reminder_id: payment.id, ...paymentPayload, created_at: new Date().toISOString(),
+    };
+    const next = nextPaymentReminderCompletionState(payment, [...payment.payments, newPaymentRecord]);
+    const complete = next.status === "paid";
+
+    if (!navigator.onLine) {
+      await onQueueOfflineMutation({
+        resource: "payments",
+        affectedResources: ["payments"],
+        operation: "payment_reminder_payment_group",
+        table: "payment_reminder_payments",
+        recordId: paymentId,
+        payload: {
+          paymentPayload: { ...paymentPayload, id: paymentId, user_id: userId, payment_reminder_id: payment.id },
+          reminderUpdate: complete ? { id: payment.id, payload: { status: "paid" } } : null,
+        },
+      });
+      setPayingPayout(null);
+      NotificationService.showSuccess("Payment recorded locally. It will sync when online.");
+      return;
+    }
+
+    const paymentResult = await recordPaymentReminderPayment(supabase, userId, payment.id, paymentPayload);
+    if (paymentResult.error) {
+      NotificationService.showError((paymentResult.error as { message?: string }).message ?? "Failed to record the payment.");
+      return;
+    }
+    if (complete) {
+      const completionResult = await updatePaymentReminderCompletion(supabase, payment.id, "paid");
+      if (completionResult.error) {
+        NotificationService.showError((completionResult.error as { message?: string }).message ?? "Payment recorded, but failed to mark the payout complete.");
+        await onChange();
+        return;
+      }
+    }
+    setPayingPayout(null);
+    NotificationService.showSuccess(complete ? "Final payment recorded — payout marked paid." : "Payment recorded.");
+    await onChange();
+  }
+
+  async function handleDeletePayoutPayment(payment: PaymentReminder, paymentRecord: PaymentReminderPayment) {
+    if (!supabase) return;
+    const confirmed = await NotificationService.showConfirm({
+      message: "Delete this recorded payment?",
+      danger: true,
+    });
+    if (!confirmed) return;
+    const remainingPayments = payment.payments.filter((item) => item.id !== paymentRecord.id);
+    const shouldRevert = payment.status === "paid" && nextPaymentReminderCompletionState(payment, remainingPayments).status !== "paid";
+
+    if (!navigator.onLine) {
+      await onQueueOfflineMutation({
+        resource: "payments",
+        affectedResources: ["payments"],
+        operation: "delete",
+        table: "payment_reminder_payments",
+        recordId: paymentRecord.id,
+      });
+      if (shouldRevert) {
+        await onQueueOfflineMutation({
+          resource: "payments",
+          affectedResources: ["payments"],
+          operation: "update",
+          table: "payment_reminders",
+          recordId: payment.id,
+          payload: { status: "pending" },
+        });
+      }
+      NotificationService.showSuccess("Deleted locally. It will sync when online.");
+      return;
+    }
+
+    const deleteResult = await deletePaymentReminderPayment(supabase, paymentRecord.id);
+    if (deleteResult.error) {
+      NotificationService.showError((deleteResult.error as { message?: string }).message ?? "Failed to delete that payment.");
+      return;
+    }
+    if (shouldRevert) {
+      const completionResult = await updatePaymentReminderCompletion(supabase, payment.id, "pending");
+      if (completionResult.error) {
+        NotificationService.showError((completionResult.error as { message?: string }).message ?? "Deleted, but failed to revert the payout status.");
+        await onChange();
+        return;
+      }
+    }
+    NotificationService.showSuccess("Payment deleted.");
+    await onChange();
+  }
+
   function editAdvance(advance: SubcontractorAdvance) {
     setEditingAdvance(advance);
     setAdvanceForm({
@@ -517,19 +626,18 @@ function SubcontractorDetailsView({
         .map((payment) => [payment.billing_subcon_item_id!, payment]),
     );
     const pendingFromPayments = filteredPayments
-      .filter((payment) => payment.status === "pending")
-      .reduce((sum, payment) => sum + payment.amount, 0);
+      .filter((payment) => paymentReminderDisplayStatus(payment, payment.payments) !== "paid")
+      .reduce((sum, payment) => sum + paymentReminderRemainingBalance(payment, payment.payments), 0);
     const pendingFromUntrackedBilling = billingRows
       .filter((row) => !filteredPaymentByItemId.has(row.id))
       .reduce((sum, row) => sum + row.payable_amount, 0);
     const paidThisMonth = filteredPayments
-      .filter((payment) => payment.status === "paid")
-      .reduce((sum, payment) => sum + payment.amount, 0);
+      .reduce((sum, payment) => sum + paymentReminderPaymentsTotal(payment.payments), 0);
 
     return {
       ...summary,
       billingRows,
-      lastPayoutStatus: filteredPayments[0]?.status ?? "none",
+      lastPayoutStatus: filteredPayments[0] ? paymentReminderDisplayStatus(filteredPayments[0], filteredPayments[0].payments) : "none",
       netPending: pendingFromPayments + pendingFromUntrackedBilling,
       paidThisMonth,
       ticketsThisPeriod: filteredTickets.length,
@@ -654,9 +762,9 @@ function SubcontractorDetailsView({
             <button className="secondary-button compact" onClick={() => void onArchive(selected)} type="button">
               {selected.status === "active" ? <><Trash2 size={16} /> Archive</> : <><Plus size={16} /> Restore</>}
             </button>
-            <button className="primary-button compact" disabled={displaySummary.netPending <= 0} onClick={() => void onMarkLatestPendingPaid()} type="button">
+            <button className="primary-button compact" disabled={displaySummary.netPending <= 0} onClick={openLatestPayoutPaymentForm} type="button">
               <CheckCircle2 size={16} />
-              Mark latest payout paid
+              Record payout payment
             </button>
           </div>
         </header>
@@ -865,7 +973,7 @@ function SubcontractorDetailsView({
                   `${100 - row.payable_pct}% collection · ${row.payable_pct}% payable`,
                   <strong className="subcon-net-value" key={`${row.id}-net`}>{currency.format(row.payable_amount)}</strong>,
                   payment
-                    ? <StatusBadge key={`${row.id}-status`} status={payment.status} />
+                    ? <StatusBadge key={`${row.id}-status`} status={paymentReminderDisplayStatus(payment, payment.payments)} />
                     : <span className="subcon-missing-payment"><AlertTriangle size={14} /> Missing payout</span>,
                 ];
               })}
@@ -877,20 +985,29 @@ function SubcontractorDetailsView({
           <section className="emp-content-card">
             <DataTable
               empty="No payout records yet."
-              headers={["Period", "Net amount", "Due date", "Status", "Paid date", "Notes", "Action"]}
-              rows={subconPayments.map((payment) => [
-                payment.billing_month != null
-                  ? `${monthNames[payment.billing_month - 1]} ${payment.billing_year} · ${billingPeriodLabel(payment.billing_period!)}`
-                  : payment.notes || "—",
-                <strong className="subcon-net-value" key={`${payment.id}-net`}>{currency.format(payment.amount)}</strong>,
-                payment.due_date,
-                <StatusBadge key={`${payment.id}-status`} status={payment.status} />,
-                payment.status === "paid" ? payment.updated_at.slice(0, 10) : "—",
-                payment.notes || "—",
-                payment.status === "pending"
-                  ? <button className="secondary-button compact" key={`${payment.id}-action`} onClick={() => void onMarkPaymentPaid(payment)} type="button">Mark paid</button>
-                  : "—",
-              ])}
+              headers={["Period", "Net amount", "Paid", "Remaining", "Due date", "Status", "Notes", "Action"]}
+              rows={subconPayments.map((payment) => {
+                const displayStatus = paymentReminderDisplayStatus(payment, payment.payments);
+                const paidAmount = paymentReminderPaymentsTotal(payment.payments);
+                const remainingBalance = paymentReminderRemainingBalance(payment, payment.payments);
+                return [
+                  payment.billing_month != null
+                    ? `${monthNames[payment.billing_month - 1]} ${payment.billing_year} · ${billingPeriodLabel(payment.billing_period!)}`
+                    : payment.notes || "—",
+                  <strong className="subcon-net-value" key={`${payment.id}-net`}>{currency.format(payment.amount)}</strong>,
+                  currency.format(paidAmount),
+                  currency.format(remainingBalance),
+                  payment.due_date,
+                  <StatusBadge key={`${payment.id}-status`} status={displayStatus} />,
+                  payment.notes || "—",
+                  <div className="billing-row-actions" key={`${payment.id}-action`}>
+                    <button onClick={() => setViewingPayout(payment)} title="View details" type="button"><Eye size={14} /></button>
+                    {displayStatus !== "paid" && (
+                      <button onClick={() => setPayingPayout(payment)} title="Record payment" type="button"><CheckCircle2 size={14} /></button>
+                    )}
+                  </div>,
+                ];
+              })}
             />
           </section>
         )}
@@ -970,6 +1087,21 @@ function SubcontractorDetailsView({
           </section>
         )}
       </div>
+      {payingPayout && (
+        <PayoutPaymentForm
+          onClose={() => setPayingPayout(null)}
+          onSubmit={(values) => handleRecordPayoutPayment(payingPayout, values)}
+          payment={payments.find((item) => item.id === payingPayout.id) ?? payingPayout}
+        />
+      )}
+      {viewingPayout && (
+        <PayoutDetailsModal
+          onClose={() => setViewingPayout(null)}
+          onDeletePayment={(paymentRecord) => handleDeletePayoutPayment(viewingPayout, paymentRecord)}
+          onRecordPayment={() => setPayingPayout(viewingPayout)}
+          payment={payments.find((item) => item.id === viewingPayout.id) ?? viewingPayout}
+        />
+      )}
     </div>
   );
 }
@@ -1047,6 +1179,207 @@ function SubcontractorProfileModal({
           </div>
         </form>
       </div>
+    </div>
+  );
+}
+
+function PayoutPaymentForm({
+  onClose,
+  onSubmit,
+  payment,
+}: {
+  onClose: () => void;
+  onSubmit: (values: PayoutPaymentFormValues) => Promise<void>;
+  payment: PaymentReminder;
+}) {
+  const remainingBalance = paymentReminderRemainingBalance(payment, payment.payments);
+  const [values, setValues] = useState<PayoutPaymentFormValues>({
+    amount: String(remainingBalance),
+    payment_date: todayKey(),
+    payment_method: "cash" as CollectionPaymentMethod,
+    reference_number: "",
+    notes: "",
+  });
+  const [busy, setBusy] = useState(false);
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal billing-form-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <h3>Record Payment</h3>
+            <span>
+              {payment.billing_month != null
+                ? `${monthNames[payment.billing_month - 1]} ${payment.billing_year} · ${billingPeriodLabel(payment.billing_period!)}`
+                : payment.title}
+            </span>
+          </div>
+          <button aria-label="Close" onClick={onClose} type="button"><X size={18} /></button>
+        </div>
+        <form
+          className="billing-form-body"
+          onSubmit={async (event) => { event.preventDefault(); setBusy(true); await onSubmit(values); setBusy(false); }}
+        >
+          <p className="expense-remaining-note">Remaining balance: {currency.format(remainingBalance)}</p>
+          <div className="billing-form-fields">
+            <MoneyField label="Amount" onChange={(amount) => setValues((current) => ({ ...current, amount }))} required value={values.amount} />
+            <label>
+              Payment date
+              <input
+                max={todayKey()}
+                onChange={(event) => setValues((current) => ({ ...current, payment_date: event.target.value }))}
+                required
+                type="date"
+                value={values.payment_date}
+              />
+            </label>
+            <label>
+              Payment method
+              <select
+                onChange={(event) => setValues((current) => ({ ...current, payment_method: event.target.value as CollectionPaymentMethod }))}
+                value={values.payment_method}
+              >
+                <option value="cash">Cash</option>
+                <option value="bank_transfer">Bank transfer</option>
+                <option value="check">Check</option>
+                <option value="e_wallet">E-wallet</option>
+                <option value="card">Card</option>
+                <option value="other">Other</option>
+              </select>
+            </label>
+            <label>
+              Reference number
+              <input
+                onChange={(event) => setValues((current) => ({ ...current, reference_number: event.target.value }))}
+                type="text"
+                value={values.reference_number}
+              />
+            </label>
+          </div>
+          <label>
+            Notes
+            <textarea onChange={(event) => setValues((current) => ({ ...current, notes: event.target.value }))} rows={3} value={values.notes} />
+          </label>
+          <div className="form-actions">
+            <button className="billing-btn outline" onClick={onClose} type="button">Cancel</button>
+            <button className="billing-btn primary" disabled={busy} type="submit">{busy ? "Saving..." : "Record payment"}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function PayoutDetailsModal({
+  onClose,
+  onDeletePayment,
+  onRecordPayment,
+  payment,
+}: {
+  onClose: () => void;
+  onDeletePayment: (paymentRecord: PaymentReminderPayment) => Promise<void>;
+  onRecordPayment: () => void;
+  payment: PaymentReminder;
+}) {
+  const history = [...payment.payments].sort((a, b) => b.payment_date.localeCompare(a.payment_date) || b.created_at.localeCompare(a.created_at));
+  const displayStatus = paymentReminderDisplayStatus(payment, payment.payments);
+  const paidAmount = paymentReminderPaymentsTotal(payment.payments);
+  const remainingBalance = paymentReminderRemainingBalance(payment, payment.payments);
+  const canRecordPayment = displayStatus !== "paid";
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal expense-details-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <h3>{payment.title}</h3>
+            <span>
+              {payment.billing_month != null
+                ? `${monthNames[payment.billing_month - 1]} ${payment.billing_year} · ${billingPeriodLabel(payment.billing_period!)}`
+                : "One-off payout"}
+            </span>
+          </div>
+          <button aria-label="Close" onClick={onClose} type="button"><X size={18} /></button>
+        </div>
+        <div className="expense-details-modal-body">
+          <section className="expense-summary-grid">
+            <SummaryCard label="Net amount" value={payment.amount} />
+            <SummaryCard label="Paid so far" tone="success" value={paidAmount} />
+            <SummaryCard label="Remaining" value={remainingBalance} />
+          </section>
+
+          <section className="expense-detail-card">
+            <div>
+              <span>Status</span>
+              <StatusBadge status={displayStatus} />
+            </div>
+            <div>
+              <span>Due date</span>
+              <strong>{payment.due_date}</strong>
+            </div>
+            <div className="wide">
+              <span>Notes</span>
+              <strong>{payment.notes || "No notes"}</strong>
+            </div>
+          </section>
+
+          <section className="expense-ledger">
+            <div className="expense-section-heading">
+              <div>
+                <p>Audit trail</p>
+                <h2>Payment history</h2>
+              </div>
+              {canRecordPayment && (
+                <button className="billing-btn primary" onClick={onRecordPayment} type="button">
+                  <CheckCircle2 size={15} /> Record Payment
+                </button>
+              )}
+            </div>
+            <div className="billing-table-wrap">
+              <table className="billing-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th className="num">Amount</th>
+                    <th>Method</th>
+                    <th>Reference</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {history.map((paymentRecord) => (
+                    <tr key={paymentRecord.id}>
+                      <td>{paymentRecord.payment_date}</td>
+                      <td className="num">{currency.format(paymentRecord.amount)}</td>
+                      <td>{paymentMethodLabel(paymentRecord.payment_method)}</td>
+                      <td>{paymentRecord.reference_number || "—"}</td>
+                      <td>
+                        <div className="billing-row-actions">
+                          <button onClick={() => void onDeletePayment(paymentRecord)} title="Delete" type="button"><Trash2 size={14} /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {history.length === 0 && (
+                    <tr>
+                      <td className="collection-empty" colSpan={5}>No payments recorded yet.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SummaryCard({ label, tone, value }: { label: string; tone?: "success"; value: number }) {
+  return (
+    <div className={`expense-summary-card ${tone ?? ""}`}>
+      <span>{label}</span>
+      <strong>{currency.format(value)}</strong>
     </div>
   );
 }
