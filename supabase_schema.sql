@@ -1952,3 +1952,28 @@ check (civil_status in ('', 'single', 'married', 'widowed'));
 -- Editable due date on billing records, synced to their linked collections
 alter table public.billing_records
 add column if not exists due_date date;
+
+-- Individual installments recorded against a payment reminder (loan/bill/subcontractor payout),
+-- allowing a payout to be paid off across multiple partial payments instead of one lump sum.
+create table if not exists public.payment_reminder_payments (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  payment_reminder_id uuid not null references public.payment_reminders(id) on delete cascade,
+  amount numeric(12, 2) not null check (amount > 0),
+  payment_date date not null default current_date,
+  payment_method text not null default 'other'
+    check (payment_method in ('cash', 'bank_transfer', 'check', 'e_wallet', 'card', 'other')),
+  reference_number text not null default '',
+  notes text not null default '',
+  created_at timestamptz not null default now()
+);
+
+create index if not exists payment_reminder_payments_reminder_idx
+on public.payment_reminder_payments (payment_reminder_id, payment_date desc);
+
+alter table public.payment_reminder_payments enable row level security;
+
+drop policy if exists "payment reminder payments are owned by their user" on public.payment_reminder_payments;
+create policy "payment reminder payments are owned by their user"
+on public.payment_reminder_payments for all
+using (auth.uid() = user_id) with check (auth.uid() = user_id);
