@@ -3,6 +3,7 @@ import type {
   BillingRecord,
   BillingSettings,
   PaymentReminder,
+  PaymentReminderPayment,
   Subcontractor,
 } from "../../types";
 
@@ -10,6 +11,7 @@ const BILLING_RECORDS_SELECT = "id,user_id,invoice_no,billing_month,billing_year
 const SUBCONTRACTOR_SELECT = "id,user_id,name,installation_rate,repair_rate,payable_pct,status,created_at,updated_at";
 const BILLING_SETTINGS_SELECT = "id,user_id,installation_rate,repair_rate,collections_pct,client_name,created_at,updated_at";
 const PAYMENT_REMINDER_SUBCON_SELECT = "id,user_id,title,type,amount,due_date,status,notes,subcontractor_id,billing_subcon_item_id,billing_month,billing_year,billing_period,created_at,updated_at";
+const PAYMENT_REMINDER_PAYMENT_SELECT = "id,user_id,payment_reminder_id,amount,payment_date,payment_method,reference_number,notes,created_at";
 
 export async function fetchBillingRecords(supabase: SupabaseClient) {
   const result = await supabase
@@ -159,7 +161,7 @@ export async function saveBillingSubconItems(
 
 export async function saveSubconPaymentReminders(
   supabase: SupabaseClient,
-  payments: Array<Omit<PaymentReminder, "created_at" | "updated_at">>,
+  payments: Array<Omit<PaymentReminder, "created_at" | "updated_at" | "payments">>,
 ) {
   if (payments.length === 0) return { error: null };
   const result = await supabase
@@ -169,9 +171,34 @@ export async function saveSubconPaymentReminders(
   return { data: (result.data ?? []) as PaymentReminder[], error: result.error };
 }
 
-export async function markSubconPaymentReminderPaid(supabase: SupabaseClient, paymentId: string) {
-  return supabase
-    .from("payment_reminders")
-    .update({ status: "paid" })
-    .eq("id", paymentId);
+export async function recordPaymentReminderPayment(
+  supabase: SupabaseClient,
+  userId: string,
+  paymentReminderId: string,
+  payload: {
+    amount: number;
+    payment_date: string;
+    payment_method: import("../../types").CollectionPaymentMethod;
+    reference_number: string;
+    notes: string;
+  },
+) {
+  const result = await supabase
+    .from("payment_reminder_payments")
+    .insert({ ...payload, user_id: userId, payment_reminder_id: paymentReminderId })
+    .select(PAYMENT_REMINDER_PAYMENT_SELECT)
+    .single();
+  return { data: result.data as PaymentReminderPayment | null, error: result.error };
+}
+
+export async function deletePaymentReminderPayment(supabase: SupabaseClient, paymentId: string) {
+  return supabase.from("payment_reminder_payments").delete().eq("id", paymentId);
+}
+
+export async function updatePaymentReminderCompletion(
+  supabase: SupabaseClient,
+  paymentReminderId: string,
+  status: "pending" | "paid",
+) {
+  return supabase.from("payment_reminders").update({ status }).eq("id", paymentReminderId);
 }
