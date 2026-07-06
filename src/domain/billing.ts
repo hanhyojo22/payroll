@@ -357,7 +357,7 @@ export function buildSubcontractorAccountSummary(args: {
   const pending = pendingFromPayments + pendingFromUntrackedBilling;
   const paidMonthKey = `${year}-${String(month).padStart(2, "0")}`;
   const paidThisMonth = payments
-    .flatMap((payment) => payment.payments)
+    .flatMap((payment) => payment.payments ?? [])
     .filter((paymentRecord) => paymentRecord.payment_date.startsWith(paidMonthKey))
     .reduce((sum, paymentRecord) => sum + paymentRecord.amount, 0);
 

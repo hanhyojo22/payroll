@@ -577,4 +577,32 @@ describe("buildSubcontractorAccountSummary", () => {
     expect(summary.paidThisMonth).toBe(800);
     expect(summary.lastPayoutStatus).toBe("partial");
   });
+
+  it("does not throw when a payment reminder is missing its payments array (e.g. stale offline cache predating this feature)", () => {
+    const staleCachedPayment = {
+      id: "p4",
+      user_id: "u1",
+      title: "Alpha",
+      type: "subcontractor",
+      amount: 1000,
+      due_date: "2026-06-30",
+      status: "pending",
+      notes: "",
+      subcontractor_id: "sub-1",
+      billing_subcon_item_id: "item-4",
+      billing_month: 6,
+      billing_year: 2026,
+      billing_period: "second_half",
+      created_at: "",
+      updated_at: "",
+    } as unknown as PaymentReminder;
+
+    expect(() => buildSubcontractorAccountSummary({
+      subcontractor,
+      billingRecords: [],
+      dailyTickets: [],
+      payments: [staleCachedPayment],
+      today: new Date("2026-06-25T00:00:00"),
+    })).not.toThrow();
+  });
 });
