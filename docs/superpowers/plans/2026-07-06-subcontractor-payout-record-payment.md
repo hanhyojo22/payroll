@@ -325,13 +325,17 @@ git commit -m "feat: add paymentReminders domain module for partial payout payme
 
 ### Task 4: `buildSubcontractorAccountSummary` partial-payment awareness
 
+**Amendment (found during Task 4 implementation):** Task 2 added `PaymentReminder.payments` as a required field, but three call sites in the billing-generation pipeline build `Omit<PaymentReminder, "created_at" | "updated_at">`-shaped objects that never populate `payments` (it's a server-derived nested field, populated by Supabase on read — the same reason `Expense`'s own `saveExpense` signature is `Omit<Expense, "created_at" | "updated_at" | "installment_payments">`, not just the first two). This task now also closes that gap at all three sites so `npx tsc --noEmit` has no errors originating from `domain/billing.ts`'s own payout-payload construction. (The two `supabaseData.ts` errors from the same root cause are unrelated to this — those are fixed by Task 6's select strings.)
+
 **Files:**
-- Modify: `src/domain/billing.ts:288-369` (the `buildSubcontractorAccountSummary` function)
+- Modify: `src/domain/billing.ts:288-369` (the `buildSubcontractorAccountSummary` function), `:190,207` (the `Omit<PaymentReminder, ...>` signatures in `buildSubcontractorPaymentPayloads`/`buildSubcontractorPayoutArtifacts`)
 - Modify: `src/domain/billing.test.ts:1-11` (imports), `:199-217` (existing-payments fixture), `:441-518` (the `buildSubcontractorAccountSummary` describe block)
+- Modify: `src/features/billing/BillingFeature.tsx:300` (the `persistBillingArtifacts` parameter type — same `Omit<PaymentReminder, ...>` shape, unrelated otherwise to this task's behavior change)
 
 **Interfaces:**
 - Consumes: `paymentReminderDisplayStatus`, `paymentReminderPaymentsTotal`, `paymentReminderRemainingBalance` from `./paymentReminders` (Task 3).
 - Produces: `buildSubcontractorAccountSummary(...)` return shape unchanged (`{ billingRows, lastPayoutStatus, netPending, paidThisMonth, ticketsThisPeriod }`), but `netPending`/`paidThisMonth`/`lastPayoutStatus` now partial-payment-aware. Consumed by Task 8.
+- Produces: `Omit<PaymentReminder, "created_at" | "updated_at" | "payments">` is the corrected shape for payout-generation payloads, used at all three sites above. Task 5 must use this same corrected shape at the fourth site (`billingRepository.ts`'s `saveSubconPaymentReminders`).
 
 - [ ] **Step 1: Update existing fixtures so they still satisfy the `PaymentReminder` type**
 
@@ -493,10 +497,55 @@ Replace the body from `pendingFromPayments` through the `return` statement (`src
 Run: `npx vitest run src/domain/billing.test.ts`
 Expected: PASS (all existing tests plus the new partial-payment test).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Fix the `Omit<PaymentReminder, ...>` payout-payload signatures**
+
+`Task 2` made `PaymentReminder.payments` required, but three call sites in the billing-generation pipeline build payout-reminder payloads that never populate `payments` (it's a server-derived nested field, not something a caller constructs before insert/upsert — the same reason `saveExpense`'s payload type excludes `installment_payments`, not just `created_at`/`updated_at`). Fix all three to exclude `"payments"` too:
+
+In `src/domain/billing.ts:190`, replace:
+
+```ts
+}): Array<Omit<PaymentReminder, "created_at" | "updated_at">> {
+```
+
+with:
+
+```ts
+}): Array<Omit<PaymentReminder, "created_at" | "updated_at" | "payments">> {
+```
+
+In `src/domain/billing.ts:207`, replace:
+
+```ts
+  payoutPayloads: Array<Omit<PaymentReminder, "created_at" | "updated_at">>;
+```
+
+with:
+
+```ts
+  payoutPayloads: Array<Omit<PaymentReminder, "created_at" | "updated_at" | "payments">>;
+```
+
+In `src/features/billing/BillingFeature.tsx:300`, replace:
+
+```ts
+    payoutPayloads: Array<Omit<PaymentReminder, "created_at" | "updated_at">>,
+```
+
+with:
+
+```ts
+    payoutPayloads: Array<Omit<PaymentReminder, "created_at" | "updated_at" | "payments">>,
+```
+
+- [ ] **Step 7: Type-check**
+
+Run: `npx tsc --noEmit`
+Expected: The only remaining errors are the two in `src/lib/supabaseData.ts` (fixed by Task 6). No errors should originate from `src/domain/billing.ts` or `src/features/billing/BillingFeature.tsx`.
+
+- [ ] **Step 8: Commit**
 
 ```bash
-git add src/domain/billing.ts src/domain/billing.test.ts
+git add src/domain/billing.ts src/domain/billing.test.ts src/features/billing/BillingFeature.tsx
 git commit -m "feat: make buildSubcontractorAccountSummary partial-payment aware"
 ```
 
@@ -505,7 +554,7 @@ git commit -m "feat: make buildSubcontractorAccountSummary partial-payment aware
 ### Task 5: Repository — record/delete/complete payout payments
 
 **Files:**
-- Modify: `src/features/billing/billingRepository.ts:172-177` (remove `markSubconPaymentReminderPaid`, add new functions)
+- Modify: `src/features/billing/billingRepository.ts:162` (fix the pre-existing `saveSubconPaymentReminders` signature — see amendment below), `:172-177` (remove `markSubconPaymentReminderPaid`, add new functions)
 
 **Interfaces:**
 - Consumes: `PaymentReminderPayment` from `../../types`.
@@ -514,7 +563,23 @@ git commit -m "feat: make buildSubcontractorAccountSummary partial-payment aware
   - `deletePaymentReminderPayment(supabase, paymentId: string)`
   - `updatePaymentReminderCompletion(supabase, paymentReminderId: string, status: "pending" | "paid")`
 
-- [ ] **Step 1: Replace `markSubconPaymentReminderPaid` with the new functions**
+**Amendment (same root cause as Task 4's amendment):** `saveSubconPaymentReminders` (already in this file, unrelated to this task's new functions) takes `payments: Array<Omit<PaymentReminder, "created_at" | "updated_at">>` — now that `PaymentReminder.payments` is required, this needs `"payments"` excluded too, matching the fix already applied in Task 4 at the other three call sites in this same payout-payload pipeline.
+
+- [ ] **Step 1: Fix `saveSubconPaymentReminders`'s payload type**
+
+In `src/features/billing/billingRepository.ts:162`, replace:
+
+```ts
+  payments: Array<Omit<PaymentReminder, "created_at" | "updated_at">>,
+```
+
+with:
+
+```ts
+  payments: Array<Omit<PaymentReminder, "created_at" | "updated_at" | "payments">>,
+```
+
+- [ ] **Step 2: Replace `markSubconPaymentReminderPaid` with the new functions**
 
 In `src/features/billing/billingRepository.ts`, add `PaymentReminderPayment` to the type-only import at the top (line 2-7):
 
@@ -570,12 +635,12 @@ export async function updatePaymentReminderCompletion(
 }
 ```
 
-- [ ] **Step 2: Type-check**
+- [ ] **Step 3: Type-check**
 
 Run: `npx tsc --noEmit`
-Expected: A new error where `markSubconPaymentReminderPaid` was imported (in `src/features/subcontractors/SubcontractorsFeature.tsx`) — expected, that's fixed in Task 8.
+Expected: Two remaining error categories only: (1) a new error where `markSubconPaymentReminderPaid` was imported (in `src/features/subcontractors/SubcontractorsFeature.tsx`) — expected, fixed in Task 8; (2) the two pre-existing `src/lib/supabaseData.ts` errors — expected, fixed in Task 6. No errors should originate from `billingRepository.ts` itself.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add src/features/billing/billingRepository.ts
