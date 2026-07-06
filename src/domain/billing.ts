@@ -7,6 +7,7 @@ import type {
   Subcontractor,
   SubcontractorAdvance,
 } from "../types";
+import { paymentReminderDisplayStatus, paymentReminderPaymentsTotal, paymentReminderRemainingBalance } from "./paymentReminders";
 
 function filterByPeriod(entries: DailyTicketEntry[], month: number, year: number, period?: BillingPeriod): DailyTicketEntry[] {
   return entries.filter((entry) => {
@@ -348,20 +349,21 @@ export function buildSubcontractorAccountSummary(args: {
       .map((payment) => [payment.billing_subcon_item_id!, payment]),
   );
   const pendingFromPayments = payments
-    .filter((payment) => payment.status === "pending")
-    .reduce((sum, payment) => sum + payment.amount, 0);
+    .filter((payment) => paymentReminderDisplayStatus(payment, payment.payments) !== "paid")
+    .reduce((sum, payment) => sum + paymentReminderRemainingBalance(payment, payment.payments), 0);
   const pendingFromUntrackedBilling = billingRows
     .filter((row) => !paymentByBillingItemId.has(row.id))
     .reduce((sum, row) => sum + row.payable_amount, 0);
   const pending = pendingFromPayments + pendingFromUntrackedBilling;
   const paidMonthKey = `${year}-${String(month).padStart(2, "0")}`;
   const paidThisMonth = payments
-    .filter((payment) => payment.status === "paid" && payment.updated_at.startsWith(paidMonthKey))
-    .reduce((sum, payment) => sum + payment.amount, 0);
+    .flatMap((payment) => payment.payments)
+    .filter((paymentRecord) => paymentRecord.payment_date.startsWith(paidMonthKey))
+    .reduce((sum, paymentRecord) => sum + paymentRecord.amount, 0);
 
   return {
     billingRows,
-    lastPayoutStatus: latestPayment?.status ?? "none",
+    lastPayoutStatus: latestPayment ? paymentReminderDisplayStatus(latestPayment, latestPayment.payments) : "none",
     netPending: pending,
     paidThisMonth,
     ticketsThisPeriod: typeof ticketsThisPeriod === "number" ? ticketsThisPeriod : ticketsThisPeriod.install + ticketsThisPeriod.repair,

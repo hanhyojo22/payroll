@@ -8,7 +8,7 @@ import {
   countTicketsForMonth,
   lastDayOfMonth,
 } from "./billing";
-import type { BillingSubconItem, DailyTicketEntry, PaymentReminder, SubconDailyTicket, Subcontractor, SubcontractorAdvance } from "../types";
+import type { BillingSubconItem, DailyTicketEntry, PaymentReminder, PaymentReminderPayment, SubconDailyTicket, Subcontractor, SubcontractorAdvance } from "../types";
 
 describe("countTicketsForMonth", () => {
   const entries: DailyTicketEntry[] = [
@@ -213,6 +213,7 @@ describe("buildSubcontractorPaymentPayloads", () => {
         billing_period: "first_half",
         created_at: "",
         updated_at: "",
+        payments: [],
       },
     ];
 
@@ -411,33 +412,34 @@ describe("buildSubcontractorPaymentPayloads", () => {
 });
 
 describe("buildSubcontractorAccountSummary", () => {
-  it("computes pending, paid, and ticket totals for a subcontractor account", () => {
-    const subcontractor: Subcontractor = {
-      id: "sub-1",
+  const subcontractor: Subcontractor = {
+    id: "sub-1",
+    user_id: "u1",
+    name: "Alpha",
+    installation_rate: 1000,
+    repair_rate: 500,
+    payable_pct: 70,
+    status: "active",
+    created_at: "",
+    updated_at: "",
+  };
+  const dailyTickets: SubconDailyTicket[] = [
+    {
+      id: "t1",
       user_id: "u1",
-      name: "Alpha",
+      entry_date: "2026-06-05",
+      subcontractor_id: "sub-1",
+      subcon_name: "Alpha",
+      install_tickets: 3,
+      repair_tickets: 2,
       installation_rate: 1000,
       repair_rate: 500,
-      payable_pct: 70,
-      status: "active",
       created_at: "",
       updated_at: "",
-    };
-    const dailyTickets: SubconDailyTicket[] = [
-      {
-        id: "t1",
-        user_id: "u1",
-        entry_date: "2026-06-05",
-        subcontractor_id: "sub-1",
-        subcon_name: "Alpha",
-        install_tickets: 3,
-        repair_tickets: 2,
-        installation_rate: 1000,
-        repair_rate: 500,
-        created_at: "",
-        updated_at: "",
-      },
-    ];
+    },
+  ];
+
+  it("computes pending, paid, and ticket totals for a subcontractor account", () => {
     const payments: PaymentReminder[] = [
       {
         id: "p1",
@@ -455,6 +457,7 @@ describe("buildSubcontractorAccountSummary", () => {
         billing_period: "first_half",
         created_at: "",
         updated_at: "",
+        payments: [],
       },
       {
         id: "p2",
@@ -472,6 +475,19 @@ describe("buildSubcontractorAccountSummary", () => {
         billing_period: "second_half",
         created_at: "",
         updated_at: "2026-06-29T00:00:00Z",
+        payments: [
+          {
+            id: "p2-pay-1",
+            user_id: "u1",
+            payment_reminder_id: "p2",
+            amount: 1200,
+            payment_date: "2026-06-29",
+            payment_method: "cash",
+            reference_number: "",
+            notes: "",
+            created_at: "2026-06-29T00:00:00Z",
+          },
+        ],
       },
     ];
 
@@ -515,5 +531,50 @@ describe("buildSubcontractorAccountSummary", () => {
     expect(summary.paidThisMonth).toBe(1200);
     expect(summary.lastPayoutStatus).toBe("paid");
     expect(summary.billingRows).toHaveLength(1);
+  });
+
+  it("counts a partial payment toward paidThisMonth and reduces netPending by only the amount paid", () => {
+    const partiallyPaid: PaymentReminder = {
+      id: "p3",
+      user_id: "u1",
+      title: "Alpha",
+      type: "subcontractor",
+      amount: 2000,
+      due_date: "2026-06-30",
+      status: "pending",
+      notes: "June 2026 · 16th - End",
+      subcontractor_id: "sub-1",
+      billing_subcon_item_id: "item-3",
+      billing_month: 6,
+      billing_year: 2026,
+      billing_period: "second_half",
+      created_at: "",
+      updated_at: "",
+      payments: [
+        {
+          id: "p3-pay-1",
+          user_id: "u1",
+          payment_reminder_id: "p3",
+          amount: 800,
+          payment_date: "2026-06-20",
+          payment_method: "cash",
+          reference_number: "",
+          notes: "",
+          created_at: "2026-06-20T00:00:00Z",
+        },
+      ],
+    };
+
+    const summary = buildSubcontractorAccountSummary({
+      subcontractor,
+      billingRecords: [],
+      dailyTickets: [],
+      payments: [partiallyPaid],
+      today: new Date("2026-06-25T00:00:00"),
+    });
+
+    expect(summary.netPending).toBe(1200);
+    expect(summary.paidThisMonth).toBe(800);
+    expect(summary.lastPayoutStatus).toBe("partial");
   });
 });
