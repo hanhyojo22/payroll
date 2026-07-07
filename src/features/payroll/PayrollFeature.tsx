@@ -750,6 +750,7 @@ export function PayrollFeature({
         table: "payroll_run_items",
         payload: { itemPayloads: offlineItemPayloads, detailPayloads, employeeAdvanceUpdates },
       });
+      await syncPayrollExpense(selectedRun, [...selectedRun.items, ...itemPayloads]);
       return;
     }
     const { error } = await insertPayrollItems(itemPayloads);
@@ -766,6 +767,7 @@ export function PayrollFeature({
           table: "payroll_run_items",
           payload: { itemPayloads: offlineItemPayloads, detailPayloads, employeeAdvanceUpdates },
         });
+        await syncPayrollExpense(selectedRun, [...selectedRun.items, ...itemPayloads]);
         return;
       }
       NotificationService.showError(friendlyError(error));
@@ -780,6 +782,7 @@ export function PayrollFeature({
     }
 
     NotificationService.showSuccess(`${missingEmployees.length} employee${missingEmployees.length === 1 ? "" : "s"} added to payroll.`);
+    await syncPayrollExpense(selectedRun, [...selectedRun.items, ...itemPayloads]);
     await onChange();
   }
 
