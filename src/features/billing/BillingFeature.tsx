@@ -11,6 +11,7 @@ import { paymentReminderRemainingBalance } from "../../domain/paymentReminders";
 import { isOfflineLikeError } from "../../lib/offlineSync";
 import { supabase } from "../../supabase";
 import { MoneyField } from "../../shared/components/MoneyField";
+import { ActionProgress } from "../../shared/components/ActionProgress";
 import { PageHeader } from "../../shared/components/PageLayout";
 import { NotificationService } from "../../shared/notifications/NotificationService";
 import type { QueueOfflineMutation } from "../../shared/types";
@@ -1255,8 +1256,11 @@ function BillingForm({
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
-    await onSubmit(values);
-    setBusy(false);
+    try {
+      await onSubmit(values);
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -1270,7 +1274,13 @@ function BillingForm({
           <button className="cbf-close-btn" onClick={onClose} type="button" aria-label="Close"><X size={18} /></button>
         </div>
 
-        <form className="cbf-form" onSubmit={handleSubmit}>
+        <form className="cbf-form action-progress-shell" onSubmit={handleSubmit}>
+          {busy && (
+            <ActionProgress
+              description={initial ? "Updating billing totals, collections, and payout records." : "Building billing totals, collections, and payout records."}
+              title={initial ? "Saving billing" : "Creating billing"}
+            />
+          )}
           <div className="cbf-cols">
             <div className="cbf-left">
               <section className="cbf-section cbf-section-card">
@@ -1580,7 +1590,7 @@ function BillingForm({
           </div>
 
           <div className="cbf-actions">
-            <button className="cbf-btn-cancel" onClick={onClose} type="button">Cancel</button>
+            <button className="cbf-btn-cancel" disabled={busy} onClick={onClose} type="button">Cancel</button>
             <button className="cbf-btn-submit" disabled={busy} type="submit">{busy ? "Saving..." : initial ? "Update Billing" : "Create Billing"}</button>
           </div>
         </form>

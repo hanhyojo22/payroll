@@ -1204,7 +1204,7 @@ function PayoutPaymentForm({
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal billing-form-modal company-expense-modal" onClick={(event) => event.stopPropagation()}>
+      <div className="modal billing-form-modal expense-payment-modal company-expense-modal" onClick={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <div>
             <h3>Record Payment</h3>

@@ -696,6 +696,88 @@ input[type="radio"] {
   margin: 0;
 }
 
+.action-progress-shell {
+  position: relative;
+}
+
+.action-progress-overlay {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.76);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border-radius: inherit;
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  position: absolute;
+  z-index: 12;
+}
+
+.action-progress-card {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 18px;
+  box-shadow: 0 24px 54px rgba(15, 23, 42, 0.14);
+  display: grid;
+  gap: 14px;
+  justify-items: center;
+  max-width: 320px;
+  padding: 22px 22px 18px;
+  text-align: center;
+  width: calc(100% - 32px);
+}
+
+.action-progress-card .spinner {
+  height: 36px;
+  width: 36px;
+}
+
+.action-progress-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.action-progress-copy strong {
+  color: #0f172a;
+  font-size: 1rem;
+}
+
+.action-progress-copy span {
+  color: #64748b;
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+}
+
+.action-progress-bar {
+  background: rgba(148, 163, 184, 0.2);
+  border-radius: 999px;
+  height: 8px;
+  overflow: hidden;
+  position: relative;
+  width: 100%;
+}
+
+.action-progress-bar-fill {
+  animation: action-progress-slide 1.25s ease-in-out infinite;
+  background: linear-gradient(90deg, #2563eb 0%, #38bdf8 55%, #2563eb 100%);
+  border-radius: inherit;
+  height: 100%;
+  left: -42%;
+  position: absolute;
+  top: 0;
+  width: 42%;
+}
+
+@keyframes action-progress-slide {
+  0% {
+    left: -42%;
+  }
+  100% {
+    left: 100%;
+  }
+}
+
 @media (max-width: 640px) {
   .toast-stack {
     left: 16px;
@@ -10173,6 +10255,59 @@ td {
 .expense-section-heading p { color: #64748b; font-size: .74rem; font-weight: 800; letter-spacing: .1em; margin: 0 0 5px; text-transform: uppercase; }
 .expense-section-heading h2 { margin: 0; }
 .expense-remaining-note { color: var(--color-text-tertiary); font-size: var(--font-size-sm); margin: -4px 0 4px; }
+.payment-history-details-modal .modal-header {
+  align-items: flex-start;
+}
+
+.payment-history-details-modal {
+  max-width: 760px;
+}
+
+.payment-history-details-modal .modal-header > div {
+  display: grid;
+  gap: 4px;
+}
+
+.payment-history-details-modal .modal-header span {
+  color: #667085;
+  line-height: 1.45;
+}
+
+.payment-history-details-modal .expense-detail-card > div,
+.payment-history-details-modal .expense-detail-card .wide {
+  align-content: start;
+}
+.expense-payment-modal .modal-header {
+  align-items: flex-start;
+}
+
+.expense-payment-modal .modal-header > div {
+  display: grid;
+  gap: 4px;
+}
+
+.expense-payment-modal .modal-header span {
+  color: #667085;
+  line-height: 1.45;
+}
+
+.expense-payment-modal .billing-form-body,
+.expense-payment-modal .billing-form-fields {
+  align-items: start;
+}
+
+.expense-payment-modal .billing-form-body {
+  gap: 16px;
+  padding: 0;
+}
+
+.expense-payment-modal .billing-form-fields > label {
+  align-content: start;
+}
+
+.expense-payment-modal .expense-remaining-note {
+  margin: 0;
+}
 
 @media (max-width: 768px) {
   .expense-summary-grid, .expense-detail-card { grid-template-columns: 1fr; }

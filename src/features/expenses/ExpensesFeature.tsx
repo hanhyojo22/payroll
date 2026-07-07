@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Ban, CalendarClock, CheckCircle2, Eye, Pencil, Plus, Receipt, Square, Tag, Trash2, X } from "lucide-react";
 import { supabase } from "../../supabase";
 import { isOfflineLikeError } from "../../lib/offlineSync";
@@ -69,6 +69,8 @@ const STATUS_FILTER_OPTIONS: Array<{ value: ExpenseStatusFilter; label: string }
   { value: "overdue", label: "Overdue" },
 ];
 
+const EXPENSES_PAGE_SIZE = 10;
+
 function isLegacyExpensesStatusConstraintError(error: { message?: string | null; details?: string | null } | null | undefined) {
   const message = `${error?.message ?? ""} ${error?.details ?? ""}`.toLowerCase();
   return message.includes("expenses_status_check");
@@ -113,6 +115,7 @@ export function ExpensesFeature({
   const [payingInstallmentExpense, setPayingInstallmentExpense] = useState<Expense | null>(null);
   const [viewingExpense, setViewingExpense] = useState<Expense | null>(null);
   const [deletingExpense, setDeletingExpense] = useState<Expense | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
 
   const activeEmployees = employees.filter((employee) => employee.status === "active");
   const activeCategories = expenseCategories.filter((category) => category.status === "active");
@@ -137,6 +140,21 @@ export function ExpensesFeature({
   }, [expenses, statusFilter, searchQuery]);
 
   const recordCount = filteredExpenses.length;
+  const pageCount = Math.max(1, Math.ceil(recordCount / EXPENSES_PAGE_SIZE));
+  const safeCurrentPage = Math.min(currentPage, pageCount);
+  const pageStart = (safeCurrentPage - 1) * EXPENSES_PAGE_SIZE;
+  const pageEnd = Math.min(pageStart + EXPENSES_PAGE_SIZE, recordCount);
+  const paginatedExpenses = filteredExpenses.slice(pageStart, pageEnd);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, statusFilter, categoryScope]);
+
+  useEffect(() => {
+    if (currentPage > pageCount) {
+      setCurrentPage(pageCount);
+    }
+  }, [currentPage, pageCount]);
 
   const kpis = useMemo(() => {
     const monthKey = todayKey().slice(0, 7);
@@ -528,6 +546,7 @@ export function ExpensesFeature({
           <span>Add an expense or adjust the filters to see records here.</span>
         </div>
       ) : (
+        <>
         <div className="billing-table-wrap">
           <table className="billing-table">
             <thead>
@@ -545,7 +564,7 @@ export function ExpensesFeature({
               </tr>
             </thead>
             <tbody>
-              {filteredExpenses.map((expense) => {
+              {paginatedExpenses.map((expense) => {
                 const displayStatus = expenseDisplayStatus(expense, expense.installment_payments);
                 const totalAmount = expenseTotalAmount(expense);
                 const remainingBalance = expenseRemainingBalance(expense, expense.installment_payments);
@@ -643,6 +662,40 @@ export function ExpensesFeature({
             </tbody>
           </table>
         </div>
+        {recordCount > EXPENSES_PAGE_SIZE && (
+          <div className="attendance-footer">
+            <span>
+              Showing {pageStart + 1} to {pageEnd} of {recordCount} expense{recordCount === 1 ? "" : "s"}
+            </span>
+            <div>
+              <button
+                disabled={safeCurrentPage === 1}
+                onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+                type="button"
+              >
+                {"<"}
+              </button>
+              {Array.from({ length: pageCount }, (_, index) => index + 1).map((page) => (
+                <button
+                  className={page === safeCurrentPage ? "active" : undefined}
+                  key={page}
+                  onClick={() => setCurrentPage(page)}
+                  type="button"
+                >
+                  {page}
+                </button>
+              ))}
+              <button
+                disabled={safeCurrentPage === pageCount}
+                onClick={() => setCurrentPage((page) => Math.min(pageCount, page + 1))}
+                type="button"
+              >
+                {">"}
+              </button>
+            </div>
+          </div>
+        )}
+        </>
       )}
 
       {formOpen && (
@@ -873,7 +926,7 @@ function InstallmentPaymentForm({
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className={`modal billing-form-modal${categoryScope === "personal" ? " personal-expense-modal" : " company-expense-modal"}`} onClick={(event) => event.stopPropagation()}>
+      <div className={`modal billing-form-modal expense-payment-modal${categoryScope === "personal" ? " personal-expense-modal" : " company-expense-modal"}`} onClick={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <div>
             <h3>Record Payment</h3>

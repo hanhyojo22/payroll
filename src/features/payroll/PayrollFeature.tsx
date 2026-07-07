@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { BadgeDollarSign, CalendarClock, CheckCircle2, Plus, Search, Users, X } from "lucide-react";
+import { BadgeDollarSign, CalendarClock, CheckCircle2, Plus, Users, X } from "lucide-react";
 import { Spinner } from "../../shared/components/Spinner";
+import { ActionProgress } from "../../shared/components/ActionProgress";
 import {
   attendanceTotalsForEmployee,
   dailyTicketEntriesForPayrollPeriod,
@@ -959,7 +960,16 @@ export function PayrollFeature({
 
       {selectedRun && missingEmployees.length > 0 && (
         <div className="payroll-missing-banner">
-          <span>⚠ {missingEmployees.length} active employee{missingEmployees.length !== 1 ? "s" : ""} not in this run</span>
+          <span>Warning: {missingEmployees.length} active employee{missingEmployees.length !== 1 ? "s" : ""} not in this run</span>
+          <button className="secondary-button compact" onClick={addMissingEmployees} type="button">
+            <Plus size={14} /> Add missing
+          </button>
+        </div>
+      )}
+
+      {selectedRun && false && missingEmployees.length > 0 && (
+        <div className="payroll-missing-banner">
+          <span>ÃƒÂ¢Ã…Â¡Ã‚Â  {missingEmployees.length} active employee{missingEmployees.length !== 1 ? "s" : ""} not in this run</span>
           <button className="secondary-button compact" onClick={addMissingEmployees} type="button">
             <Plus size={14} /> Add missing
           </button>
@@ -968,7 +978,16 @@ export function PayrollFeature({
 
       {selectedRun && itemsNeedingPayrollDeductions.length > 0 && (
         <div className="payroll-missing-banner">
-          <span>⚠ {itemsNeedingPayrollDeductions.length} payroll item{itemsNeedingPayrollDeductions.length !== 1 ? "s" : ""} missing payroll deductions</span>
+          <span>Warning: {itemsNeedingPayrollDeductions.length} payroll item{itemsNeedingPayrollDeductions.length !== 1 ? "s" : ""} missing payroll deductions</span>
+          <button className="secondary-button compact" onClick={applyMissingPayrollDeductions} type="button">
+            <BadgeDollarSign size={14} /> Apply deductions
+          </button>
+        </div>
+      )}
+
+      {selectedRun && false && itemsNeedingPayrollDeductions.length > 0 && (
+        <div className="payroll-missing-banner">
+          <span>ÃƒÂ¢Ã…Â¡Ã‚Â  {itemsNeedingPayrollDeductions.length} payroll item{itemsNeedingPayrollDeductions.length !== 1 ? "s" : ""} missing payroll deductions</span>
           <button className="secondary-button compact" onClick={applyMissingPayrollDeductions} type="button">
             <BadgeDollarSign size={14} /> Apply deductions
           </button>
@@ -1049,11 +1068,11 @@ function PayrollItemsTable({
     const sorted = [...employees].sort((a, b) => a.created_at.localeCompare(b.created_at));
     return new Map(sorted.map((e, i) => [e.id, `EMP-${String(i + 1).padStart(3, "0")}`]));
   }, [employees]);
-  const empCode = (id: string | null) => (id ? employeeCodeMap.get(id) ?? "—" : "—");
+  const empCode = (id: string | null) => (id ? employeeCodeMap.get(id) ?? "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â" : "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â");
 
   function payBasis(item: PayrollRunItem): string {
     if (item.pay_mode === "daily") {
-      return `${toNumber(item.days_worked)} days × ${currency.format(toNumber(item.daily_rate))}`;
+      return `${toNumber(item.days_worked)} days x ${currency.format(toNumber(item.daily_rate))}`;
     }
     if (item.pay_mode === "fixed") {
       return `Base ${currency.format(toNumber(item.base_pay))}`;
@@ -1063,27 +1082,19 @@ function PayrollItemsTable({
       : toNumber(item.installation_tickets) + toNumber(item.repair_tickets);
     if (item.pay_mode === "ticket") return `${ticketCount} tickets`;
     if (item.pay_mode === "hybrid") return `Base ${currency.format(toNumber(item.base_pay))} + ${ticketCount} tickets`;
-    return "—";
+    return "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â";
   }
 
   return (
     <div className="page-stack" style={{ gap: 8 }}>
-      <div className="toolbar">
-        <label className="search-box">
-          <Search size={17} />
-          <input
-            placeholder="Search employees…"
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        </label>
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}>
-          <option value="all">All status</option>
-          <option value="pending">Pending</option>
-          <option value="paid">Paid</option>
-        </select>
-      </div>
+      <section className="panel employee-list-panel">
+        <Toolbar query={query} setQuery={setQuery}>
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}>
+            <option value="all">All status</option>
+            <option value="pending">Pending</option>
+            <option value="paid">Paid</option>
+          </select>
+        </Toolbar>
 
       <DataTable
         empty="No payroll items match the current filter."
@@ -1100,7 +1111,7 @@ function PayrollItemsTable({
             {item.notes && <small>{item.notes}</small>}
           </div>,
           currency.format(toNumber(item.gross_pay)),
-          toNumber(item.deductions) > 0 ? currency.format(toNumber(item.deductions)) : "—",
+          toNumber(item.deductions) > 0 ? currency.format(toNumber(item.deductions)) : "-",
           <div key="net" className="payroll-net-cell">
             <strong>{currency.format(toNumber(item.net_pay))}</strong>
             {toNumber(item.allowances) > 0 && (
@@ -1123,6 +1134,7 @@ function PayrollItemsTable({
           </div>,
         ])}
       />
+      </section>
       {visibleItems.length > PAYROLL_ITEMS_PAGE_SIZE && (
         <div className="attendance-footer">
           <span>
@@ -1204,7 +1216,7 @@ export function PayrollSettingsManager({
     label: string;
     helper: string;
   }> = [
-    { value: "first_half", label: "1st – 15th Payroll", helper: "Deductions come out of the first payroll of the month." },
+    { value: "first_half", label: "1st ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ 15th Payroll", helper: "Deductions come out of the first payroll of the month." },
     { value: "second_half", label: "30th / Second Cutoff Payroll", helper: "Deductions come out of the second payroll of the month." },
   ];
 
@@ -1265,7 +1277,7 @@ export function PayrollSettingsManager({
           <div className={`payroll-settings-section${enabled ? "" : " disabled"}`}>
             <h3>Government deduction cutoff</h3>
             <p className="payroll-settings-hint">
-              SSS, PhilHealth, Pag-IBIG, and Withholding Tax are deducted once a month — only on the payroll you pick below, never both.
+              SSS, PhilHealth, Pag-IBIG, and Withholding Tax are deducted once a month ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â only on the payroll you pick below, never both.
             </p>
             <div className="payroll-cutoff-options" role="radiogroup" aria-label="Government deduction cutoff">
               {cutoffOptions.map((option) => (
@@ -1301,7 +1313,7 @@ export function PayrollSettingsManager({
                   <strong>{currency.format(totalMonthlyDeduction)}</strong>
                   <span>
                     total government deductions across {activeEmployeesWithDeductions.length} active employee{activeEmployeesWithDeductions.length === 1 ? "" : "s"} will be applied
-                    on the {cutoff === "first_half" ? "1st – 15th" : "30th / second cutoff"} payroll each month.
+                    on the {cutoff === "first_half" ? "1st ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ 15th" : "30th / second cutoff"} payroll each month.
                   </span>
                 </>
               ) : (
@@ -1335,7 +1347,7 @@ export function PayrollHistoryFeature({ employees, rows, tabs }: { employees: Em
     const sorted = [...employees].sort((a, b) => a.created_at.localeCompare(b.created_at));
     return new Map(sorted.map((e, i) => [e.id, `EMP-${String(i + 1).padStart(3, "0")}`]));
   }, [employees]);
-  const empCode = (id: string | null) => (id ? employeeCodeMap.get(id) ?? "—" : "—");
+  const empCode = (id: string | null) => (id ? employeeCodeMap.get(id) ?? "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â" : "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â");
 
   const filteredRows = rows.filter((row) => {
     const matchesQuery = row.searchText.includes(query.trim().toLowerCase());
@@ -1411,7 +1423,7 @@ export function PayrollHistoryFeature({ employees, rows, tabs }: { employees: Em
                   </td>
                   <td>{row.department}</td>
                   <td>{currency.format(row.grossPay)}</td>
-                  <td>{row.deductions > 0 ? currency.format(row.deductions) : "—"}</td>
+                  <td>{row.deductions > 0 ? currency.format(row.deductions) : "-"}</td>
                   <td><strong>{currency.format(row.netPay)}</strong></td>
                   <td>{row.processedDate}</td>
                 </tr>
@@ -1458,13 +1470,17 @@ function PayrollRunForm({
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
-    await onSubmit(values);
-    setBusy(false);
+    try {
+      await onSubmit(values);
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
     <Modal className="billing-form-modal payroll-run-modal" onClose={onClose} title="Generate payroll">
-      <form className="billing-form-body" onSubmit={handleSubmit}>
+      <form className="billing-form-body action-progress-shell" onSubmit={handleSubmit}>
+        {busy && <ActionProgress description="Preparing employees, payroll items, and totals." title="Generating payroll" />}
         <div className="billing-form-fields payroll-run-form-fields">
           <label>
             Payroll month
@@ -1491,10 +1507,11 @@ function PayrollRunForm({
           <textarea rows={3} value={values.notes} onChange={(event) => setValues({ ...values, notes: event.target.value })} />
         </label>
         <div className="form-actions">
-          <button className="billing-btn outline" onClick={onClose} type="button">Cancel</button>
+          <button className="billing-btn outline" disabled={busy} onClick={onClose} type="button">Cancel</button>
           <button className="billing-btn primary" disabled={busy} type="submit">{busy ? "Generating..." : "Generate payroll"}</button>
         </div>
       </form>
     </Modal>
   );
 }
+
