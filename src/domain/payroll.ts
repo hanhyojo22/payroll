@@ -1,8 +1,9 @@
-import type { AttendanceEntry, DailyTicketEntry, Employee, PayrollPayPeriod, PayrollRun, PayrollRunItem, PayrollSettings, Position } from "../types";
+import type { AttendanceEntry, DailyTicketEntry, Employee, Expense, PayrollPayPeriod, PayrollRun, PayrollRunItem, PayrollSettings, Position } from "../types";
 import {
   normalizeTicketCount,
   toNumber,
 } from "./tickets";
+import { monthNames } from "../shared/utils/dates";
 
 export const payPeriodLabel = (payPeriod: PayrollRun["pay_period"]) =>
   payPeriod === "first_half" ? "First half" : "Second half";
@@ -290,5 +291,41 @@ export function payrollItemPayloadForEmployee(
     status: "pending",
     paid_date: null,
     notes: "",
+  };
+}
+
+export function payrollExpensePayload(
+  run: Pick<PayrollRun, "id" | "period_month" | "period_year" | "pay_period" | "generated_date">,
+  items: Array<Pick<PayrollRunItem, "net_pay" | "status" | "paid_date">>,
+  categoryId: string,
+  userId: string,
+): Omit<Expense, "installment_payments" | "created_at" | "updated_at"> {
+  const amount = items.reduce((sum, item) => sum + toNumber(item.net_pay), 0);
+  const allPaid = items.length > 0 && items.every((item) => item.status === "paid");
+  const paidDate = allPaid
+    ? items.reduce<string | null>((latest, item) => {
+      if (!item.paid_date) return latest;
+      return !latest || item.paid_date > latest ? item.paid_date : latest;
+    }, null)
+    : null;
+  const cutoffLabel = run.pay_period === "first_half" ? "1st Cutoff" : "2nd Cutoff";
+
+  return {
+    id: run.id,
+    user_id: userId,
+    employee_id: null,
+    employee_name: `${monthNames[run.period_month - 1]} ${run.period_year} – ${cutoffLabel}`,
+    category_id: categoryId,
+    category_name: "Payroll",
+    amount,
+    frequency: "one_time",
+    duration_months: null,
+    status: allPaid ? "paid" : "pending",
+    paid_date: paidDate,
+    expense_date: run.generated_date,
+    due_date: null,
+    payment_date: null,
+    notes: "Auto-generated from payroll run",
+    payroll_run_id: run.id,
   };
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   dailyTicketTotalsForEmployee,
   governmentDeductionForEmployee,
+  payrollExpensePayload,
   payrollItemPayloadForEmployee,
   workingDaysInPeriod,
   attendanceTotalsForEmployee,
@@ -317,5 +318,67 @@ describe("attendance-based daily wage", () => {
     );
     expect(item.days_worked).toBe(0);
     expect(item.gross_pay).toBe(0);
+  });
+});
+
+describe("payrollExpensePayload", () => {
+  const run = {
+    id: "run-1",
+    period_month: 7,
+    period_year: 2026,
+    pay_period: "first_half" as const,
+    generated_date: "2026-07-01",
+  };
+
+  it("sums net_pay across all items", () => {
+    const items = [
+      { net_pay: 5000, status: "pending" as const, paid_date: null },
+      { net_pay: 3500, status: "pending" as const, paid_date: null },
+    ];
+    const payload = payrollExpensePayload(run, items, "category-1", "user-1");
+    expect(payload.amount).toBe(8500);
+  });
+
+  it("is pending when any item is unpaid", () => {
+    const items = [
+      { net_pay: 5000, status: "paid" as const, paid_date: "2026-07-05" },
+      { net_pay: 3500, status: "pending" as const, paid_date: null },
+    ];
+    const payload = payrollExpensePayload(run, items, "category-1", "user-1");
+    expect(payload.status).toBe("pending");
+    expect(payload.paid_date).toBeNull();
+  });
+
+  it("is paid with the latest paid_date only when every item is paid", () => {
+    const items = [
+      { net_pay: 5000, status: "paid" as const, paid_date: "2026-07-05" },
+      { net_pay: 3500, status: "paid" as const, paid_date: "2026-07-07" },
+    ];
+    const payload = payrollExpensePayload(run, items, "category-1", "user-1");
+    expect(payload.status).toBe("paid");
+    expect(payload.paid_date).toBe("2026-07-07");
+  });
+
+  it("defaults to pending with zero amount when there are no items", () => {
+    const payload = payrollExpensePayload(run, [], "category-1", "user-1");
+    expect(payload.status).toBe("pending");
+    expect(payload.amount).toBe(0);
+    expect(payload.paid_date).toBeNull();
+  });
+
+  it("labels the category, employee_name period, and links the run id", () => {
+    const payload = payrollExpensePayload(run, [], "category-1", "user-1");
+    expect(payload.category_id).toBe("category-1");
+    expect(payload.category_name).toBe("Payroll");
+    expect(payload.employee_name).toBe("July 2026 – 1st Cutoff");
+    expect(payload.id).toBe("run-1");
+    expect(payload.payroll_run_id).toBe("run-1");
+    expect(payload.user_id).toBe("user-1");
+  });
+
+  it("uses '2nd Cutoff' label for second_half runs", () => {
+    const secondHalfRun = { ...run, pay_period: "second_half" as const };
+    const payload = payrollExpensePayload(secondHalfRun, [], "category-1", "user-1");
+    expect(payload.employee_name).toBe("July 2026 – 2nd Cutoff");
   });
 });
