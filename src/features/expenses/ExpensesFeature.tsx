@@ -201,6 +201,7 @@ export function ExpensesFeature({
       due_date: values.due_date || null,
       payment_date: values.payment_date || null,
       notes: values.notes.trim(),
+      payroll_run_id: editingExpense?.payroll_run_id ?? null,
     };
 
     if (!navigator.onLine) {

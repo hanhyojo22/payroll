@@ -1977,3 +1977,15 @@ drop policy if exists "payment reminder payments are owned by their user" on pub
 create policy "payment reminder payments are owned by their user"
 on public.payment_reminder_payments for all
 using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- Link an auto-generated "Payroll" company expense to the payroll run it summarizes.
+-- The expense's own id is set equal to payroll_run_id by the application, so every sync
+-- is a plain upsert by id — no separate existence check is ever needed.
+alter table public.expenses
+add column if not exists payroll_run_id uuid references public.payroll_runs(id) on delete cascade;
+
+alter table public.expenses
+drop constraint if exists expenses_payroll_run_id_key;
+
+alter table public.expenses
+add constraint expenses_payroll_run_id_key unique (payroll_run_id);

@@ -159,6 +159,7 @@ export type Expense = {
   due_date: string | null;
   payment_date: string | null;
   notes: string;
+  payroll_run_id: string | null;
   created_at: string;
   updated_at: string;
 };

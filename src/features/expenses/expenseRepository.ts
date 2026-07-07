@@ -3,7 +3,7 @@ import type { CollectionPaymentMethod, Expense, ExpenseCategory, ExpenseCategory
 
 const EXPENSE_CATEGORY_SELECT = "id,user_id,name,type,status,created_at,updated_at";
 const EXPENSE_INSTALLMENT_PAYMENT_SELECT = "id,user_id,expense_id,amount,payment_date,payment_method,reference_number,notes,created_at";
-const EXPENSE_SELECT = `id,user_id,employee_id,employee_name,category_id,category_name,amount,frequency,duration_months,status,paid_date,expense_date,due_date,payment_date,notes,created_at,updated_at,installment_payments:expense_installment_payments(${EXPENSE_INSTALLMENT_PAYMENT_SELECT})`;
+const EXPENSE_SELECT = `id,user_id,employee_id,employee_name,category_id,category_name,amount,frequency,duration_months,status,paid_date,expense_date,due_date,payment_date,notes,payroll_run_id,created_at,updated_at,installment_payments:expense_installment_payments(${EXPENSE_INSTALLMENT_PAYMENT_SELECT})`;
 
 export async function fetchExpenseCategories(supabase: SupabaseClient) {
   const result = await supabase
