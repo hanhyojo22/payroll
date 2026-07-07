@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { BadgeDollarSign, CheckCircle2, ChevronDown, Eye, FileText, Pencil, Plus, Send, Trash2, X } from "lucide-react";
 import {
   billingPeriodLabel,
@@ -11,7 +11,7 @@ import { paymentReminderRemainingBalance } from "../../domain/paymentReminders";
 import { isOfflineLikeError } from "../../lib/offlineSync";
 import { supabase } from "../../supabase";
 import { MoneyField } from "../../shared/components/MoneyField";
-import { PageHeader, Toolbar } from "../../shared/components/PageLayout";
+import { PageHeader } from "../../shared/components/PageLayout";
 import { NotificationService } from "../../shared/notifications/NotificationService";
 import type { QueueOfflineMutation } from "../../shared/types";
 import { currency } from "../../shared/utils/currency";
@@ -62,7 +62,6 @@ export type BillingFeatureProps = {
   subconDailyTickets: SubconDailyTicket[];
   subcontractorAdvances: SubcontractorAdvance[];
   subcontractors: Subcontractor[];
-  tabs?: ReactNode;
   userId: string;
 };
 
@@ -77,7 +76,6 @@ export function BillingFeature({
   onQueueOfflineMutation,
   payments,
   subconDailyTickets,
-  tabs,
   subcontractorAdvances,
   subcontractors,
   userId,
@@ -504,8 +502,6 @@ export function BillingFeature({
         text="Generate billing by period, track collections, and connect subcontractor net pay to payouts."
       />
 
-      {tabs}
-
       <section className="billing-summary">
         <div className="billing-stat accent">
           <div className="billing-stat-icon"><BadgeDollarSign size={21} /></div>
@@ -554,12 +550,16 @@ export function BillingFeature({
                 <th className="num">Amount</th>
                 <th className="num">Payable</th>
                 <th className="num">Collection</th>
+                <th>Status</th>
                 <th>Action</th>
               </tr>
             </thead>
             <tbody>
               {billingRecords.map((record) => {
                 const expanded = expandedRecordId === record.id;
+                const isFullyPaid =
+                  billingPaidState(collectionStatusFor(record)) === "paid" &&
+                  (!record.collectibles_collection_id || billingPaidState(collectiblesStatusFor(record)) === "paid");
                 return (
                   <>
                     <tr className="expandable" key={record.id}>
@@ -603,6 +603,11 @@ export function BillingFeature({
                       <td className="num">{currency.format(record.collectibles_amount)}</td>
                       <td className="num">{currency.format(record.collections_amount)}</td>
                       <td>
+                        <span className={`collection-status ${isFullyPaid ? "collected" : "pending"}`}>
+                          {isFullyPaid ? "Paid" : "Unpaid"}
+                        </span>
+                      </td>
+                      <td>
                         <div className="billing-row-actions">
                           <button aria-label="View details" onClick={() => setDetailsRecord(record)} type="button" title="View details">
                             <Eye size={14} />
@@ -618,7 +623,7 @@ export function BillingFeature({
                     </tr>
                     {expanded && (
                       <tr className="subcon-detail-row" key={`${record.id}-subcon`}>
-                        <td colSpan={9}>
+                        <td colSpan={10}>
                           <table className="billing-subcon-detail-table">
                             <thead>
                               <tr>
@@ -729,106 +734,6 @@ export function BillingFeature({
 
 function billingPaidState(status: string): "paid" | "pending" {
   return status === "collected" ? "paid" : "pending";
-}
-
-export function BillingHistoryFeature({
-  billingRecords,
-  billingSettings,
-  collections,
-  dailyTicketEntries,
-  payments,
-  tabs,
-}: {
-  billingRecords: BillingRecord[];
-  billingSettings: BillingSettings | null;
-  collections: CollectionReminder[];
-  dailyTicketEntries: DailyTicketEntry[];
-  payments: PaymentReminder[];
-  tabs?: ReactNode;
-}) {
-  const [query, setQuery] = useState("");
-  const [detailsRecord, setDetailsRecord] = useState<BillingRecord | null>(null);
-
-  const sorted = [...billingRecords].sort((a, b) => {
-    if (a.billing_year !== b.billing_year) return b.billing_year - a.billing_year;
-    if (a.billing_month !== b.billing_month) return b.billing_month - a.billing_month;
-    if (a.billing_period === b.billing_period) return 0;
-    return a.billing_period === "second_half" ? -1 : 1;
-  });
-
-  const rows = query.trim()
-    ? sorted.filter((record) => `${record.invoice_no} ${monthNames[record.billing_month - 1]} ${record.billing_year}`.toLowerCase().includes(query.trim().toLowerCase()))
-    : sorted;
-
-  return (
-    <div className="page-stack">
-      <PageHeader
-        eyebrow="Billing records"
-        text="Review every billing invoice and whether the client has paid."
-        title="Billing History"
-      />
-      {tabs}
-      <Toolbar query={query} setQuery={setQuery} />
-      {rows.length === 0 ? (
-        <div className="panel"><p className="muted">No billing history yet.</p></div>
-      ) : (
-        <div className="billing-table-wrap">
-          <table className="billing-table">
-            <thead>
-              <tr>
-                <th>Invoice No.</th>
-                <th>Period</th>
-                <th className="num">Billing Amount</th>
-                <th className="num">Payable</th>
-                <th className="num">Collection</th>
-                <th>Status</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((record) => {
-                const collectionStatus = collectionStatusForRecord(record, collections, record.collection_id);
-                const collectiblesStatus = collectionStatusForRecord(record, collections, record.collectibles_collection_id);
-                const isFullyPaid =
-                  billingPaidState(collectionStatus) === "paid" &&
-                  (!record.collectibles_collection_id || billingPaidState(collectiblesStatus) === "paid");
-                return (
-                  <tr key={record.id}>
-                    <td className="billing-invoice-no">{record.invoice_no}</td>
-                    <td>{monthNames[record.billing_month - 1]} {record.billing_year} · {billingPeriodLabel(record.billing_period)}</td>
-                    <td className="num">{currency.format(record.billing_amount)}</td>
-                    <td className="num">{currency.format(record.collectibles_amount)}</td>
-                    <td className="num">{currency.format(record.collections_amount)}</td>
-                    <td>
-                      <span className={`collection-status ${isFullyPaid ? "collected" : "pending"}`}>
-                        {isFullyPaid ? "Paid" : "Pending"}
-                      </span>
-                    </td>
-                    <td>
-                      <div className="billing-row-actions">
-                        <button aria-label="View details" onClick={() => setDetailsRecord(record)} title="View details" type="button">
-                          <Eye size={14} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-      {detailsRecord && billingSettings && (
-        <BillingDetailsModal
-          dailyTicketEntries={dailyTicketEntries}
-          onClose={() => setDetailsRecord(null)}
-          payments={payments}
-          record={detailsRecord}
-          settings={billingSettings}
-        />
-      )}
-    </div>
-  );
 }
 
 async function markPayoutPaid(
@@ -1511,7 +1416,15 @@ function BillingForm({
                     <label className="cbf-ticket-field">
                       <span className="cbf-ticket-type">Installation</span>
                       <span className="cbf-ticket-input-wrap">
-                        <input className="cbf-ticket-input cbf-ticket-input--dispute" min="0" type="number" value={values.disputed_install} onChange={(event) => setValues({ ...values, disputed_install: event.target.value })} />
+                        <input
+                          className="cbf-ticket-input cbf-ticket-input--dispute"
+                          disabled={installTickets === 0}
+                          max={installTickets}
+                          min="0"
+                          type="number"
+                          value={String(disputedInstall)}
+                          onChange={(event) => setValues({ ...values, disputed_install: String(Math.max(0, Math.min(installTickets, Number(event.target.value) || 0))) })}
+                        />
                       </span>
                     </label>
                   </div>
@@ -1519,7 +1432,15 @@ function BillingForm({
                     <label className="cbf-ticket-field">
                       <span className="cbf-ticket-type">Repair</span>
                       <span className="cbf-ticket-input-wrap">
-                        <input className="cbf-ticket-input cbf-ticket-input--dispute" min="0" type="number" value={values.disputed_repair} onChange={(event) => setValues({ ...values, disputed_repair: event.target.value })} />
+                        <input
+                          className="cbf-ticket-input cbf-ticket-input--dispute"
+                          disabled={repairTickets === 0}
+                          max={repairTickets}
+                          min="0"
+                          type="number"
+                          value={String(disputedRepair)}
+                          onChange={(event) => setValues({ ...values, disputed_repair: String(Math.max(0, Math.min(repairTickets, Number(event.target.value) || 0))) })}
+                        />
                       </span>
                     </label>
                   </div>
@@ -1545,11 +1466,15 @@ function BillingForm({
                     <div className="billing-subcon-form-empty">No active subcontractors yet.</div>
                   ) : (
                     values.subcon_items.map((item, index) => {
+                      const itemInstallTickets = Number(item.install_tickets) || 0;
+                      const itemRepairTickets = Number(item.repair_tickets) || 0;
+                      const itemDisputedInstall = Math.max(0, Math.min(itemInstallTickets, Number(item.disputed_install) || 0));
+                      const itemDisputedRepair = Math.max(0, Math.min(itemRepairTickets, Number(item.disputed_repair) || 0));
                       const computed = computeSubconItem(
-                        Number(item.install_tickets) || 0,
-                        Number(item.repair_tickets) || 0,
-                        Number(item.disputed_install) || 0,
-                        Number(item.disputed_repair) || 0,
+                        itemInstallTickets,
+                        itemRepairTickets,
+                        itemDisputedInstall,
+                        itemDisputedRepair,
                         Number(item.installation_rate) || 0,
                         Number(item.repair_rate) || 0,
                         Number(item.payable_pct) || 0,
@@ -1564,10 +1489,24 @@ function BillingForm({
                           <div className="billing-subcon-inline-values"><span>{item.install_tickets}</span></div>
                           <div className="billing-subcon-inline-values"><span>{item.repair_tickets}</span></div>
                           <div className="billing-subcon-dispute-cell">
-                            <input min="0" type="number" value={item.disputed_install} onChange={(event) => updateSubconItem(index, { disputed_install: event.target.value })} />
+                            <input
+                              disabled={itemInstallTickets === 0}
+                              max={itemInstallTickets}
+                              min="0"
+                              type="number"
+                              value={String(itemDisputedInstall)}
+                              onChange={(event) => updateSubconItem(index, { disputed_install: String(Math.max(0, Math.min(itemInstallTickets, Number(event.target.value) || 0))) })}
+                            />
                           </div>
                           <div className="billing-subcon-dispute-cell">
-                            <input min="0" type="number" value={item.disputed_repair} onChange={(event) => updateSubconItem(index, { disputed_repair: event.target.value })} />
+                            <input
+                              disabled={itemRepairTickets === 0}
+                              max={itemRepairTickets}
+                              min="0"
+                              type="number"
+                              value={String(itemDisputedRepair)}
+                              onChange={(event) => updateSubconItem(index, { disputed_repair: String(Math.max(0, Math.min(itemRepairTickets, Number(event.target.value) || 0))) })}
+                            />
                           </div>
                           <div className="billing-subcon-amount">
                             <strong>{currency.format(computed.billingAmount)}</strong>

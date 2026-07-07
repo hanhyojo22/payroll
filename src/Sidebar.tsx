@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import {
   BadgeDollarSign,
+  BarChart3,
   CalendarClock,
   CheckCircle2,
   ChevronDown,
@@ -16,7 +17,6 @@ import {
 type View =
   | "attendance"
   | "billing"
-  | "billing-history"
   | "billing-settings"
   | "dashboard"
   | "employees"
@@ -30,6 +30,7 @@ type View =
   | "payroll"
   | "payroll-settings"
   | "payroll-history"
+  | "reports"
   | "payments"
   | "collections"
   | "collection-history"
@@ -87,9 +88,10 @@ export function Sidebar({
         <p className="nav-section-label">Operations</p>
         <NavButton active={view === "daily-tickets" || view === "daily-tickets-subcon"} icon={<CalendarClock size={18} />} label="Daily Tickets" onClick={() => goTo("daily-tickets")} />
         <NavButton active={view === "payroll" || view === "payroll-history"} icon={<BadgeDollarSign size={18} />} label="Payroll" onClick={() => goTo("payroll")} />
+        <NavButton active={view === "reports"} icon={<BarChart3 size={18} />} label="Reports" onClick={() => goTo("reports")} />
 
         <p className="nav-section-label">Finance</p>
-        <NavButton active={view === "billing" || view === "billing-history"} icon={<FileText size={18} />} label="Billing" onClick={() => goTo("billing")} />
+        <NavButton active={view === "billing"} icon={<FileText size={18} />} label="Billing" onClick={() => goTo("billing")} />
         <NavButton active={view === "expenses"} icon={<CreditCard size={18} />} label="Expenses" onClick={() => goTo("expenses")} />
         <NavButton active={view === "subcontractors"} icon={<Users size={18} />} label="Subcontractors" onClick={() => goTo("subcontractors")} />
         <NavButton active={view === "collections" || view === "collection-history"} icon={<BadgeDollarSign size={18} />} label="Collections" onClick={() => goTo("collections")} />

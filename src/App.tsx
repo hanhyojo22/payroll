@@ -16,7 +16,6 @@ import {
   Download,
   Eye,
   FileText,
-  Filter,
   Heart,
   HelpCircle,
   History,
@@ -82,7 +81,7 @@ import {
 } from "./lib/supabaseData";
 import { queueMutation, readCachedResource, writeCachedResource } from "./lib/offlineDb";
 import { flushPendingMutations, isOfflineLikeError } from "./lib/offlineSync";
-import { BillingFeature, BillingHistoryFeature, BillingSettingsManager } from "./features/billing/BillingFeature";
+import { BillingFeature, BillingSettingsManager } from "./features/billing/BillingFeature";
 import { saveSubcontractor } from "./features/billing/billingRepository";
 import { saveSubconDailyTicket } from "./features/billing/subconTicketRepository";
 import { CollectionHistoryFeature, CollectionsFeature } from "./features/collections/CollectionsFeature";
@@ -91,6 +90,7 @@ import { ExpenseCategoriesManager, ExpensesFeature } from "./features/expenses/E
 import { PaymentsFeature } from "./features/payments/PaymentsFeature";
 import { EmployeeAdvancesFeature } from "./features/payroll/EmployeeAdvancesFeature";
 import { PayrollFeature, PayrollHistoryFeature, PayrollSettingsManager } from "./features/payroll/PayrollFeature";
+import { ReportsFeature } from "./features/reports/ReportsFeature";
 import { SubcontractorsFeature } from "./features/subcontractors/SubcontractorsFeature";
 import { Sidebar } from "./Sidebar";
 import { MoneyField as MoneyInput } from "./shared/components/MoneyField";
@@ -138,7 +138,6 @@ import type {
 type View =
   | "attendance"
   | "billing"
-  | "billing-history"
   | "billing-settings"
   | "dashboard"
   | "employees"
@@ -152,6 +151,7 @@ type View =
   | "payroll"
   | "payroll-settings"
   | "payroll-history"
+  | "reports"
   | "payments"
   | "collections"
   | "collection-history"
@@ -227,7 +227,6 @@ function computeDailyEarnings(dailyRate: number, status: AttendanceStatus | "", 
 const viewPaths: Record<View, string> = {
   attendance: "/attendance",
   billing: "/billing",
-  "billing-history": "/billing/history",
   "billing-settings": "/settings/billing",
   dashboard: "/dashboard",
   employees: "/employees",
@@ -241,6 +240,7 @@ const viewPaths: Record<View, string> = {
   payroll: "/payroll",
   "payroll-settings": "/settings/payroll",
   "payroll-history": "/payroll/history",
+  reports: "/reports",
   payments: "/payments",
   collections: "/collections",
   "collection-history": "/collections/history",
@@ -250,7 +250,6 @@ const viewPaths: Record<View, string> = {
 const viewResources: Record<View, ResourceKey[]> = {
   attendance: ["positions", "employees", "attendanceEntries"],
   billing: ["billingRecords", "billingSettings", "dailyTicketEntries", "collections", "subcontractors", "subcontractorAdvances", "subconDailyTickets", "payments"],
-  "billing-history": ["billingRecords", "billingSettings", "dailyTicketEntries", "collections", "subcontractors", "subcontractorAdvances", "subconDailyTickets", "payments"],
   "billing-settings": ["billingSettings", "subcontractors"],
   dashboard: ["dashboardSummary"],
   employees: ["employees", "positions", "payrollRuns", "employeeAdvances"],
@@ -264,6 +263,7 @@ const viewResources: Record<View, ResourceKey[]> = {
   payroll: ["positions", "employees", "attendanceEntries", "dailyTicketEntries", "payrollRuns", "employeeAdvances", "payrollHistory", "payrollSettings"],
   "payroll-settings": ["payrollSettings"],
   "payroll-history": ["positions", "employees", "attendanceEntries", "dailyTicketEntries", "payrollRuns", "employeeAdvances", "payrollHistory", "payrollSettings"],
+  reports: ["employees", "billingRecords", "billingSettings", "collections", "dailyTicketEntries", "payrollHistory"],
   payments: ["expenses", "expenseCategories"],
   collections: ["collections"],
   "collection-history": ["collections"],
@@ -285,7 +285,6 @@ type GlobalSearchResult = {
 const viewBreadcrumbs: Record<View, BreadcrumbItem[]> = {
   attendance: [{ label: "Dashboard", view: "dashboard" }, { label: "Attendance", view: "attendance" }],
   billing: [{ label: "Dashboard", view: "dashboard" }, { label: "Billing", view: "billing" }],
-  "billing-history": [{ label: "Dashboard", view: "dashboard" }, { label: "Billing", view: "billing" }, { label: "History", view: "billing-history" }],
   "billing-settings": [{ label: "Dashboard", view: "dashboard" }, { label: "Settings" }, { label: "Billing Settings", view: "billing-settings" }],
   dashboard: [{ label: "Dashboard", view: "dashboard" }],
   employees: [{ label: "Dashboard", view: "dashboard" }, { label: "Employees", view: "employees" }],
@@ -299,6 +298,7 @@ const viewBreadcrumbs: Record<View, BreadcrumbItem[]> = {
   payroll: [{ label: "Dashboard", view: "dashboard" }, { label: "Payroll", view: "payroll" }],
   "payroll-settings": [{ label: "Dashboard", view: "dashboard" }, { label: "Settings" }, { label: "Payroll Settings", view: "payroll-settings" }],
   "payroll-history": [{ label: "Dashboard", view: "dashboard" }, { label: "Payroll", view: "payroll" }, { label: "History", view: "payroll-history" }],
+  reports: [{ label: "Dashboard", view: "dashboard" }, { label: "Reports", view: "reports" }],
   payments: [{ label: "Dashboard", view: "dashboard" }, { label: "Payment History", view: "payments" }],
   collections: [{ label: "Dashboard", view: "dashboard" }, { label: "Collections", view: "collections" }],
   "collection-history": [{ label: "Dashboard", view: "dashboard" }, { label: "Collections", view: "collections" }, { label: "History", view: "collection-history" }],
@@ -1236,49 +1236,37 @@ function Workspace({ session }: { session: Session }) {
                   )}
                 </>
               )}
+              {view === "reports" && (
+                <ReportsFeature
+                  billingRecords={billingRecords}
+                  billingSettings={billingSettings}
+                  collections={collections}
+                  dailyTicketEntries={dailyTicketEntries}
+                  employees={employees}
+                  payrollHistoryRows={payrollHistoryRows}
+                />
+              )}
               {view === "payments" && <PaymentsFeature expenseCategories={expenseCategories} expenses={expenses} />}
-              {(view === "billing" || view === "billing-history") && (
-                view === "billing" ? (
-                  <BillingFeature
-                    billingRecords={billingRecords}
-                    billingSettings={billingSettings}
-                    collections={collections}
-                    dailyTicketEntries={dailyTicketEntries}
-                    onOpenSubcontractorAccount={(subcontractorId) => {
-                      setSelectedSubcontractorId(subcontractorId);
-                      setSubcontractorAccountTab("billing");
-                      navigate("subcontractors");
-                    }}
-                    onChange={refreshBillingPage}
-                    onLocalBillingRecordsChange={setBillingRecords}
-                    onQueueOfflineMutation={queueOfflineMutation}
-                    payments={payments}
-                    subconDailyTickets={subconDailyTickets}
-                    subcontractorAdvances={subcontractorAdvances}
-                    subcontractors={subcontractors}
-                    tabs={(
-                      <div className="page-tabs" role="tablist">
-                        <button className="active" onClick={() => navigate("billing")} role="tab" type="button">Billing</button>
-                        <button onClick={() => navigate("billing-history")} role="tab" type="button">History</button>
-                      </div>
-                    )}
-                    userId={session.user.id}
-                  />
-                ) : (
-                  <BillingHistoryFeature
-                    billingRecords={billingRecords}
-                    billingSettings={billingSettings}
-                    collections={collections}
-                    dailyTicketEntries={dailyTicketEntries}
-                    payments={payments}
-                    tabs={(
-                      <div className="page-tabs" role="tablist">
-                        <button onClick={() => navigate("billing")} role="tab" type="button">Billing</button>
-                        <button className="active" onClick={() => navigate("billing-history")} role="tab" type="button">History</button>
-                      </div>
-                    )}
-                  />
-                )
+              {view === "billing" && (
+                <BillingFeature
+                  billingRecords={billingRecords}
+                  billingSettings={billingSettings}
+                  collections={collections}
+                  dailyTicketEntries={dailyTicketEntries}
+                  onOpenSubcontractorAccount={(subcontractorId) => {
+                    setSelectedSubcontractorId(subcontractorId);
+                    setSubcontractorAccountTab("billing");
+                    navigate("subcontractors");
+                  }}
+                  onChange={refreshBillingPage}
+                  onLocalBillingRecordsChange={setBillingRecords}
+                  onQueueOfflineMutation={queueOfflineMutation}
+                  payments={payments}
+                  subconDailyTickets={subconDailyTickets}
+                  subcontractorAdvances={subcontractorAdvances}
+                  subcontractors={subcontractors}
+                  userId={session.user.id}
+                />
               )}
               {view === "billing-settings" && (
                 <BillingSettingsManager
@@ -3431,6 +3419,12 @@ export function DailyTicketEntryView({
                         const busy = busyEmployeeId === draft.employee.id;
                         const saved = savedIds.has(draft.employee.id);
                         const disputes = disputeValuesFor(draft);
+                        const installTotal = cats
+                          .filter((cat) => (cat.ticket_type ?? "installation") === "installation")
+                          .reduce((sum, cat) => sum + normalizeTicketCount(draft.counts[cat.id]), 0);
+                        const repairTotal = cats
+                          .filter((cat) => cat.ticket_type === "repair")
+                          .reduce((sum, cat) => sum + normalizeTicketCount(draft.counts[cat.id]), 0);
                         return (
                           <tr key={draft.employee.id} className={dirty ? "ticket-row-dirty" : saved ? "ticket-row-saved" : ""}>
                             <td className="ticket-no-col">{index + 1}</td>
@@ -3466,14 +3460,16 @@ export function DailyTicketEntryView({
                             <td className="ticket-count-cell ticket-count-cell--dispute">
                               <input
                                 aria-label={`Disputed installation tickets for ${draft.employee.full_name}`}
+                                disabled={installTotal === 0}
+                                max={installTotal}
                                 min="0"
                                 step="1"
                                 type="number"
-                                value={disputes.install}
+                                value={Math.min(installTotal, normalizeTicketCount(disputes.install))}
                                 onChange={(e) => setDraftDisputes((current) => ({
                                   ...current,
                                   [draft.employee.id]: {
-                                    install: normalizeTicketCount(e.target.value),
+                                    install: Math.min(installTotal, normalizeTicketCount(e.target.value)),
                                     repair: current[draft.employee.id]?.repair ?? draft.entry?.disputed_repair ?? 0,
                                   },
                                 }))}
@@ -3482,15 +3478,17 @@ export function DailyTicketEntryView({
                             <td className="ticket-count-cell ticket-count-cell--dispute">
                               <input
                                 aria-label={`Disputed repair tickets for ${draft.employee.full_name}`}
+                                disabled={repairTotal === 0}
+                                max={repairTotal}
                                 min="0"
                                 step="1"
                                 type="number"
-                                value={disputes.repair}
+                                value={Math.min(repairTotal, normalizeTicketCount(disputes.repair))}
                                 onChange={(e) => setDraftDisputes((current) => ({
                                   ...current,
                                   [draft.employee.id]: {
                                     install: current[draft.employee.id]?.install ?? draft.entry?.disputed_install ?? 0,
-                                    repair: normalizeTicketCount(e.target.value),
+                                    repair: Math.min(repairTotal, normalizeTicketCount(e.target.value)),
                                   },
                                 }))}
                               />
@@ -4046,26 +4044,36 @@ function SubconDailyTicketView({
                     <td className="ticket-count-cell ticket-count-cell--dispute">
                       <input
                         aria-label={`Disputed install tickets for ${subcontractor.name}`}
+                        disabled={normalizeTicketCount(values.install) === 0}
+                        max={normalizeTicketCount(values.install)}
                         min="0"
                         step="1"
                         type="number"
-                        value={values.disputedInstall}
+                        value={Math.min(normalizeTicketCount(values.install), normalizeTicketCount(values.disputedInstall))}
                         onChange={(e) => setDrafts((current) => ({
                           ...current,
-                          [subcontractor.id]: { ...draftValuesFor(subcontractor.id), disputedInstall: normalizeTicketCount(e.target.value) },
+                          [subcontractor.id]: {
+                            ...draftValuesFor(subcontractor.id),
+                            disputedInstall: Math.min(normalizeTicketCount(values.install), normalizeTicketCount(e.target.value)),
+                          },
                         }))}
                       />
                     </td>
                     <td className="ticket-count-cell ticket-count-cell--dispute">
                       <input
                         aria-label={`Disputed repair tickets for ${subcontractor.name}`}
+                        disabled={normalizeTicketCount(values.repair) === 0}
+                        max={normalizeTicketCount(values.repair)}
                         min="0"
                         step="1"
                         type="number"
-                        value={values.disputedRepair}
+                        value={Math.min(normalizeTicketCount(values.repair), normalizeTicketCount(values.disputedRepair))}
                         onChange={(e) => setDrafts((current) => ({
                           ...current,
-                          [subcontractor.id]: { ...draftValuesFor(subcontractor.id), disputedRepair: normalizeTicketCount(e.target.value) },
+                          [subcontractor.id]: {
+                            ...draftValuesFor(subcontractor.id),
+                            disputedRepair: Math.min(normalizeTicketCount(values.repair), normalizeTicketCount(e.target.value)),
+                          },
                         }))}
                       />
                     </td>
@@ -4521,9 +4529,6 @@ export function AttendanceView({
           </label>
           </div>
           <div className="attendance-toolbar-actions">
-          <button className="attendance-tool-button" type="button">
-            <Filter size={15} /> More Filters
-          </button>
           <button className="attendance-tool-button" onClick={markAllPresent} type="button">
             <CheckCircle2 size={15} /> Bulk Actions
           </button>

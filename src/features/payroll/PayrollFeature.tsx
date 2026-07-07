@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { BadgeDollarSign, CalendarClock, CheckCircle2, ChevronDown, Plus, Search, Users, X } from "lucide-react";
+import { BadgeDollarSign, CalendarClock, CheckCircle2, Plus, Search, Users, X } from "lucide-react";
 import { Spinner } from "../../shared/components/Spinner";
 import {
   attendanceTotalsForEmployee,
@@ -234,7 +234,9 @@ export function PayrollFeature({
   const [formOpen, setFormOpen] = useState(false);
   const [activePayrollSettings, setActivePayrollSettings] = useState<PayrollSettings | null>(payrollSettings);
   const [selectedRunId, setSelectedRunId] = useState(payrollRuns[0]?.id ?? "");
-  const selectedRun = payrollRuns.find((run) => run.id === selectedRunId) ?? payrollRuns[0];
+  const selectedRun = selectedRunId
+    ? payrollRuns.find((run) => run.id === selectedRunId)
+    : payrollRuns[0];
   const activeEmployees = employees.filter((employee) => employee.status === "active");
   const existingEmployeeIds = new Set(
     (selectedRun?.items ?? [])
@@ -1229,7 +1231,10 @@ export function PayrollSettingsManager({
 
 export function PayrollHistoryFeature({ employees, rows, tabs }: { employees: Employee[]; rows: PayrollHistoryRow[]; tabs?: ReactNode }) {
   const [query, setQuery] = useState("");
-  const [collapsedPeriods, setCollapsedPeriods] = useState<Set<string>>(new Set());
+  const [monthFilter, setMonthFilter] = useState("all");
+  const [cutoffFilter, setCutoffFilter] = useState<"all" | PayrollPayPeriod>("all");
+  const [historyPage, setHistoryPage] = useState(1);
+  const HISTORY_PAGE_SIZE = 13;
 
   const employeeCodeMap = useMemo(() => {
     const sorted = [...employees].sort((a, b) => a.created_at.localeCompare(b.created_at));
@@ -1237,98 +1242,109 @@ export function PayrollHistoryFeature({ employees, rows, tabs }: { employees: Em
   }, [employees]);
   const empCode = (id: string | null) => (id ? employeeCodeMap.get(id) ?? "—" : "—");
 
-  const filteredRows = rows.filter((row) => row.searchText.includes(query.toLowerCase()));
+  const filteredRows = rows.filter((row) => {
+    const matchesQuery = row.searchText.includes(query.trim().toLowerCase());
+    const matchesMonth = monthFilter === "all" || String(row.periodMonth) === monthFilter;
+    const matchesCutoff = cutoffFilter === "all" || row.payPeriodCutoff === cutoffFilter;
+    return matchesQuery && matchesMonth && matchesCutoff;
+  });
 
-  // Group by payPeriod, preserving the order they appear (already sorted newest-first)
-  const groups: Array<{ period: string; rows: PayrollHistoryRow[] }> = [];
-  const seen = new Map<string, PayrollHistoryRow[]>();
-  for (const row of filteredRows) {
-    if (!seen.has(row.payPeriod)) {
-      seen.set(row.payPeriod, []);
-      groups.push({ period: row.payPeriod, rows: seen.get(row.payPeriod)! });
-    }
-    seen.get(row.payPeriod)!.push(row);
-  }
+  useEffect(() => {
+    setHistoryPage(1);
+  }, [query, monthFilter, cutoffFilter]);
 
-  function togglePeriod(period: string) {
-    setCollapsedPeriods((prev) => {
-      const next = new Set(prev);
-      if (next.has(period)) next.delete(period); else next.add(period);
-      return next;
-    });
-  }
+  const historyPageCount = Math.max(1, Math.ceil(filteredRows.length / HISTORY_PAGE_SIZE));
+  const safeHistoryPage = Math.min(historyPage, historyPageCount);
+  const historyPageStart = (safeHistoryPage - 1) * HISTORY_PAGE_SIZE;
+  const historyPageEnd = Math.min(historyPageStart + HISTORY_PAGE_SIZE, filteredRows.length);
+  const paginatedRows = filteredRows.slice(historyPageStart, historyPageEnd);
 
   return (
     <div className="page-stack">
       <PageHeader
         eyebrow="Payroll records"
-        text="Review every employee payroll record by pay period."
+        text="Review every employee payroll record."
         title="Payroll History"
       />
       {tabs}
-      <Toolbar query={query} setQuery={setQuery} />
+      <Toolbar query={query} setQuery={setQuery}>
+        <div className="ph-filter-group">
+          <select value={monthFilter} onChange={(event) => setMonthFilter(event.target.value)}>
+            <option value="all">All Months</option>
+            {monthNames.map((name, index) => (
+              <option key={name} value={String(index + 1)}>{name}</option>
+            ))}
+          </select>
+          <select value={cutoffFilter} onChange={(event) => setCutoffFilter(event.target.value as "all" | PayrollPayPeriod)}>
+            <option value="all">All cutoffs</option>
+            <option value="first_half">1st Cutoff</option>
+            <option value="second_half">2nd Cutoff</option>
+          </select>
+        </div>
+      </Toolbar>
       {rows.length === 0 ? (
         <div className="panel"><p className="muted">No paid payroll history yet.</p></div>
       ) : filteredRows.length === 0 ? (
         <div className="panel"><p className="muted">No records match your search.</p></div>
       ) : (
-        groups.map(({ period, rows: groupRows }) => {
-          const collapsed = collapsedPeriods.has(period);
-          const gross = groupRows.reduce((s, r) => s + r.grossPay, 0);
-          const net = groupRows.reduce((s, r) => s + r.netPay, 0);
-          return (
-            <section key={period} className="ph-group">
-              <button className="ph-group-header" type="button" onClick={() => togglePeriod(period)}>
-                <div className="ph-group-title">
-                  <ChevronDown size={15} className={collapsed ? "ph-chevron collapsed" : "ph-chevron"} />
-                  <strong>{period}</strong>
-                  <span className="ph-group-count">{groupRows.length} employee{groupRows.length !== 1 ? "s" : ""}</span>
-                </div>
-                <div className="ph-group-totals">
-                  <span>Gross <strong>{currency.format(gross)}</strong></span>
-                  <span>Net <strong>{currency.format(net)}</strong></span>
-                </div>
+        <div className="table-wrap">
+          <table className="ph-table">
+            <thead>
+              <tr>
+                <th>Payroll No.</th>
+                <th>Pay Period</th>
+                <th>Employee ID</th>
+                <th>Employee</th>
+                <th>Department</th>
+                <th>Gross Pay</th>
+                <th>Deductions</th>
+                <th>Net Pay</th>
+                <th>Date Processed</th>
+              </tr>
+            </thead>
+            <tbody>
+              {paginatedRows.map((row) => (
+                <tr key={row.payrollNo}>
+                  <td className="ph-no">{row.payrollNo}</td>
+                  <td>{row.payPeriod}</td>
+                  <td>{empCode(row.employeeId)}</td>
+                  <td>
+                    <div className="employee-list-identity">
+                      <EmpAvatar employees={employees} employeeId={row.employeeId} employeeName={row.employeeName} />
+                      <RecordTitle title={row.employeeName} notes={employees.find((e) => e.id === row.employeeId)?.email || "No email"} />
+                    </div>
+                  </td>
+                  <td>{row.department}</td>
+                  <td>{currency.format(row.grossPay)}</td>
+                  <td>{row.deductions > 0 ? currency.format(row.deductions) : "—"}</td>
+                  <td><strong>{currency.format(row.netPay)}</strong></td>
+                  <td>{row.processedDate}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {filteredRows.length > HISTORY_PAGE_SIZE && (
+        <div className="attendance-footer">
+          <span>
+            Showing {historyPageStart + 1} to {historyPageEnd} of {filteredRows.length} record{filteredRows.length === 1 ? "" : "s"}
+          </span>
+          <div>
+            <button disabled={safeHistoryPage === 1} onClick={() => setHistoryPage((page) => Math.max(1, page - 1))} type="button">{"<"}</button>
+            {Array.from({ length: historyPageCount }, (_, index) => index + 1).map((page) => (
+              <button
+                className={page === safeHistoryPage ? "active" : undefined}
+                key={page}
+                onClick={() => setHistoryPage(page)}
+                type="button"
+              >
+                {page}
               </button>
-              {!collapsed && (
-                <div className="table-wrap">
-                  <table className="ph-table">
-                    <thead>
-                      <tr>
-                        <th>Payroll No.</th>
-                        <th>Employee ID</th>
-                        <th>Employee</th>
-                        <th>Department</th>
-                        <th>Gross Pay</th>
-                        <th>Deductions</th>
-                        <th>Net Pay</th>
-                        <th>Date Processed</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {groupRows.map((row) => (
-                        <tr key={row.payrollNo}>
-                          <td className="ph-no">{row.payrollNo}</td>
-                          <td>{empCode(row.employeeId)}</td>
-                          <td>
-                            <div className="employee-list-identity">
-                              <EmpAvatar employees={employees} employeeId={row.employeeId} employeeName={row.employeeName} />
-                              <RecordTitle title={row.employeeName} notes={employees.find((e) => e.id === row.employeeId)?.email || "No email"} />
-                            </div>
-                          </td>
-                          <td>{row.department}</td>
-                          <td>{currency.format(row.grossPay)}</td>
-                          <td>{row.deductions > 0 ? currency.format(row.deductions) : "—"}</td>
-                          <td><strong>{currency.format(row.netPay)}</strong></td>
-                          <td>{row.processedDate}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </section>
-          );
-        })
+            ))}
+            <button disabled={safeHistoryPage === historyPageCount} onClick={() => setHistoryPage((page) => Math.min(historyPageCount, page + 1))} type="button">{">"}</button>
+          </div>
+        </div>
       )}
     </div>
   );
