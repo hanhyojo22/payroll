@@ -260,9 +260,9 @@ const viewResources: Record<View, ResourceKey[]> = {
   compensation: ["positions", "employees"],
   "daily-tickets": ["positions", "employees", "dailyTicketEntries", "subcontractors", "subconDailyTickets", "payrollRuns"],
   "daily-tickets-subcon": ["positions", "employees", "dailyTicketEntries", "subcontractors", "subconDailyTickets", "payrollRuns"],
-  payroll: ["positions", "employees", "attendanceEntries", "dailyTicketEntries", "payrollRuns", "employeeAdvances", "payrollHistory", "payrollSettings"],
+  payroll: ["positions", "employees", "attendanceEntries", "dailyTicketEntries", "payrollRuns", "employeeAdvances", "payrollHistory", "payrollSettings", "expenses", "expenseCategories"],
   "payroll-settings": ["payrollSettings"],
-  "payroll-history": ["positions", "employees", "attendanceEntries", "dailyTicketEntries", "payrollRuns", "employeeAdvances", "payrollHistory", "payrollSettings"],
+  "payroll-history": ["positions", "employees", "attendanceEntries", "dailyTicketEntries", "payrollRuns", "employeeAdvances", "payrollHistory", "payrollSettings", "expenses", "expenseCategories"],
   reports: ["employees", "billingRecords", "billingSettings", "collections", "dailyTicketEntries", "payrollHistory"],
   payments: ["expenses", "expenseCategories"],
   collections: ["collections"],
@@ -759,6 +759,8 @@ function Workspace({ session }: { session: Session }) {
       loadResource("payrollHistory", true),
       loadResource("payrollSettings", true),
       loadResource("dashboardSummary", true),
+      loadResource("expenses", true),
+      loadResource("expenseCategories", true),
     ]);
   }
 
@@ -1207,6 +1209,7 @@ function Workspace({ session }: { session: Session }) {
                       dailyTicketEntries={dailyTicketEntries}
                       employees={employees}
                       ensurePayrollRunItems={ensurePayrollRunItems}
+                      expenseCategories={expenseCategories}
                       onLocalPayrollRunsChange={setPayrollRuns}
                       onChange={refreshPayrollPage}
                       onQueueOfflineMutation={queueOfflineMutation}

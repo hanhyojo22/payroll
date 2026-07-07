@@ -24,6 +24,7 @@ import type {
   DailyTicketEntry,
   EmployeeAdvance,
   Employee,
+  ExpenseCategory,
   PayrollHistoryRow,
   PayrollPayPeriod,
   PayrollRun,
@@ -207,6 +208,7 @@ export function PayrollFeature({
   dailyTicketEntries,
   employees,
   ensurePayrollRunItems,
+  expenseCategories,
   onLocalPayrollRunsChange,
   onChange,
   onQueueOfflineMutation,
@@ -221,6 +223,7 @@ export function PayrollFeature({
   dailyTicketEntries: DailyTicketEntry[];
   employees: Employee[];
   ensurePayrollRunItems: (payrollRunId: string) => Promise<void>;
+  expenseCategories: ExpenseCategory[];
   onLocalPayrollRunsChange: (payrollRuns: PayrollRunWithItems[]) => void;
   onChange: () => Promise<void>;
   onQueueOfflineMutation: QueueOfflineMutation;
