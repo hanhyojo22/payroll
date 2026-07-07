@@ -273,10 +273,16 @@ export function PayrollFeature({
   }, [expenseCategories]);
 
   useEffect(() => {
-    if (!supabase || payrollExpenseCategoryId || !navigator.onLine) return;
-    void ensurePayrollExpenseCategory(supabase, userId).then(({ data }) => {
-      if (data) setPayrollExpenseCategoryId(data.id);
-    });
+    if (!supabase || payrollExpenseCategoryId) return;
+    function tryEnsureCategory() {
+      if (!supabase || payrollExpenseCategoryId || !navigator.onLine) return;
+      void ensurePayrollExpenseCategory(supabase, userId).then(({ data }) => {
+        if (data) setPayrollExpenseCategoryId(data.id);
+      });
+    }
+    tryEnsureCategory();
+    window.addEventListener("online", tryEnsureCategory);
+    return () => window.removeEventListener("online", tryEnsureCategory);
   }, [payrollExpenseCategoryId, userId]);
 
   useEffect(() => {
@@ -870,9 +876,24 @@ export function PayrollFeature({
 
     const paidDate = todayKey();
     for (const item of pendingItems) {
-      const { error } = await supabase.from("payroll_run_items").update({ status: "paid", paid_date: paidDate }).eq("id", item.id);
+      const deductionPatch = deductionPatchByItemId.get(item.id);
+      const { error } = await supabase.from("payroll_run_items").update({
+        ...(deductionPatch ?? {}),
+        status: "paid",
+        paid_date: paidDate,
+      }).eq("id", item.id);
       if (error) {
         NotificationService.showError(friendlyError(error));
+        return;
+      }
+    }
+
+    if (itemsNeedingPayrollDeductions.length > 0) {
+      const advanceError = await applyEmployeeAdvancePayrollDeductions(
+        itemsNeedingPayrollDeductions.flatMap((entry) => entry.patch.advanceDeductions),
+      );
+      if (advanceError) {
+        NotificationService.showError(friendlyError(advanceError));
         return;
       }
     }
