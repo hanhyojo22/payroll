@@ -1204,7 +1204,7 @@ function PayoutPaymentForm({
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal billing-form-modal" onClick={(event) => event.stopPropagation()}>
+      <div className="modal billing-form-modal company-expense-modal" onClick={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <div>
             <h3>Record Payment</h3>
@@ -1221,7 +1221,7 @@ function PayoutPaymentForm({
           onSubmit={async (event) => { event.preventDefault(); setBusy(true); await onSubmit(values); setBusy(false); }}
         >
           <p className="expense-remaining-note">Remaining balance: {currency.format(remainingBalance)}</p>
-          <div className="billing-form-fields">
+          <div className="billing-form-fields company-expense-form-fields">
             <MoneyField label="Amount" onChange={(amount) => setValues((current) => ({ ...current, amount }))} required value={values.amount} />
             <label>
               Payment date

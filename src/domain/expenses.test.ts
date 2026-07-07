@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { todayKey } from "../shared/utils/dates";
 import {
   daysBetween,
   expenseCyclesElapsedSince,
@@ -31,6 +32,10 @@ const expense = (overrides: Partial<Expense> = {}): Expense => ({
   status: "pending", paid_date: null, expense_date: "2026-06-01", due_date: "2026-06-30",
   payment_date: null,
   notes: "", created_at: "2026-06-01T00:00:00Z", updated_at: "2026-06-01T00:00:00Z", ...overrides,
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("one-time expense payment rules", () => {
@@ -124,6 +129,12 @@ describe("date-derived duration helpers", () => {
 describe("monthly recurring overdue tracking", () => {
   const monthly = expense({
     frequency: "monthly", amount: 1000, expense_date: "2027-01-14", due_date: "2027-07-14", duration_months: 6,
+  });
+
+  it("uses the current calendar day in the local timezone for overdue checks", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2027-07-14T00:30:00+08:00"));
+    expect(todayKey()).toBe("2027-07-14");
   });
 
   it("builds one per-cycle due date per period, ending on due_date", () => {

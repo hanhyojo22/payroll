@@ -649,7 +649,7 @@ function PaymentForm({ balance, onClose, onSubmit }: {
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal billing-form-modal collection-form-modal" onClick={(event) => event.stopPropagation()}>
         <div className="modal-header">
-          <h3>Record Payment</h3>
+          <h3>Record Collection</h3>
           <button aria-label="Close" onClick={onClose} type="button"><X size={18} /></button>
         </div>
         <form
@@ -683,7 +683,7 @@ function PaymentForm({ balance, onClose, onSubmit }: {
           </label>
           <div className="form-actions">
             <button className="billing-btn outline" onClick={onClose} type="button">Cancel</button>
-            <button className="billing-btn primary" disabled={busy} type="submit">{busy ? "Saving..." : "Record payment"}</button>
+            <button className="billing-btn primary" disabled={busy} type="submit">{busy ? "Saving..." : "Record Collection"}</button>
           </div>
         </form>
       </div>
