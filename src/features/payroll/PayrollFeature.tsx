@@ -654,6 +654,10 @@ export function PayrollFeature({
       gross_pay: gross,
       net_pay: netPay(gross, allowances, deductions),
     };
+    const runForSync = payrollRuns.find((run) => run.id === item.payroll_run_id);
+    const itemsForSync = runForSync
+      ? runForSync.items.map((runItem) => runItem.id === item.id ? { ...runItem, ...payload } : runItem)
+      : [];
     if (!navigator.onLine) {
       onLocalPayrollRunsChange(payrollRuns.map((run) => ({
         ...run,
@@ -667,6 +671,7 @@ export function PayrollFeature({
         recordId: item.id,
         payload,
       });
+      if (runForSync) await syncPayrollExpense(runForSync, itemsForSync);
       return;
     }
     const { error } = await supabase.from("payroll_run_items").update(payload).eq("id", item.id);
@@ -683,6 +688,7 @@ export function PayrollFeature({
         recordId: item.id,
         payload,
       });
+      if (runForSync) await syncPayrollExpense(runForSync, itemsForSync);
       return;
     }
     if (error) {
@@ -690,6 +696,7 @@ export function PayrollFeature({
     } else {
       NotificationService.showSuccess("Payroll item updated.");
     }
+    if (runForSync) await syncPayrollExpense(runForSync, itemsForSync);
     await onChange();
   }
 
