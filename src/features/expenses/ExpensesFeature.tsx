@@ -552,6 +552,7 @@ export function ExpensesFeature({
                 const isOverdue = isExpenseOverdue(expense, expense.installment_payments, todayKey());
                 const hasPayments = expense.installment_payments.length > 0;
                 const canRecordPayment = displayStatus !== "paid" && displayStatus !== "cancelled";
+                const isPayrollLinked = expense.payroll_run_id !== null;
                 const isOpenEndedRecurring = expense.frequency !== "one_time" && !expense.duration_months;
                 return (
                 <tr key={expense.id}>
@@ -594,25 +595,27 @@ export function ExpensesFeature({
                       <button onClick={() => setViewingExpense(expense)} title="View details" type="button">
                         <Eye size={14} />
                       </button>
-                      {canRecordPayment && (
+                      {!isPayrollLinked && canRecordPayment && (
                         <button onClick={() => setPayingInstallmentExpense(expense)} title="Record payment" type="button">
                           <CheckCircle2 size={14} />
                         </button>
                       )}
-                      {canRecordPayment && isOpenEndedRecurring && (
+                      {!isPayrollLinked && canRecordPayment && isOpenEndedRecurring && (
                         <button onClick={() => void handleEndRecurringExpense(expense)} title="End expense" type="button">
                           <Square size={14} />
                         </button>
                       )}
-                      <button
-                        disabled={hasPayments}
-                        onClick={() => { setEditingExpense(expense); setFormOpen(true); }}
-                        title={hasPayments ? "Locked — payments already recorded against this expense." : "Edit"}
-                        type="button"
-                      >
-                        <Pencil size={14} />
-                      </button>
-                      {canRecordPayment && (
+                      {!isPayrollLinked && (
+                        <button
+                          disabled={hasPayments}
+                          onClick={() => { setEditingExpense(expense); setFormOpen(true); }}
+                          title={hasPayments ? "Locked — payments already recorded against this expense." : "Edit"}
+                          type="button"
+                        >
+                          <Pencil size={14} />
+                        </button>
+                      )}
+                      {!isPayrollLinked && canRecordPayment && (
                         <button
                           disabled={hasPayments}
                           onClick={() => void handleCancelExpense(expense)}
@@ -622,14 +625,16 @@ export function ExpensesFeature({
                           <Ban size={14} />
                         </button>
                       )}
-                      <button
-                        disabled={hasPayments}
-                        onClick={() => setDeletingExpense(expense)}
-                        title={hasPayments ? "Can't delete — payments already recorded against this expense." : "Delete"}
-                        type="button"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      {!isPayrollLinked && (
+                        <button
+                          disabled={hasPayments}
+                          onClick={() => setDeletingExpense(expense)}
+                          title={hasPayments ? "Can't delete — payments already recorded against this expense." : "Delete"}
+                          type="button"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -1021,7 +1026,7 @@ function ExpenseDetailsModal({
                 <p>Audit trail</p>
                 <h2>Payment history</h2>
               </div>
-              {canRecordPayment && (
+              {canRecordPayment && expense.payroll_run_id === null && (
                 <button className="billing-btn primary" onClick={onRecordPayment} type="button">
                   <CheckCircle2 size={15} /> Record Payment
                 </button>
