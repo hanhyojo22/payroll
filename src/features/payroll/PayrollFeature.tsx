@@ -5,6 +5,7 @@ import {
   attendanceTotalsForEmployee,
   dailyTicketEntriesForPayrollPeriod,
   governmentDeductionForEmployee,
+  payrollExpensePayload,
   payrollItemPayloadForEmployee,
 } from "../../domain/payroll";
 import { netPay, normalizeTicketCount, ticketGrossPay } from "../../domain/tickets";
@@ -14,6 +15,7 @@ import { Modal, TextField } from "../../shared/components/FormLayout";
 import { DataTable } from "../../shared/components/DataTable";
 import { PageHeader, RecordTitle, Toolbar } from "../../shared/components/PageLayout";
 import { ensurePayrollSettings, savePayrollSettings } from "./payrollRepository";
+import { ensurePayrollExpenseCategory, saveExpense } from "../expenses/expenseRepository";
 import type { QueueOfflineMutation } from "../../shared/types";
 import { NotificationService } from "../../shared/notifications/NotificationService";
 import { currency, toNumber } from "../../shared/utils/currency";
@@ -261,6 +263,22 @@ export function PayrollFeature({
     });
   }, [activePayrollSettings, userId]);
 
+  const [payrollExpenseCategoryId, setPayrollExpenseCategoryId] = useState<string | null>(
+    expenseCategories.find((category) => category.type === "company" && category.name === "Payroll")?.id ?? null,
+  );
+
+  useEffect(() => {
+    const found = expenseCategories.find((category) => category.type === "company" && category.name === "Payroll");
+    if (found) setPayrollExpenseCategoryId(found.id);
+  }, [expenseCategories]);
+
+  useEffect(() => {
+    if (!supabase || payrollExpenseCategoryId || !navigator.onLine) return;
+    void ensurePayrollExpenseCategory(supabase, userId).then(({ data }) => {
+      if (data) setPayrollExpenseCategoryId(data.id);
+    });
+  }, [payrollExpenseCategoryId, userId]);
+
   useEffect(() => {
     if (!selectedRunId && payrollRuns[0]) {
       setSelectedRunId(payrollRuns[0].id);
@@ -326,6 +344,43 @@ export function PayrollFeature({
       }
     }
     return { error: null };
+  }
+
+  async function syncPayrollExpense(
+    run: Pick<PayrollRun, "id" | "period_month" | "period_year" | "pay_period" | "generated_date">,
+    items: Array<Pick<PayrollRunItem, "net_pay" | "status" | "paid_date">>,
+  ) {
+    if (!payrollExpenseCategoryId) return;
+    const payload = payrollExpensePayload(run, items, payrollExpenseCategoryId, userId);
+
+    if (!navigator.onLine) {
+      await onQueueOfflineMutation({
+        resource: "expenses",
+        affectedResources: ["expenses", "dashboardSummary"],
+        operation: "upsert",
+        table: "expenses",
+        recordId: payload.id,
+        payload,
+      });
+      return;
+    }
+
+    if (!supabase) return;
+    const result = await saveExpense(supabase, payload);
+    if (result.error && isOfflineLikeError(result.error)) {
+      await onQueueOfflineMutation({
+        resource: "expenses",
+        affectedResources: ["expenses", "dashboardSummary"],
+        operation: "upsert",
+        table: "expenses",
+        recordId: payload.id,
+        payload,
+      });
+      return;
+    }
+    if (result.error) {
+      NotificationService.showError("Payroll saved, but couldn't sync it to Company Expenses.");
+    }
   }
 
   async function createRun(values: PayrollRunFormValues) {
@@ -438,6 +493,7 @@ export function PayrollFeature({
           employeeAdvanceUpdates,
         },
       });
+      await syncPayrollExpense(offlineRun, itemPayloads);
       onLocalPayrollRunsChange([
         { ...offlineRun, items: offlineItems },
         ...payrollRuns,
@@ -496,6 +552,7 @@ export function PayrollFeature({
             employeeAdvanceUpdates,
           },
         });
+        await syncPayrollExpense(offlineRun, itemPayloads);
         onLocalPayrollRunsChange([
           { ...offlineRun, items: offlineItems },
           ...payrollRuns,
@@ -567,6 +624,7 @@ export function PayrollFeature({
     NotificationService.showSuccess("Payroll run generated.");
     setFormOpen(false);
     setSelectedRunId(newRun.id);
+    await syncPayrollExpense(newRun, itemPayloads);
     await onChange();
   }
 
