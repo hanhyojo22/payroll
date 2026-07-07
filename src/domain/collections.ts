@@ -1,4 +1,5 @@
 import type { CollectionPayment, CollectionReminder, CollectionStatus } from "../types";
+import { todayKey } from "../shared/utils/dates";
 
 export type CollectionAgingBucket = "current" | "days1To30" | "days31To60" | "days61To90" | "daysOver90";
 
@@ -14,7 +15,7 @@ export const collectionBalance = (
 
 export function collectionStatus(
   collection: Pick<CollectionReminder, "amount" | "due_date" | "archived_at" | "payments">,
-  today = new Date().toISOString().slice(0, 10),
+  today = todayKey(),
 ): CollectionStatus {
   if (collection.archived_at) return "archived";
   const paid = collectionPaymentsTotal(collection.payments);
@@ -37,7 +38,7 @@ export function dateCollectedFor(
   );
 }
 
-export function daysOverdue(dueDate: string, today = new Date().toISOString().slice(0, 10)) {
+export function daysOverdue(dueDate: string, today = todayKey()) {
   if (!dueDate || dueDate >= today) return 0;
   const due = Date.parse(`${dueDate}T00:00:00Z`);
   const current = Date.parse(`${today}T00:00:00Z`);
@@ -58,7 +59,7 @@ export function validateCollectionPayment({
   archived,
   balance,
   paymentDate,
-  today = new Date().toISOString().slice(0, 10),
+  today = todayKey(),
 }: {
   amount: number;
   archived: boolean;

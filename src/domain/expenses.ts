@@ -1,4 +1,5 @@
 import type { CollectionPaymentMethod, Expense, ExpenseDisplayStatus, ExpenseFrequency, ExpenseInstallmentPayment } from "../types";
+import { todayKey } from "../shared/utils/dates";
 
 export const expensePaymentsTotal = (payments: ExpenseInstallmentPayment[] | null | undefined) =>
   (payments ?? []).reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
@@ -50,7 +51,7 @@ export function validateExpensePayment({
   cancelled,
   remainingBalance,
   paymentDate,
-  today = new Date().toISOString().slice(0, 10),
+  today = todayKey(),
 }: {
   amount: number;
   cancelled: boolean;

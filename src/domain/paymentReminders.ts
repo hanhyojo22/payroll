@@ -1,4 +1,5 @@
 import type { PaymentReminder, PaymentReminderPayment } from "../types";
+import { todayKey } from "../shared/utils/dates";
 
 export { paymentMethodLabel } from "./expenses";
 
@@ -37,7 +38,7 @@ export function validatePaymentReminderPayment({
   amount,
   remainingBalance,
   paymentDate,
-  today = new Date().toISOString().slice(0, 10),
+  today = todayKey(),
 }: {
   amount: number;
   remainingBalance: number;

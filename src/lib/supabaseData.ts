@@ -32,6 +32,7 @@ import { fetchExpenseCategories, fetchExpenses } from "../features/expenses/expe
 import { fetchEmployeeAdvances } from "../features/payroll/employeeAdvanceRepository";
 import { fetchPayrollHistoryRows, fetchPayrollRunItems, fetchPayrollRuns, fetchPayrollSettings } from "../features/payroll/payrollRepository";
 import { fetchSubcontractorAdvances } from "../features/subcontractors/subcontractorAdvanceRepository";
+import { todayKey } from "../shared/utils/dates";
 
 type AppErrorLike = { message?: string; details?: string | null; code?: string };
 type QueryResult<T> = { data: T[] | null; error: AppErrorLike | null };
@@ -88,7 +89,6 @@ async function settleCount(label: string, request: PromiseLike<CountResult>) {
   }
 }
 
-const todayKey = () => new Date().toISOString().slice(0, 10);
 const currentMonth = () => new Date().getMonth() + 1;
 const currentYear = () => new Date().getFullYear();
 const toNumber = (value: string | number | null | undefined) => Number(value ?? 0);
@@ -128,28 +128,35 @@ export async function loadDashboardSummary(supabase: SupabaseClient) {
   const month = currentMonth();
   const year = currentYear();
 
-  const [activeEmployees, latestRunResult, currentRunsResult, paymentsResult, collectionsResult, expensesResult] = await Promise.all([
+  const latestRunResult = await settle<Omit<DashboardLatestRun, "item_count">>(
+    "Latest payroll run",
+    supabase
+      .from("payroll_runs")
+      .select("id,period_month,period_year,pay_period,generated_date")
+      .order("period_year", { ascending: false })
+      .order("period_month", { ascending: false })
+      .order("pay_period", { ascending: false })
+      .limit(1),
+  );
+  // "Current" payroll tracks the most recently generated pay period rather than today's
+  // calendar month, since payroll for a closed period is typically generated a few days
+  // into the next month (e.g. June's second half is run in early July).
+  const latestRunPeriod = latestRunResult.data[0] ?? null;
+  const payrollPeriodMonth = latestRunPeriod?.period_month ?? Number(month);
+  const payrollPeriodYear = latestRunPeriod?.period_year ?? Number(year);
+
+  const [activeEmployees, currentRunsResult, paymentsResult, collectionsResult, expensesResult] = await Promise.all([
     settleCount(
       "Active employees",
       supabase.from("employees").select("id", { count: "exact", head: true }).eq("status", "active"),
-    ),
-    settle<Omit<DashboardLatestRun, "item_count">>(
-      "Latest payroll run",
-      supabase
-        .from("payroll_runs")
-        .select("id,period_month,period_year,pay_period,generated_date")
-        .order("period_year", { ascending: false })
-        .order("period_month", { ascending: false })
-        .order("pay_period", { ascending: false })
-        .limit(1),
     ),
     settle<Omit<DashboardLatestRun, "item_count">>(
       "Current payroll runs",
       supabase
         .from("payroll_runs")
         .select("id,period_month,period_year,pay_period,generated_date")
-        .eq("period_month", month)
-        .eq("period_year", year),
+        .eq("period_month", payrollPeriodMonth)
+        .eq("period_year", payrollPeriodYear),
     ),
     settle<PaymentReminder>(
       "Open payment reminders",
