@@ -39,6 +39,15 @@ export async function deleteExpenseCategory(supabase: SupabaseClient, categoryId
   return supabase.from("expense_categories").delete().eq("id", categoryId);
 }
 
+export async function ensurePayrollExpenseCategory(supabase: SupabaseClient, userId: string) {
+  const existing = await fetchExpenseCategories(supabase);
+  const found = existing.data.find((category) => category.type === "company" && category.name === "Payroll");
+  if (found) return { data: found, error: null };
+
+  const result = await saveExpenseCategory(supabase, userId, { name: "Payroll", type: "company", status: "active" });
+  return { data: result.data as ExpenseCategory | null, error: result.error };
+}
+
 export async function fetchExpenses(supabase: SupabaseClient) {
   const result = await supabase
     .from("expenses")
