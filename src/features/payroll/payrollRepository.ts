@@ -126,6 +126,9 @@ export async function fetchPayrollHistoryRows(
     return {
       payrollNo,
       payPeriod,
+      periodMonth: run?.period_month ?? 0,
+      periodYear: run?.period_year ?? 0,
+      payPeriodCutoff: run?.pay_period ?? "first_half",
       employeeId: item.employee_id ?? null,
       employeeName: item.employee_name,
       department,

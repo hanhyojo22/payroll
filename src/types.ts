@@ -364,6 +364,9 @@ export type DashboardSummary = {
 export type PayrollHistoryRow = {
   payrollNo: string;
   payPeriod: string;
+  periodMonth: number;
+  periodYear: number;
+  payPeriodCutoff: PayrollPayPeriod;
   employeeId: string | null;
   employeeName: string;
   department: string;
