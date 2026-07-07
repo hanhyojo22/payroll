@@ -852,6 +852,7 @@ export function PayrollFeature({
     }
 
     NotificationService.showSuccess(`Applied payroll deductions to ${itemsNeedingPayrollDeductions.length} payroll item${itemsNeedingPayrollDeductions.length === 1 ? "" : "s"}.`);
+    await syncPayrollExpense(selectedRun, allItems);
     await onChange();
   }
 
@@ -877,6 +878,8 @@ export function PayrollFeature({
     }
 
     NotificationService.showSuccess(`Marked ${pendingItems.length} payroll item${pendingItems.length === 1 ? "" : "s"} as paid.`);
+    const paidItemsForSync = allItems.map((item) => item.status !== "paid" ? { ...item, status: "paid" as const, paid_date: paidDate } : item);
+    await syncPayrollExpense(selectedRun, paidItemsForSync);
     await onChange();
   }
 
