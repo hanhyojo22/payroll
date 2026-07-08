@@ -327,5 +327,6 @@ export function payrollExpensePayload(
     payment_date: null,
     notes: "Auto-generated from payroll run",
     payroll_run_id: run.id,
+    subcontractor_payment_reminder_id: null,
   };
 }

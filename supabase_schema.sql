@@ -1989,3 +1989,15 @@ drop constraint if exists expenses_payroll_run_id_key;
 
 alter table public.expenses
 add constraint expenses_payroll_run_id_key unique (payroll_run_id);
+
+-- Link an auto-generated "Subcontractor Payout" company expense to the payout reminder it mirrors.
+-- The expense's own id is set equal to payment_reminders.id by the application so payout payments
+-- can reuse the same id as expense installment rows without an extra lookup table.
+alter table public.expenses
+add column if not exists subcontractor_payment_reminder_id uuid references public.payment_reminders(id) on delete cascade;
+
+alter table public.expenses
+drop constraint if exists expenses_subcontractor_payment_reminder_id_key;
+
+alter table public.expenses
+add constraint expenses_subcontractor_payment_reminder_id_key unique (subcontractor_payment_reminder_id);

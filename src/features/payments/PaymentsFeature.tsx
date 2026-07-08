@@ -9,12 +9,18 @@ import { currency } from "../../shared/utils/currency";
 import { monthNames, todayKey } from "../../shared/utils/dates";
 import type { Expense, ExpenseCategory, ExpenseCategoryType, PaymentLedgerRow } from "../../types";
 
-export function PaymentsFeature({ expenseCategories, expenses }: { expenseCategories: ExpenseCategory[]; expenses: Expense[] }) {
+export function PaymentsFeature({
+  expenseCategories,
+  expenses,
+}: {
+  expenseCategories: ExpenseCategory[];
+  expenses: Expense[];
+}) {
   const [activeTab, setActiveTab] = useState<ExpenseCategoryType>("company");
   const [viewingRow, setViewingRow] = useState<PaymentLedgerRow | null>(null);
   const paidLedgerRows = useMemo(
     () => buildPaymentLedger([], expenses.filter((expense) => expense.status === "paid"), expenseCategories)
-      .filter((row) => row.source === "expense" && row.categoryType === activeTab)
+      .filter((row) => row.categoryType === activeTab)
       .sort((a, b) => b.paymentDate.localeCompare(a.paymentDate)),
     [activeTab, expenseCategories, expenses],
   );
@@ -39,7 +45,7 @@ export function PaymentsFeature({ expenseCategories, expenses }: { expenseCatego
     <div className="page-stack">
       <PageHeader
         eyebrow="Completed payments"
-        text="Read-only record of payments for expenses that are fully paid. Partial payments stay on the expense until it's fully settled."
+        text="Read-only record of completed company and personal payment transactions. Partial payouts and expenses stay on their active pages until fully settled."
         title="Payment History"
       />
       <div className="page-tabs" role="tablist">
@@ -52,7 +58,7 @@ export function PaymentsFeature({ expenseCategories, expenses }: { expenseCatego
           <div className="billing-stat-text">
             <span className="billing-stat-label">Total Paid</span>
             <strong className="billing-stat-value">{currency.format(paidTotal)}</strong>
-            <span className="billing-stat-helper">{activeTab === "personal" ? "Personal" : "Company"} expenses</span>
+            <span className="billing-stat-helper">{activeTab === "personal" ? "Personal" : "Company"} payment records</span>
           </div>
         </div>
         <div className="billing-stat billing-stat-paid-month">
@@ -73,8 +79,8 @@ export function PaymentsFeature({ expenseCategories, expenses }: { expenseCatego
         </div>
       </section>
       <DataTable
-        empty={activeTab === "personal" ? "No paid personal expenses yet." : "No paid company expenses yet."}
-        headers={["Date", "Expense", "Amount", "Method", "Action"]}
+        empty={activeTab === "personal" ? "No paid personal expense records yet." : "No paid company payment records yet."}
+        headers={["Date", "Record", "Amount", "Method", "Action"]}
         rows={paidRows}
       />
       {viewingRow && <PaymentLedgerDetailsModal onClose={() => setViewingRow(null)} row={viewingRow} />}

@@ -1,9 +1,10 @@
-import type { PaymentReminder, PaymentReminderPayment } from "../types";
+import type { Expense, PaymentReminder, PaymentReminderPayment } from "../types";
 import { todayKey } from "../shared/utils/dates";
 
 export { paymentMethodLabel } from "./expenses";
 
 export type PaymentReminderDisplayStatus = "pending" | "partial" | "paid" | "overdue";
+export const SUBCONTRACTOR_PAYOUT_EXPENSE_CATEGORY_NAME = "Subcontractor Payout";
 
 export const paymentReminderPaymentsTotal = (payments: PaymentReminderPayment[] | null | undefined) =>
   (payments ?? []).reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
@@ -49,4 +50,39 @@ export function validatePaymentReminderPayment({
   if (amount > remainingBalance) return "Payment exceeds the remaining balance.";
   if (!paymentDate || paymentDate > today) return "Payment date cannot be in the future.";
   return null;
+}
+
+export function subcontractorPayoutExpensePayload(
+  reminder: Pick<
+    PaymentReminder,
+    "id" | "user_id" | "title" | "amount" | "notes" | "created_at" | "due_date" | "status"
+  >,
+  payments: PaymentReminderPayment[] | null | undefined,
+  categoryId: string,
+): Omit<Expense, "installment_payments" | "created_at" | "updated_at"> {
+  const displayStatus = paymentReminderDisplayStatus(reminder, payments);
+  const paidDate = displayStatus === "paid"
+    ? (payments ?? []).reduce<string | null>((latest, payment) =>
+      !latest || payment.payment_date > latest ? payment.payment_date : latest, null)
+    : null;
+
+  return {
+    id: reminder.id,
+    user_id: reminder.user_id,
+    employee_id: null,
+    employee_name: reminder.title,
+    category_id: categoryId,
+    category_name: SUBCONTRACTOR_PAYOUT_EXPENSE_CATEGORY_NAME,
+    amount: Number(reminder.amount) || 0,
+    frequency: "one_time",
+    duration_months: null,
+    status: displayStatus === "paid" ? "paid" : "pending",
+    paid_date: paidDate,
+    expense_date: reminder.created_at.slice(0, 10) || todayKey(),
+    due_date: null,
+    payment_date: reminder.due_date || null,
+    notes: reminder.notes,
+    payroll_run_id: null,
+    subcontractor_payment_reminder_id: reminder.id,
+  };
 }

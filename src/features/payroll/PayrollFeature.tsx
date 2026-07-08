@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { BadgeDollarSign, CalendarClock, CheckCircle2, Plus, Users, X } from "lucide-react";
 import { Spinner } from "../../shared/components/Spinner";
-import { ActionProgress } from "../../shared/components/ActionProgress";
+import { ActionProgress, type ActionProgressState } from "../../shared/components/ActionProgress";
 import {
   attendanceTotalsForEmployee,
   dailyTicketEntriesForPayrollPeriod,
@@ -239,6 +239,8 @@ export function PayrollFeature({
 }) {
   const [formOpen, setFormOpen] = useState(false);
   const [activePayrollSettings, setActivePayrollSettings] = useState<PayrollSettings | null>(payrollSettings);
+  const [payAllProgress, setPayAllProgress] = useState<{ completed: number; total: number } | null>(null);
+  const [generateProgress, setGenerateProgress] = useState<ActionProgressState | null>(null);
   const [selectedRunId, setSelectedRunId] = useState(payrollRuns[0]?.id ?? "");
   const selectedRun = selectedRunId
     ? payrollRuns.find((run) => run.id === selectedRunId)
@@ -333,9 +335,13 @@ export function PayrollFeature({
     return result.data;
   }
 
-  async function insertPayrollItems(payloads: Array<Omit<PayrollRunItem, "id" | "created_at" | "updated_at">>) {
+  async function insertPayrollItems(
+    payloads: Array<Omit<PayrollRunItem, "id" | "created_at" | "updated_at">>,
+    onProgress?: (completed: number, total: number) => void,
+  ) {
     if (!supabase) return { error: null };
-    for (const payload of payloads) {
+    for (let index = 0; index < payloads.length; index += 1) {
+      const payload = payloads[index];
       const { ticket_details: ticketDetails, ...itemPayload } = payload;
       const itemResult = await supabase.from("payroll_run_items").insert(itemPayload).select("id").single();
       if (itemResult.error) return { error: itemResult.error };
@@ -349,6 +355,7 @@ export function PayrollFeature({
         );
         if (detailResult.error) return { error: detailResult.error };
       }
+      onProgress?.(index + 1, payloads.length);
     }
     return { error: null };
   }
@@ -390,8 +397,15 @@ export function PayrollFeature({
     }
   }
 
-  async function createRun(values: PayrollRunFormValues) {
+  async function createRun(
+    values: PayrollRunFormValues,
+    onProgress?: (progress: ActionProgressState | null) => void,
+  ) {
     if (!supabase) return;
+    const reportProgress = (progress: ActionProgressState | null) => {
+      setGenerateProgress(progress);
+      onProgress?.(progress);
+    };
     const resolvedPayrollSettings = await resolvePayrollSettings();
     if (!resolvedPayrollSettings) {
       return;
@@ -431,6 +445,12 @@ export function PayrollFeature({
       message: `Generate payroll for ${monthNames[periodMonth - 1]} ${periodYear} (${payPeriod === "first_half" ? "1st - 15th" : "16th - End"})? This creates payroll items for ${activeTeamEmployees.length} active employee${activeTeamEmployees.length === 1 ? "" : "s"}.`,
     });
     if (!confirmed) return;
+    reportProgress({
+      title: "Generating payroll",
+      description: "Preparing payroll run and employee items.",
+      completed: 1,
+      total: 4,
+    });
 
     const runPayload = {
       user_id: userId,
@@ -488,6 +508,12 @@ export function PayrollFeature({
         employeePayrollItems.flatMap((item) => item.advanceDeductions),
       );
 
+      reportProgress({
+        title: "Generating payroll",
+        description: "Queueing payroll for sync.",
+        completed: 2,
+        total: 4,
+      });
       await onQueueOfflineMutation({
         resource: "payrollRuns",
         affectedResources: ["payrollRuns", "payrollHistory", "employeeAdvances", "dashboardSummary"],
@@ -500,6 +526,12 @@ export function PayrollFeature({
           employeeAdvanceUpdates,
         },
       });
+      reportProgress({
+        title: "Generating payroll",
+        description: "Syncing payroll expense record.",
+        completed: 3,
+        total: 4,
+      });
       await syncPayrollExpense(offlineRun, itemPayloads);
       onLocalPayrollRunsChange([
         { ...offlineRun, items: offlineItems },
@@ -507,6 +539,7 @@ export function PayrollFeature({
       ]);
       setFormOpen(false);
       setSelectedRunId(offlineRunId);
+      reportProgress(null);
       return;
     }
 
@@ -547,6 +580,12 @@ export function PayrollFeature({
           employeePayrollItems.flatMap((item) => item.advanceDeductions),
         );
 
+        reportProgress({
+          title: "Generating payroll",
+          description: "Queueing payroll for sync.",
+          completed: 2,
+          total: 4,
+        });
         await onQueueOfflineMutation({
           resource: "payrollRuns",
           affectedResources: ["payrollRuns", "payrollHistory", "employeeAdvances", "dashboardSummary"],
@@ -559,6 +598,12 @@ export function PayrollFeature({
             employeeAdvanceUpdates,
           },
         });
+        reportProgress({
+          title: "Generating payroll",
+          description: "Syncing payroll expense record.",
+          completed: 3,
+          total: 4,
+        });
         await syncPayrollExpense(offlineRun, itemPayloads);
         onLocalPayrollRunsChange([
           { ...offlineRun, items: offlineItems },
@@ -566,6 +611,7 @@ export function PayrollFeature({
         ]);
         setFormOpen(false);
         setSelectedRunId(offlineRunId);
+        reportProgress(null);
         return;
       }
       const errMsg = `${runResult.error.message ?? ""} ${runResult.error.details ?? ""}`.toLowerCase();
@@ -615,6 +661,12 @@ export function PayrollFeature({
       ),
     );
     const itemPayloads = employeePayrollItems.map((item) => item.payload);
+    reportProgress({
+      title: "Generating payroll",
+      description: "Saving payroll items.",
+      completed: 2,
+      total: 4,
+    });
     const itemResult = await insertPayrollItems(itemPayloads);
     if (itemResult.error) {
       NotificationService.showError(friendlyError(itemResult.error));
@@ -622,6 +674,12 @@ export function PayrollFeature({
     }
 
     const advanceDeductions = employeePayrollItems.flatMap((item) => item.advanceDeductions);
+    reportProgress({
+      title: "Generating payroll",
+      description: "Applying deductions.",
+      completed: 3,
+      total: 4,
+    });
     const advanceError = await applyEmployeeAdvancePayrollDeductions(advanceDeductions);
     if (advanceError) {
       NotificationService.showError(friendlyError(advanceError));
@@ -631,8 +689,15 @@ export function PayrollFeature({
     NotificationService.showSuccess("Payroll run generated.");
     setFormOpen(false);
     setSelectedRunId(newRun.id);
+    reportProgress({
+      title: "Generating payroll",
+      description: "Refreshing payroll data.",
+      completed: 4,
+      total: 4,
+    });
     await syncPayrollExpense(newRun, itemPayloads);
     await onChange();
+    reportProgress(null);
   }
 
   async function updateItem(item: PayrollRunItem, patch: Partial<PayrollRunItem>) {
@@ -876,37 +941,52 @@ export function PayrollFeature({
     if (!confirmed) return;
 
     const paidDate = todayKey();
-    for (const item of pendingItems) {
-      const deductionPatch = deductionPatchByItemId.get(item.id);
-      const { error } = await supabase.from("payroll_run_items").update({
-        ...(deductionPatch ?? {}),
-        status: "paid",
-        paid_date: paidDate,
-      }).eq("id", item.id);
-      if (error) {
-        NotificationService.showError(friendlyError(error));
-        return;
+    setPayAllProgress({ completed: 0, total: pendingItems.length });
+    try {
+      for (let index = 0; index < pendingItems.length; index += 1) {
+        const item = pendingItems[index];
+        const deductionPatch = deductionPatchByItemId.get(item.id);
+        const { error } = await supabase.from("payroll_run_items").update({
+          ...(deductionPatch ?? {}),
+          status: "paid",
+          paid_date: paidDate,
+        }).eq("id", item.id);
+        if (error) {
+          NotificationService.showError(friendlyError(error));
+          return;
+        }
+        setPayAllProgress({ completed: index + 1, total: pendingItems.length });
       }
-    }
 
-    if (itemsNeedingPayrollDeductions.length > 0) {
-      const advanceError = await applyEmployeeAdvancePayrollDeductions(
-        itemsNeedingPayrollDeductions.flatMap((entry) => entry.patch.advanceDeductions),
-      );
-      if (advanceError) {
-        NotificationService.showError(friendlyError(advanceError));
-        return;
+      if (itemsNeedingPayrollDeductions.length > 0) {
+        const advanceError = await applyEmployeeAdvancePayrollDeductions(
+          itemsNeedingPayrollDeductions.flatMap((entry) => entry.patch.advanceDeductions),
+        );
+        if (advanceError) {
+          NotificationService.showError(friendlyError(advanceError));
+          return;
+        }
       }
-    }
 
-    NotificationService.showSuccess(`Marked ${pendingItems.length} payroll item${pendingItems.length === 1 ? "" : "s"} as paid.`);
-    const paidItemsForSync = allItems.map((item) => item.status !== "paid" ? { ...item, status: "paid" as const, paid_date: paidDate } : item);
-    await syncPayrollExpense(selectedRun, paidItemsForSync);
-    await onChange();
+      NotificationService.showSuccess(`Marked ${pendingItems.length} payroll item${pendingItems.length === 1 ? "" : "s"} as paid.`);
+      const paidItemsForSync = allItems.map((item) => item.status !== "paid" ? { ...item, status: "paid" as const, paid_date: paidDate } : item);
+      await syncPayrollExpense(selectedRun, paidItemsForSync);
+      await onChange();
+    } finally {
+      setPayAllProgress(null);
+    }
   }
 
   return (
-    <div className="page-stack">
+    <div className="page-stack action-progress-shell">
+      {payAllProgress && (
+        <ActionProgress
+          description="Updating payroll items and finishing employee payouts."
+          progress={payAllProgress.total === 0 ? 0 : (payAllProgress.completed / payAllProgress.total) * 100}
+          progressLabel={`${payAllProgress.completed} of ${payAllProgress.total} employee${payAllProgress.total === 1 ? "" : "s"} paid`}
+          title="Paying payroll"
+        />
+      )}
       <PageHeader
         action={(
           <button className="primary-button compact" onClick={() => setFormOpen(true)} type="button">
@@ -997,7 +1077,7 @@ export function PayrollFeature({
       {selectedRun && pendingItems.length > 0 && (
         <div className="payroll-bulk-bar">
           <span className="payroll-bulk-count">{pendingItems.length} pending payroll item{pendingItems.length === 1 ? "" : "s"}</span>
-          <button className="primary-button compact" onClick={() => void markAllPaid()} type="button">
+          <button className="primary-button compact" disabled={Boolean(payAllProgress)} onClick={() => void markAllPaid()} type="button">
             <CheckCircle2 size={14} /> Pay all
           </button>
         </div>
@@ -1012,7 +1092,7 @@ export function PayrollFeature({
       )}
 
       {formOpen && (
-        <PayrollRunForm onClose={() => setFormOpen(false)} onSubmit={createRun} />
+        <PayrollRunForm onClose={() => setFormOpen(false)} onSubmit={createRun} progress={generateProgress} />
       )}
     </div>
   );
@@ -1460,9 +1540,11 @@ export function PayrollHistoryFeature({ employees, rows, tabs }: { employees: Em
 function PayrollRunForm({
   onClose,
   onSubmit,
+  progress,
 }: {
   onClose: () => void;
-  onSubmit: (values: PayrollRunFormValues) => Promise<void>;
+  onSubmit: (values: PayrollRunFormValues, onProgress?: (progress: ActionProgressState | null) => void) => Promise<void>;
+  progress: ActionProgressState | null;
 }) {
   const [values, setValues] = useState<PayrollRunFormValues>(emptyPayrollRun);
   const [busy, setBusy] = useState(false);
@@ -1480,7 +1562,14 @@ function PayrollRunForm({
   return (
     <Modal className="billing-form-modal payroll-run-modal" onClose={onClose} title="Generate payroll">
       <form className="billing-form-body action-progress-shell" onSubmit={handleSubmit}>
-        {busy && <ActionProgress description="Preparing employees, payroll items, and totals." title="Generating payroll" />}
+        {busy && (
+          <ActionProgress
+            description={progress?.description ?? "Preparing employees, payroll items, and totals."}
+            progress={progress ? (progress.completed / Math.max(progress.total, 1)) * 100 : undefined}
+            progressLabel={progress ? `${progress.completed} of ${progress.total} steps` : undefined}
+            title={progress?.title ?? "Generating payroll"}
+          />
+        )}
         <div className="billing-form-fields payroll-run-form-fields">
           <label>
             Payroll month

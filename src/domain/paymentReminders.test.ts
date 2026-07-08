@@ -5,6 +5,8 @@ import {
   paymentReminderDisplayStatus,
   paymentReminderPaymentsTotal,
   paymentReminderRemainingBalance,
+  subcontractorPayoutExpensePayload,
+  SUBCONTRACTOR_PAYOUT_EXPENSE_CATEGORY_NAME,
   validatePaymentReminderPayment,
 } from "./paymentReminders";
 
@@ -90,5 +92,53 @@ describe("validatePaymentReminderPayment", () => {
   it("accepts a valid payment", () => {
     expect(validatePaymentReminderPayment({ amount: 100, remainingBalance: 500, paymentDate: "2026-07-06", today: "2026-07-06" }))
       .toBeNull();
+  });
+});
+
+describe("subcontractorPayoutExpensePayload", () => {
+  it("builds a system-managed company expense linked to the payout reminder", () => {
+    const payload = subcontractorPayoutExpensePayload(
+      {
+        id: "rem-1",
+        user_id: "u1",
+        title: "Acme Subcon",
+        amount: 1250,
+        due_date: "2026-07-15",
+        status: "pending",
+        notes: "July 2026 · First half",
+        created_at: "2026-07-08T12:00:00Z",
+      },
+      [],
+      "cat-1",
+    );
+
+    expect(payload.id).toBe("rem-1");
+    expect(payload.category_name).toBe(SUBCONTRACTOR_PAYOUT_EXPENSE_CATEGORY_NAME);
+    expect(payload.employee_name).toBe("Acme Subcon");
+    expect(payload.subcontractor_payment_reminder_id).toBe("rem-1");
+    expect(payload.payment_date).toBe("2026-07-15");
+  });
+
+  it("marks the expense paid using the latest payment date once payments cover the full amount", () => {
+    const payload = subcontractorPayoutExpensePayload(
+      {
+        id: "rem-1",
+        user_id: "u1",
+        title: "Acme Subcon",
+        amount: 1000,
+        due_date: "2026-07-15",
+        status: "pending",
+        notes: "",
+        created_at: "2026-07-08T12:00:00Z",
+      },
+      [
+        payment({ amount: 400, payment_date: "2026-07-10" }),
+        payment({ id: "p2", amount: 600, payment_date: "2026-07-12" }),
+      ],
+      "cat-1",
+    );
+
+    expect(payload.status).toBe("paid");
+    expect(payload.paid_date).toBe("2026-07-12");
   });
 });

@@ -56,7 +56,7 @@ import {
   ticketGrossPay,
 } from "./domain/tickets";
 import { countSubconTickets, countTicketsByType } from "./domain/billing";
-import { expenseOverdueReferenceDate } from "./domain/expenses";
+import { expenseCyclesElapsedSince, expenseOverdueReferenceDate, expensePeriodDueDates } from "./domain/expenses";
 import {
   loadAttendanceEntries,
   loadBillingRecords,
@@ -249,7 +249,7 @@ const viewPaths: Record<View, string> = {
 
 const viewResources: Record<View, ResourceKey[]> = {
   attendance: ["positions", "employees", "attendanceEntries"],
-  billing: ["billingRecords", "billingSettings", "dailyTicketEntries", "collections", "subcontractors", "subcontractorAdvances", "subconDailyTickets", "payments"],
+  billing: ["billingRecords", "billingSettings", "dailyTicketEntries", "collections", "subcontractors", "subcontractorAdvances", "subconDailyTickets", "payments", "expenses", "expenseCategories"],
   "billing-settings": ["billingSettings", "subcontractors"],
   dashboard: ["dashboardSummary"],
   employees: ["employees", "positions", "payrollRuns", "employeeAdvances"],
@@ -263,11 +263,11 @@ const viewResources: Record<View, ResourceKey[]> = {
   payroll: ["positions", "employees", "attendanceEntries", "dailyTicketEntries", "payrollRuns", "employeeAdvances", "payrollHistory", "payrollSettings", "expenses", "expenseCategories"],
   "payroll-settings": ["payrollSettings"],
   "payroll-history": ["positions", "employees", "attendanceEntries", "dailyTicketEntries", "payrollRuns", "employeeAdvances", "payrollHistory", "payrollSettings", "expenses", "expenseCategories"],
-  reports: ["employees", "billingRecords", "billingSettings", "collections", "dailyTicketEntries", "payrollHistory"],
+  reports: ["employees", "billingRecords", "billingSettings", "collections", "dailyTicketEntries", "payrollHistory", "expenses"],
   payments: ["expenses", "expenseCategories"],
   collections: ["collections"],
   "collection-history": ["collections"],
-  subcontractors: ["subcontractors", "subcontractorAdvances", "subconDailyTickets", "billingRecords", "payments"],
+  subcontractors: ["subcontractors", "subcontractorAdvances", "subconDailyTickets", "billingRecords", "payments", "expenses", "expenseCategories"],
 };
 
 type BreadcrumbItem = {
@@ -280,6 +280,15 @@ type GlobalSearchResult = {
   label: string;
   detail: string;
   type: "employee" | "subcontractor";
+};
+
+type HeaderNotificationItem = {
+  amount: number;
+  dateLabel: string;
+  id: string;
+  kind: "collection" | "expense" | "payment";
+  title: string;
+  urgency: "overdue" | "today" | "upcoming";
 };
 
 const viewBreadcrumbs: Record<View, BreadcrumbItem[]> = {
@@ -582,7 +591,9 @@ function Workspace({ session }: { session: Session }) {
   const [resourceStatuses, setResourceStatuses] = useState(initialResourceStatuses);
   const [resourceHydration, setResourceHydration] = useState(initialResourceHydration);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [notificationMenuOpen, setNotificationMenuOpen] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
+  const notificationMenuRef = useRef<HTMLDivElement | null>(null);
   const [globalSearchQuery, setGlobalSearchQuery] = useState("");
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
   const globalSearchRef = useRef<HTMLDivElement | null>(null);
@@ -789,6 +800,8 @@ function Workspace({ session }: { session: Session }) {
       loadResource("subcontractorAdvances", true),
       loadResource("subconDailyTickets", true),
       loadResource("payments", true),
+      loadResource("expenses", true),
+      loadResource("expenseCategories", true),
     ]);
   }
 
@@ -843,6 +856,19 @@ function Workspace({ session }: { session: Session }) {
     window.addEventListener("pointerdown", handlePointerDown);
     return () => window.removeEventListener("pointerdown", handlePointerDown);
   }, [accountMenuOpen]);
+
+  useEffect(() => {
+    if (!notificationMenuOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!notificationMenuRef.current?.contains(event.target as Node)) {
+        setNotificationMenuOpen(false);
+      }
+    };
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
+  }, [notificationMenuOpen]);
 
   useEffect(() => {
     if (!globalSearchOpen) return;
@@ -942,6 +968,167 @@ function Workspace({ session }: { session: Session }) {
     return [...employeeResults, ...subcontractorResults].slice(0, 8);
   }, [employees, normalizedGlobalSearch, subcontractors]);
 
+  const headerNotifications = useMemo<HeaderNotificationItem[]>(() => {
+    const today = todayKey();
+    const upcomingWindowEnd = new Date(`${today}T00:00:00`);
+    upcomingWindowEnd.setDate(upcomingWindowEnd.getDate() + 7);
+    const upcomingEndKey = upcomingWindowEnd.toISOString().slice(0, 10);
+
+    const items: HeaderNotificationItem[] = [];
+    const addedExpenseIds = new Set<string>();
+
+    for (const collection of dashboardSummary.overdueCollections) {
+      const days = Math.max(1, Math.floor((Date.parse(`${today}T00:00:00`) - Date.parse(`${collection.due_date}T00:00:00`)) / 86400000));
+      items.push({
+        id: `collection-overdue-${collection.id}`,
+        kind: "collection",
+        title: collection.title,
+        amount: toNumber(collection.outstanding_balance),
+        urgency: "overdue",
+        dateLabel: `${days}d overdue`,
+      });
+    }
+    for (const payment of dashboardSummary.overduePayments) {
+      const days = Math.max(1, Math.floor((Date.parse(`${today}T00:00:00`) - Date.parse(`${payment.due_date}T00:00:00`)) / 86400000));
+      items.push({
+        id: `payment-overdue-${payment.id}`,
+        kind: "payment",
+        title: payment.title,
+        amount: toNumber(payment.amount),
+        urgency: "overdue",
+        dateLabel: `${days}d overdue`,
+      });
+    }
+    for (const expense of dashboardSummary.overdueExpenses) {
+      const referenceDate = expenseOverdueReferenceDate(expense, today);
+      const days = referenceDate ? Math.max(1, Math.floor((Date.parse(`${today}T00:00:00`) - Date.parse(`${referenceDate}T00:00:00`)) / 86400000)) : 1;
+      items.push({
+        id: `expense-overdue-${expense.id}`,
+        kind: "expense",
+        title: `${expense.category_name} - ${expense.employee_name}`,
+        amount: toNumber(expense.amount),
+        urgency: "overdue",
+        dateLabel: `${days}d overdue`,
+      });
+      addedExpenseIds.add(expense.id);
+    }
+
+    for (const collection of dashboardSummary.dueTodayCollections) {
+      items.push({
+        id: `collection-today-${collection.id}`,
+        kind: "collection",
+        title: collection.title,
+        amount: toNumber(collection.outstanding_balance),
+        urgency: "today",
+        dateLabel: "due today",
+      });
+    }
+    for (const payment of dashboardSummary.dueTodayPayments) {
+      items.push({
+        id: `payment-today-${payment.id}`,
+        kind: "payment",
+        title: payment.title,
+        amount: toNumber(payment.amount),
+        urgency: "today",
+        dateLabel: "due today",
+      });
+    }
+    for (const expense of dashboardSummary.dueTodayExpenses) {
+      items.push({
+        id: `expense-today-${expense.id}`,
+        kind: "expense",
+        title: `${expense.category_name} - ${expense.employee_name}`,
+        amount: toNumber(expense.amount),
+        urgency: "today",
+        dateLabel: "due today",
+      });
+      addedExpenseIds.add(expense.id);
+    }
+
+    const upcomingCollections = collections.filter((collection) =>
+      !collection.archived_at &&
+      collection.outstanding_balance > 0 &&
+      collection.due_date > today &&
+      collection.due_date <= upcomingEndKey,
+    );
+    for (const collection of upcomingCollections) {
+      const days = Math.max(1, Math.ceil((Date.parse(`${collection.due_date}T00:00:00`) - Date.parse(`${today}T00:00:00`)) / 86400000));
+      items.push({
+        id: `collection-upcoming-${collection.id}`,
+        kind: "collection",
+        title: collection.title,
+        amount: toNumber(collection.outstanding_balance),
+        urgency: "upcoming",
+        dateLabel: `due in ${days}d`,
+      });
+    }
+
+    const upcomingPayments = payments.filter((payment) =>
+      payment.status !== "paid" &&
+      payment.due_date > today &&
+      payment.due_date <= upcomingEndKey,
+    );
+    for (const payment of upcomingPayments) {
+      const days = Math.max(1, Math.ceil((Date.parse(`${payment.due_date}T00:00:00`) - Date.parse(`${today}T00:00:00`)) / 86400000));
+      items.push({
+        id: `payment-upcoming-${payment.id}`,
+        kind: "payment",
+        title: payment.title,
+        amount: toNumber(payment.amount),
+        urgency: "upcoming",
+        dateLabel: `due in ${days}d`,
+      });
+    }
+
+    const nextExpenseReminderDate = (expense: Expense) => {
+      if (expense.status === "paid" || expense.status === "cancelled") return null;
+      if (expense.due_date) {
+        const dueDates = expensePeriodDueDates(expense);
+        if (dueDates.length === 0) {
+          return expense.due_date >= today ? expense.due_date : null;
+        }
+        return dueDates.find((dueDate) => dueDate >= today) ?? null;
+      }
+      if (expense.frequency === "monthly" && expense.payment_date) {
+        const elapsed = expenseCyclesElapsedSince(expense.payment_date, today);
+        if (elapsed.mostRecentDate === today) return today;
+        const start = new Date(`${expense.payment_date}T00:00:00Z`);
+        const startDay = start.getUTCDate();
+        const todayDate = new Date(`${today}T00:00:00Z`);
+        let year = todayDate.getUTCFullYear();
+        let month = todayDate.getUTCMonth();
+        for (let offset = 0; offset < 12; offset += 1) {
+          const targetMonth = month + offset;
+          const lastDay = new Date(Date.UTC(year, targetMonth + 1, 0)).getUTCDate();
+          const cycle = new Date(Date.UTC(year, targetMonth, Math.min(startDay, lastDay))).toISOString().slice(0, 10);
+          if (cycle >= today) return cycle;
+        }
+      }
+      return null;
+    };
+
+    for (const expense of expenses) {
+      const nextReminderDate = nextExpenseReminderDate(expense);
+      if (!nextReminderDate || nextReminderDate <= today || nextReminderDate > upcomingEndKey) continue;
+      if (addedExpenseIds.has(expense.id)) continue;
+      const days = Math.max(1, Math.ceil((Date.parse(`${nextReminderDate}T00:00:00`) - Date.parse(`${today}T00:00:00`)) / 86400000));
+      items.push({
+        id: `expense-upcoming-${expense.id}`,
+        kind: "expense",
+        title: `${expense.category_name} - ${expense.employee_name}`,
+        amount: toNumber(expense.amount),
+        urgency: "upcoming",
+        dateLabel: `due in ${days}d`,
+      });
+      addedExpenseIds.add(expense.id);
+    }
+
+    const urgencyRank = { overdue: 0, today: 1, upcoming: 2 } as const;
+    return items
+      .sort((left, right) => urgencyRank[left.urgency] - urgencyRank[right.urgency] || right.amount - left.amount)
+      .slice(0, 12);
+  }, [collections, dashboardSummary.dueTodayCollections, dashboardSummary.dueTodayExpenses, dashboardSummary.dueTodayPayments, dashboardSummary.overdueCollections, dashboardSummary.overdueExpenses, dashboardSummary.overduePayments, expenses, payments]);
+
   function prepareGlobalSearch() {
     setGlobalSearchOpen(true);
     void Promise.all([
@@ -975,6 +1162,19 @@ function Workspace({ session }: { session: Session }) {
       event.preventDefault();
       openGlobalSearchResult(globalSearchResults[0]);
     }
+  }
+
+  function openNotificationItem(item: HeaderNotificationItem) {
+    setNotificationMenuOpen(false);
+    if (item.kind === "collection") {
+      navigate("collections");
+      return;
+    }
+    if (item.kind === "payment") {
+      navigate("payments");
+      return;
+    }
+    navigate("expenses");
   }
 
   return (
@@ -1051,10 +1251,53 @@ function Workspace({ session }: { session: Session }) {
             </div>
           </div>
           <div className="topbar-actions">
-            <button className="topbar-icon notification-button" aria-label="Notifications" type="button">
-              <Bell size={19} />
-              <span>3</span>
-            </button>
+            <div className="notification-menu" ref={notificationMenuRef}>
+              <button
+                aria-expanded={notificationMenuOpen}
+                aria-haspopup="menu"
+                className="topbar-icon notification-button"
+                onClick={() => {
+                  setNotificationMenuOpen((open) => !open);
+                  setAccountMenuOpen(false);
+                }}
+                type="button"
+              >
+                <Bell size={19} />
+                {headerNotifications.length > 0 ? <span>{Math.min(headerNotifications.length, 9)}</span> : null}
+              </button>
+              {notificationMenuOpen && (
+                <div className="notification-dropdown" role="menu">
+                  <div className="notification-dropdown-header">
+                    <strong>Notifications</strong>
+                    <span>{headerNotifications.length === 0 ? "Nothing incoming" : `${headerNotifications.length} active reminder${headerNotifications.length === 1 ? "" : "s"}`}</span>
+                  </div>
+                  {headerNotifications.length === 0 ? (
+                    <p className="notification-empty">No due dates or expense reminders in the next 7 days.</p>
+                  ) : (
+                    <div className="notification-list">
+                      {headerNotifications.map((item) => (
+                        <button
+                          className="notification-item"
+                          key={item.id}
+                          onClick={() => openNotificationItem(item)}
+                          role="menuitem"
+                          type="button"
+                        >
+                          <span className={`notification-item-icon ${item.kind} ${item.urgency}`}>
+                            {item.kind === "collection" ? <CreditCard size={15} /> : item.kind === "payment" ? <Bell size={15} /> : <CalendarClock size={15} />}
+                          </span>
+                          <span className="notification-item-copy">
+                            <strong>{item.title}</strong>
+                            <small>{item.dateLabel}</small>
+                          </span>
+                          <em>{currency.format(item.amount)}</em>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
             <button className="topbar-icon" aria-label="Fullscreen" onClick={toggleFullscreen} type="button">
               <Maximize2 size={18} />
             </button>
@@ -1110,7 +1353,14 @@ function Workspace({ session }: { session: Session }) {
           ) : (
           <>
               {view === "dashboard" && (
-                <DashboardModern summary={dashboardSummary} />
+                <DashboardModern
+                  dailyTicketEntries={dailyTicketEntries}
+                  employees={employees}
+                  onOpenLeaderboard={() => navigate("daily-tickets")}
+                  onOpenSubcontractorLeaderboard={() => navigate("subcontractors")}
+                  subconDailyTickets={subconDailyTickets}
+                  summary={dashboardSummary}
+                />
               )}
               {view === "employees" && (
                 <EmployeesView
@@ -1246,7 +1496,9 @@ function Workspace({ session }: { session: Session }) {
                   collections={collections}
                   dailyTicketEntries={dailyTicketEntries}
                   employees={employees}
+                  expenses={expenses}
                   payrollHistoryRows={payrollHistoryRows}
+                  subconDailyTickets={subconDailyTickets}
                 />
               )}
               {view === "payments" && <PaymentsFeature expenseCategories={expenseCategories} expenses={expenses} />}
@@ -1256,6 +1508,7 @@ function Workspace({ session }: { session: Session }) {
                   billingSettings={billingSettings}
                   collections={collections}
                   dailyTicketEntries={dailyTicketEntries}
+                  expenseCategories={expenseCategories}
                   onOpenSubcontractorAccount={(subcontractorId) => {
                     setSelectedSubcontractorId(subcontractorId);
                     setSubcontractorAccountTab("billing");
@@ -1319,6 +1572,7 @@ function Workspace({ session }: { session: Session }) {
               {view === "subcontractors" && (
                 <SubcontractorsFeature
                   billingRecords={billingRecords}
+                  expenseCategories={expenseCategories}
                   initialTab={subcontractorAccountTab}
                   onChange={async () => {
                     await Promise.all([
@@ -1327,6 +1581,8 @@ function Workspace({ session }: { session: Session }) {
                       loadResource("subconDailyTickets", true),
                       loadResource("billingRecords", true),
                       loadResource("payments", true),
+                      loadResource("expenses", true),
+                      loadResource("expenseCategories", true),
                     ]);
                   }}
                   onSelectSubcontractor={(subcontractorId) => {
@@ -1374,7 +1630,21 @@ function Workspace({ session }: { session: Session }) {
   );
 }
 
-function DashboardModern({ summary }: { summary: DashboardSummary }) {
+function DashboardModern({
+  dailyTicketEntries,
+  employees,
+  onOpenLeaderboard,
+  onOpenSubcontractorLeaderboard,
+  subconDailyTickets,
+  summary,
+}: {
+  dailyTicketEntries: DailyTicketEntry[];
+  employees: Employee[];
+  onOpenLeaderboard: () => void;
+  onOpenSubcontractorLeaderboard: () => void;
+  subconDailyTickets: SubconDailyTicket[];
+  summary: DashboardSummary;
+}) {
   const now = new Date();
   const hour = now.getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
@@ -1510,13 +1780,6 @@ function DashboardModern({ summary }: { summary: DashboardSummary }) {
     summary.collectionAging.daysOver90,
   ];
   const agingTotal = agingValues.reduce((sum, value) => sum + value, 0);
-  const agingBuckets = [
-    { label: "Current", value: summary.collectionAging.current, tone: "ag-current" },
-    { label: "1-30d", value: summary.collectionAging.days1To30, tone: "ag-warm" },
-    { label: "31-60d", value: summary.collectionAging.days31To60, tone: "ag-warm" },
-    { label: "61-90d", value: summary.collectionAging.days61To90, tone: "ag-hot" },
-    { label: "90d+", value: summary.collectionAging.daysOver90, tone: "ag-hot" },
-  ];
   const paidPayrollLabel = summary.paidPayroll > 0 ? currency.format(summary.paidPayroll) : "No paid payroll yet";
   const dashboardHeadline = totalTrackedAmount > 0
     ? `${currency.format(totalTrackedAmount)} is being tracked across receivables, collected cash, and due bills.`
@@ -1559,6 +1822,73 @@ function DashboardModern({ summary }: { summary: DashboardSummary }) {
       value: currency.format(billsDueTotal),
     },
   ];
+  const topEmployeeRows = useMemo(() => {
+    const employeeById = new Map(employees.map((employee) => [employee.id, employee]));
+    const totals = new Map<string, {
+      employeeId: string;
+      employeeName: string;
+      install: number;
+      repair: number;
+      totalTickets: number;
+      earnings: number;
+      profilePhotoUrl: string;
+    }>();
+
+    for (const entry of dailyTicketEntries) {
+      const existing = totals.get(entry.employee_id) ?? {
+        employeeId: entry.employee_id,
+        employeeName: entry.employee_name,
+        install: 0,
+        repair: 0,
+        totalTickets: 0,
+        earnings: 0,
+        profilePhotoUrl: employeeById.get(entry.employee_id)?.profile_photo_url ?? "",
+      };
+      existing.install += entry.installation_tickets;
+      existing.repair += entry.repair_tickets;
+      existing.totalTickets += entry.installation_tickets + entry.repair_tickets;
+      existing.earnings +=
+        entry.installation_tickets * entry.installation_rate +
+        entry.repair_tickets * entry.repair_rate;
+      totals.set(entry.employee_id, existing);
+    }
+
+    return [...totals.values()]
+      .sort((left, right) => right.totalTickets - left.totalTickets || right.earnings - left.earnings || left.employeeName.localeCompare(right.employeeName))
+      .slice(0, 5);
+  }, [dailyTicketEntries, employees]);
+  const topSubcontractorRows = useMemo(() => {
+    const totals = new Map<string, {
+      subcontractorId: string;
+      subcontractorName: string;
+      install: number;
+      repair: number;
+      totalTickets: number;
+      earnings: number;
+    }>();
+
+    for (const entry of subconDailyTickets) {
+      const existing = totals.get(entry.subcontractor_id) ?? {
+        subcontractorId: entry.subcontractor_id,
+        subcontractorName: entry.subcon_name,
+        install: 0,
+        repair: 0,
+        totalTickets: 0,
+        earnings: 0,
+      };
+      existing.install += entry.install_tickets;
+      existing.repair += entry.repair_tickets;
+      existing.totalTickets += entry.install_tickets + entry.repair_tickets;
+      existing.earnings +=
+        entry.install_tickets * entry.installation_rate +
+        entry.repair_tickets * entry.repair_rate;
+      totals.set(entry.subcontractor_id, existing);
+    }
+
+    return [...totals.values()]
+      .sort((left, right) => right.totalTickets - left.totalTickets || right.earnings - left.earnings || left.subcontractorName.localeCompare(right.subcontractorName))
+      .slice(0, 5);
+  }, [subconDailyTickets]);
 
   return (
     <div className="page-stack dash dash-modern">
@@ -1649,69 +1979,121 @@ function DashboardModern({ summary }: { summary: DashboardSummary }) {
       </section>
 
       <section className="dash-modern-bottom-grid">
-        <article className="dash-modern-card dash-modern-aging">
+        <article className="dash-modern-card dash-modern-top-employees">
           <div className="dash-modern-card-header">
             <div>
-              <span className="dash-modern-section-label">Receivable health</span>
-              <h2>Collection aging</h2>
+              <span className="dash-modern-section-label">Leaderboard</span>
+              <h2>Top Employees</h2>
             </div>
-            <span className="dash-modern-card-chip subtle">Current view</span>
+            <span className="dash-modern-card-chip subtle">Closed tickets</span>
           </div>
-          <DashboardAreaTrend values={agingValues} />
-          {agingTotal > 0 && (
-            <div className="dash-modern-aging-bar">
-              {agingBuckets.map((bucket) =>
-                bucket.value > 0 ? (
-                  <div
-                    className={`dash-modern-aging-segment ${bucket.tone}`}
-                    key={bucket.label}
-                    style={{ flex: bucket.value / agingTotal }}
-                    title={`${bucket.label}: ${currency.format(bucket.value)}`}
-                  />
-                ) : null,
-              )}
-            </div>
-          )}
-          <div className="dash-modern-aging-legend">
-            {agingBuckets.map((bucket) => (
-              <div className="dash-modern-aging-item" key={bucket.label}>
-                <span className={`dash-modern-aging-swatch ${bucket.tone}`} />
-                <span className="dash-modern-aging-bucket-label">{bucket.label}</span>
-                <strong>{currency.format(bucket.value)}</strong>
-              </div>
-            ))}
-          </div>
-        </article>
-
-        <article className="dash-modern-card dash-modern-actions">
-          <div className="dash-modern-card-header">
-            <div>
-              <span className="dash-modern-section-label">Reminder queue</span>
-              <h2>Upcoming reminders</h2>
-            </div>
-            <span className="dash-modern-actions-count">{actionItems.length}</span>
-          </div>
-          {actionItems.length === 0 ? (
+          {topEmployeeRows.length === 0 ? (
             <div className="dash-modern-reminders-empty">
-              <div className="dash-modern-reminders-empty-icon"><Bell size={18} /></div>
-              <strong>No upcoming reminders</strong>
-              <span>You're all caught up.</span>
+              <div className="dash-modern-reminders-empty-icon"><Users size={18} /></div>
+              <strong>No closed tickets yet</strong>
+              <span>Employee leaderboard will appear once tickets are recorded.</span>
             </div>
           ) : (
-            <div className="dash-modern-actions-list">
-              {actionItems.slice(0, 5).map((item) => (
-                <div className="dash-modern-action-row" key={item.id}>
-                  <span className={`dash-modern-action-dot ${item.urgency}`} />
-                  <div className="dash-modern-action-info">
-                    <strong>{item.title}</strong>
-                    <span className="dash-modern-action-meta">
-                      {actionKindLabels[item.kind]} - {item.daysInfo}
-                    </span>
-                  </div>
-                  <span className="dash-modern-action-amount">{currency.format(item.amount)}</span>
-                </div>
-              ))}
+            <>
+              <div className="dash-modern-top-table-wrap">
+                <table className="dash-modern-top-table">
+                  <thead>
+                    <tr>
+                      <th>Employee</th>
+                      <th className="num">Install</th>
+                      <th className="num">Repair</th>
+                      <th className="num">Total Tickets</th>
+                      <th className="num">Total Earnings</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {topEmployeeRows.map((row) => (
+                      <tr key={row.employeeId}>
+                        <td>
+                          <div className="dash-modern-top-employee">
+                            <div className="dash-modern-top-avatar">
+                              {row.profilePhotoUrl ? <img alt="" src={row.profilePhotoUrl} /> : <span>{row.employeeName.split(" ").filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "E"}</span>}
+                            </div>
+                            <strong>{row.employeeName}</strong>
+                          </div>
+                        </td>
+                        <td className="num">{row.install}</td>
+                        <td className="num">{row.repair}</td>
+                        <td className="num">{row.totalTickets}</td>
+                        <td className="num">{currency.format(row.earnings)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="dash-modern-top-footer">
+                <button className="text-button" onClick={onOpenLeaderboard} type="button">
+                  View full leaderboard
+                </button>
+                <button className="dash-modern-top-link" onClick={onOpenLeaderboard} type="button" aria-label="Open leaderboard">
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+            </>
+          )}
+        </article>
+
+        <article className="dash-modern-card dash-modern-top-subcontractors">
+          <div className="dash-modern-card-header">
+            <div>
+              <span className="dash-modern-section-label">Partner leaderboard</span>
+              <h2>Top Subcontractors</h2>
             </div>
+            <span className="dash-modern-card-chip subtle">Closed tickets</span>
+          </div>
+          {topSubcontractorRows.length === 0 ? (
+            <div className="dash-modern-reminders-empty">
+              <div className="dash-modern-reminders-empty-icon"><Wrench size={18} /></div>
+              <strong>No subcontractor tickets yet</strong>
+              <span>Subcontractor leaderboard will appear once tickets are recorded.</span>
+            </div>
+          ) : (
+            <>
+              <div className="dash-modern-top-table-wrap">
+                <table className="dash-modern-top-table">
+                  <thead>
+                    <tr>
+                      <th>Subcontractor</th>
+                      <th className="num">Install</th>
+                      <th className="num">Repair</th>
+                      <th className="num">Total Tickets</th>
+                      <th className="num">Total Earnings</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {topSubcontractorRows.map((row) => (
+                      <tr key={row.subcontractorId}>
+                        <td>
+                          <div className="dash-modern-top-employee">
+                            <div className="dash-modern-top-avatar dash-modern-top-avatar-subcon">
+                              <span>{row.subcontractorName.split(" ").filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "S"}</span>
+                            </div>
+                            <strong>{row.subcontractorName}</strong>
+                          </div>
+                        </td>
+                        <td className="num">{row.install}</td>
+                        <td className="num">{row.repair}</td>
+                        <td className="num">{row.totalTickets}</td>
+                        <td className="num">{currency.format(row.earnings)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="dash-modern-top-footer">
+                <button className="text-button" onClick={onOpenSubcontractorLeaderboard} type="button">
+                  View subcontractor leaderboard
+                </button>
+                <button className="dash-modern-top-link" onClick={onOpenSubcontractorLeaderboard} type="button" aria-label="Open subcontractor leaderboard">
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+            </>
           )}
         </article>
       </section>

@@ -160,6 +160,7 @@ export type Expense = {
   payment_date: string | null;
   notes: string;
   payroll_run_id: string | null;
+  subcontractor_payment_reminder_id: string | null;
   created_at: string;
   updated_at: string;
 };

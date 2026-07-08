@@ -281,24 +281,7 @@ export function buildPaymentLedger(
   expenses: Expense[],
   expenseCategories: ExpenseCategory[] = [],
 ): PaymentLedgerRow[] {
-  const reminderRows: PaymentLedgerRow[] = payments.map((payment) => ({
-    id: payment.id,
-    source: payment.type,
-    paymentDate: payment.due_date,
-    label: payment.title,
-    vendor: payment.title,
-    category: payment.type,
-    categoryType: null,
-    amount: toNumber(payment.amount),
-    method: null,
-    referenceNumber: "",
-    status: payment.status,
-    expenseId: null,
-    paymentReminderId: payment.id,
-    expenseAmount: null,
-    expenseFrequency: null,
-  }));
-  const expenseRows: PaymentLedgerRow[] = expenses.flatMap((expense) =>
+  const installmentRows: PaymentLedgerRow[] = expenses.flatMap((expense) =>
     expense.installment_payments.map((payment) => ({
       id: payment.id,
       source: "expense" as const,
@@ -317,7 +300,26 @@ export function buildPaymentLedger(
       expenseFrequency: expense.frequency,
     })),
   );
-  return [...reminderRows, ...expenseRows];
+  const payrollRows: PaymentLedgerRow[] = expenses
+    .filter((expense) => expense.payroll_run_id !== null && expense.paid_date)
+    .map((expense) => ({
+      id: `${expense.id}-payroll-paid`,
+      source: "expense" as const,
+      paymentDate: expense.paid_date!,
+      label: expense.category_name,
+      vendor: expense.employee_name,
+      category: expense.category_name,
+      categoryType: expenseCategories.find((category) => category.id === expense.category_id)?.type ?? null,
+      amount: toNumber(expense.amount),
+      method: null,
+      referenceNumber: "",
+      status: "paid",
+      expenseId: expense.id,
+      paymentReminderId: null,
+      expenseAmount: toNumber(expense.amount),
+      expenseFrequency: expense.frequency,
+    }));
+  return [...installmentRows, ...payrollRows];
 }
 
 export async function loadCollections(supabase: SupabaseClient) {

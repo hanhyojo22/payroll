@@ -7,11 +7,15 @@ import {
   countSubconTickets,
   countTicketsByType,
 } from "../../domain/billing";
-import { paymentReminderRemainingBalance } from "../../domain/paymentReminders";
+import {
+  paymentReminderRemainingBalance,
+  subcontractorPayoutExpensePayload,
+  SUBCONTRACTOR_PAYOUT_EXPENSE_CATEGORY_NAME,
+} from "../../domain/paymentReminders";
 import { isOfflineLikeError } from "../../lib/offlineSync";
 import { supabase } from "../../supabase";
 import { MoneyField } from "../../shared/components/MoneyField";
-import { ActionProgress } from "../../shared/components/ActionProgress";
+import { ActionProgress, type ActionProgressState } from "../../shared/components/ActionProgress";
 import { PageHeader } from "../../shared/components/PageLayout";
 import { NotificationService } from "../../shared/notifications/NotificationService";
 import type { QueueOfflineMutation } from "../../shared/types";
@@ -26,6 +30,7 @@ import type {
   CollectionPaymentFormValues,
   CollectionReminder,
   DailyTicketEntry,
+  ExpenseCategory,
   PaymentReminder,
   SubcontractorAdvance,
   SubconDailyTicket,
@@ -42,6 +47,7 @@ import {
   updatePaymentReminderCompletion,
 } from "./billingRepository";
 import { recordReceivablePayment } from "../collections/collectionRepository";
+import { ensureSubcontractorPayoutExpenseCategory, saveExpense } from "../expenses/expenseRepository";
 
 function collectionStatusForRecord(record: BillingRecord, collections: CollectionReminder[], collectionId: string | null): string {
   if (!collectionId) return "-";
@@ -55,6 +61,7 @@ export type BillingFeatureProps = {
   billingSettings: BillingSettings | null;
   collections: CollectionReminder[];
   dailyTicketEntries: DailyTicketEntry[];
+  expenseCategories: ExpenseCategory[];
   onChange: () => Promise<void>;
   onLocalBillingRecordsChange: (records: BillingRecord[]) => void;
   onOpenSubcontractorAccount: (subcontractorId: string) => void;
@@ -71,6 +78,7 @@ export function BillingFeature({
   billingSettings,
   collections,
   dailyTicketEntries,
+  expenseCategories,
   onChange,
   onLocalBillingRecordsChange,
   onOpenSubcontractorAccount,
@@ -81,12 +89,17 @@ export function BillingFeature({
   subcontractors,
   userId,
 }: BillingFeatureProps) {
+  const BILLING_PAGE_SIZE = 10;
   const [formOpen, setFormOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState<BillingRecord | null>(null);
   const [settings, setSettings] = useState<BillingSettings | null>(billingSettings);
   const [quickCollecting, setQuickCollecting] = useState<{ record: BillingRecord; collection: CollectionReminder } | null>(null);
   const [expandedRecordId, setExpandedRecordId] = useState<string | null>(null);
   const [detailsRecord, setDetailsRecord] = useState<BillingRecord | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [subcontractorExpenseCategoryId, setSubcontractorExpenseCategoryId] = useState<string | null>(
+    expenseCategories.find((category) => category.type === "company" && category.name === SUBCONTRACTOR_PAYOUT_EXPENSE_CATEGORY_NAME)?.id ?? null,
+  );
 
   useEffect(() => {
     setSettings(billingSettings);
@@ -99,6 +112,11 @@ export function BillingFeature({
     });
   }, [settings, userId]);
 
+  useEffect(() => {
+    const found = expenseCategories.find((category) => category.type === "company" && category.name === SUBCONTRACTOR_PAYOUT_EXPENSE_CATEGORY_NAME);
+    if (found) setSubcontractorExpenseCategoryId(found.id);
+  }, [expenseCategories]);
+
   const paymentByItemId = useMemo(
     () => new Map(
       payments
@@ -107,6 +125,69 @@ export function BillingFeature({
     ),
     [payments],
   );
+
+  async function resolveSubcontractorExpenseCategoryId() {
+    if (subcontractorExpenseCategoryId) return subcontractorExpenseCategoryId;
+    if (!supabase || !navigator.onLine) return null;
+
+    const result = await ensureSubcontractorPayoutExpenseCategory(supabase, userId);
+    if (result.error || !result.data) return null;
+    setSubcontractorExpenseCategoryId(result.data.id);
+    return result.data.id;
+  }
+
+  function remindersForExpenseSync(
+    payoutPayloads: Array<Omit<PaymentReminder, "created_at" | "updated_at" | "payments">>,
+  ): PaymentReminder[] {
+    const now = new Date().toISOString();
+    const paymentById = new Map(payments.map((payment) => [payment.id, payment]));
+    return payoutPayloads.map((payload) => {
+      const existing = paymentById.get(payload.id);
+      return {
+        ...payload,
+        created_at: existing?.created_at ?? now,
+        updated_at: existing?.updated_at ?? now,
+        payments: existing?.payments ?? [],
+      };
+    });
+  }
+
+  async function syncSubcontractorPayoutExpenses(reminders: PaymentReminder[]) {
+    const categoryId = await resolveSubcontractorExpenseCategoryId();
+    if (!categoryId) return false;
+
+    for (const reminder of reminders) {
+      const payload = subcontractorPayoutExpensePayload(reminder, reminder.payments, categoryId);
+      if (!navigator.onLine) {
+        await onQueueOfflineMutation({
+          resource: "expenses",
+          affectedResources: ["expenses"],
+          operation: "upsert",
+          table: "expenses",
+          recordId: payload.id,
+          payload,
+        });
+        continue;
+      }
+
+      if (!supabase) return false;
+      const result = await saveExpense(supabase, payload);
+      if (result.error && isOfflineLikeError(result.error)) {
+        await onQueueOfflineMutation({
+          resource: "expenses",
+          affectedResources: ["expenses"],
+          operation: "upsert",
+          table: "expenses",
+          recordId: payload.id,
+          payload,
+        });
+        continue;
+      }
+      if (result.error) return false;
+    }
+
+    return true;
+  }
 
   function collectionStatusFor(record: BillingRecord): string {
     return collectionStatusForRecord(record, collections, record.collection_id);
@@ -332,8 +413,12 @@ export function BillingFeature({
     return { error: null };
   }
 
-  async function createBilling(values: BillingFormValues) {
+  async function createBilling(
+    values: BillingFormValues,
+    onProgress?: (progress: ActionProgressState | null) => void,
+  ) {
     if (!supabase || !settings) return;
+    const reportProgress = (progress: ActionProgressState | null) => onProgress?.(progress);
     const month = Number(values.billing_month);
     const year = Number(values.billing_year);
     const period = values.billing_period;
@@ -357,7 +442,14 @@ export function BillingFeature({
       collectionId: crypto.randomUUID(),
       collectiblesCollectionId: crypto.randomUUID(),
     };
+    reportProgress({
+      title: "Creating billing",
+      description: "Preparing billing totals, collections, and payout records.",
+      completed: 1,
+      total: 4,
+    });
     const { billingPayload, collectionPayload, collectiblesCollectionPayload, payoutPayloads, advanceUpdates } = buildArtifacts(values, ids);
+    const payoutExpenses = remindersForExpenseSync(payoutPayloads);
 
     if (!navigator.onLine) {
       const optimistic = {
@@ -381,11 +473,25 @@ export function BillingFeature({
           subcontractorAdvanceUpdates: advanceUpdates,
         },
       });
+      reportProgress({
+        title: "Creating billing",
+        description: "Syncing subcontractor payout expenses.",
+        completed: 3,
+        total: 4,
+      });
+      await syncSubcontractorPayoutExpenses(payoutExpenses);
       setFormOpen(false);
       NotificationService.showSuccess(`Billing for ${monthNames[month - 1]} ${year} (${periodLabel}) created.`);
+      reportProgress(null);
       return;
     }
 
+    reportProgress({
+      title: "Creating billing",
+      description: "Saving billing records and collection entries.",
+      completed: 2,
+      total: 4,
+    });
     const result = await persistBillingArtifacts(
       billingPayload,
       collectionPayload,
@@ -417,27 +523,69 @@ export function BillingFeature({
             subcontractorAdvanceUpdates: advanceUpdates,
           },
         });
+        reportProgress({
+          title: "Creating billing",
+          description: "Syncing subcontractor payout expenses.",
+          completed: 3,
+          total: 4,
+        });
+        await syncSubcontractorPayoutExpenses(payoutExpenses);
         setFormOpen(false);
+        reportProgress(null);
         return;
       }
       NotificationService.showError((result.error as { message?: string }).message ?? "Failed to create billing.");
       return;
     }
 
+    reportProgress({
+      title: "Creating billing",
+      description: "Syncing subcontractor payout expenses.",
+      completed: 3,
+      total: 4,
+    });
+    const syncedExpenses = await syncSubcontractorPayoutExpenses(payoutExpenses);
     setFormOpen(false);
     NotificationService.showSuccess(`Billing for ${monthNames[month - 1]} ${year} (${periodLabel}) created.`);
+    if (!syncedExpenses) {
+      NotificationService.showError("Billing saved, but couldn't sync subcontractor payouts to Company Expenses.");
+    }
+    reportProgress({
+      title: "Creating billing",
+      description: "Refreshing billing data.",
+      completed: 4,
+      total: 4,
+    });
     await onChange();
+    reportProgress(null);
   }
 
-  async function updateBilling(values: BillingFormValues) {
+  async function updateBilling(
+    values: BillingFormValues,
+    onProgress?: (progress: ActionProgressState | null) => void,
+  ) {
     if (!supabase || !settings || !editingRecord) return;
+    const reportProgress = (progress: ActionProgressState | null) => onProgress?.(progress);
     const periodLabel = billingPeriodLabel(values.billing_period);
+    reportProgress({
+      title: "Saving billing",
+      description: "Preparing billing totals, collections, and payout records.",
+      completed: 1,
+      total: 4,
+    });
     const { billingPayload, collectionPayload, collectiblesCollectionPayload, payoutPayloads, advanceUpdates } = buildArtifacts(values, {
       billingId: editingRecord.id,
       collectionId: editingRecord.collection_id ?? crypto.randomUUID(),
       collectiblesCollectionId: editingRecord.collectibles_collection_id ?? crypto.randomUUID(),
     });
+    const payoutExpenses = remindersForExpenseSync(payoutPayloads);
 
+    reportProgress({
+      title: "Saving billing",
+      description: "Saving billing records and collection entries.",
+      completed: 2,
+      total: 4,
+    });
     const result = await persistBillingArtifacts(
       {
         ...billingPayload,
@@ -455,9 +603,26 @@ export function BillingFeature({
       return;
     }
 
+    reportProgress({
+      title: "Saving billing",
+      description: "Syncing subcontractor payout expenses.",
+      completed: 3,
+      total: 4,
+    });
+    const syncedExpenses = await syncSubcontractorPayoutExpenses(payoutExpenses);
     setEditingRecord(null);
     NotificationService.showSuccess(`Billing for ${monthNames[Number(values.billing_month) - 1]} ${values.billing_year} (${periodLabel}) updated.`);
+    if (!syncedExpenses) {
+      NotificationService.showError("Billing updated, but couldn't sync subcontractor payouts to Company Expenses.");
+    }
+    reportProgress({
+      title: "Saving billing",
+      description: "Refreshing billing data.",
+      completed: 4,
+      total: 4,
+    });
     await onChange();
+    reportProgress(null);
   }
 
   async function removeBilling(record: BillingRecord) {
@@ -487,6 +652,23 @@ export function BillingFeature({
     totalCollections: billingRecords.reduce((sum, record) => sum + record.collections_amount, 0),
     totalCollectibles: billingRecords.reduce((sum, record) => sum + record.collectibles_amount, 0),
   }), [billingRecords]);
+  const pageCount = Math.max(1, Math.ceil(billingRecords.length / BILLING_PAGE_SIZE));
+  const safeCurrentPage = Math.min(currentPage, pageCount);
+  const pageStart = (safeCurrentPage - 1) * BILLING_PAGE_SIZE;
+  const pageEnd = Math.min(pageStart + BILLING_PAGE_SIZE, billingRecords.length);
+  const paginatedBillingRecords = billingRecords.slice(pageStart, pageEnd);
+
+  useEffect(() => {
+    if (currentPage > pageCount) {
+      setCurrentPage(pageCount);
+    }
+  }, [currentPage, pageCount]);
+
+  useEffect(() => {
+    if (expandedRecordId && !paginatedBillingRecords.some((record) => record.id === expandedRecordId)) {
+      setExpandedRecordId(null);
+    }
+  }, [expandedRecordId, paginatedBillingRecords]);
 
   return (
     <div className="billing-page">
@@ -539,157 +721,192 @@ export function BillingFeature({
           <span>Create your first billing to start tracking invoices.</span>
         </div>
       ) : (
-        <div className="billing-table-wrap">
-          <table className="billing-table">
-            <thead>
-              <tr>
-                <th>Invoice No.</th>
-                <th>Period</th>
-                <th className="num">Tickets</th>
-                <th className="num">Disputed</th>
-                <th className="num">Billable</th>
-                <th className="num">Amount</th>
-                <th className="num">Payable</th>
-                <th className="num">Collection</th>
-                <th>Status</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {billingRecords.map((record) => {
-                const expanded = expandedRecordId === record.id;
-                const isFullyPaid =
-                  billingPaidState(collectionStatusFor(record)) === "paid" &&
-                  (!record.collectibles_collection_id || billingPaidState(collectiblesStatusFor(record)) === "paid");
-                return (
-                  <>
-                    <tr className="expandable" key={record.id}>
-                      <td className="billing-invoice-no">{record.invoice_no}</td>
-                      <td>
-                        <div className="billing-period-cell">
-                          <button
-                            className="billing-expand-btn"
-                            onClick={() => setExpandedRecordId(expanded ? null : record.id)}
-                            type="button"
-                          >
-                            <ChevronDown className={expanded ? "expanded" : ""} size={15} />
-                          </button>
-                          <div>
-                            <strong className="billing-period-month">{monthNames[record.billing_month - 1]} {record.billing_year}</strong>
-                            <span className="billing-period-half">{billingPeriodLabel(record.billing_period)}</span>
+        <>
+          <div className="billing-table-wrap">
+            <table className="billing-table">
+              <thead>
+                <tr>
+                  <th>Invoice No.</th>
+                  <th>Period</th>
+                  <th className="num">Tickets</th>
+                  <th className="num">Disputed</th>
+                  <th className="num">Billable</th>
+                  <th className="num">Amount</th>
+                  <th className="num">Payable</th>
+                  <th className="num">Collection</th>
+                  <th>Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {paginatedBillingRecords.map((record) => {
+                  const expanded = expandedRecordId === record.id;
+                  const isFullyPaid =
+                    billingPaidState(collectionStatusFor(record)) === "paid" &&
+                    (!record.collectibles_collection_id || billingPaidState(collectiblesStatusFor(record)) === "paid");
+                  return (
+                    <>
+                      <tr className="expandable" key={record.id}>
+                        <td className="billing-invoice-no">{record.invoice_no}</td>
+                        <td>
+                          <div className="billing-period-cell">
+                            <button
+                              className="billing-expand-btn"
+                              onClick={() => setExpandedRecordId(expanded ? null : record.id)}
+                              type="button"
+                            >
+                              <ChevronDown className={expanded ? "expanded" : ""} size={15} />
+                            </button>
+                            <div>
+                              <strong className="billing-period-month">{monthNames[record.billing_month - 1]} {record.billing_year}</strong>
+                              <span className="billing-period-half">{billingPeriodLabel(record.billing_period)}</span>
+                            </div>
                           </div>
-                        </div>
-                      </td>
-                      <td className="num">
-                        <div className="billing-cell-breakdown">
-                          <strong>{record.total_tickets}</strong>
-                          <span>I:{record.install_tickets} R:{record.repair_tickets}</span>
-                        </div>
-                      </td>
-                      <td className="num">
-                        <div className="billing-cell-breakdown">
-                          <strong>{record.disputed_tickets}</strong>
-                          <span>I:{record.disputed_install} R:{record.disputed_repair}</span>
-                        </div>
-                      </td>
-                      <td className="num">
-                        <div className="billing-cell-breakdown">
-                          <strong>{record.billable_tickets}</strong>
-                          <span>
-                            I:{Math.max(0, record.install_tickets - record.disputed_install)} R:{Math.max(0, record.repair_tickets - record.disputed_repair)}
+                        </td>
+                        <td className="num">
+                          <div className="billing-cell-breakdown">
+                            <strong>{record.total_tickets}</strong>
+                            <span>I:{record.install_tickets} R:{record.repair_tickets}</span>
+                          </div>
+                        </td>
+                        <td className="num">
+                          <div className="billing-cell-breakdown">
+                            <strong>{record.disputed_tickets}</strong>
+                            <span>I:{record.disputed_install} R:{record.disputed_repair}</span>
+                          </div>
+                        </td>
+                        <td className="num">
+                          <div className="billing-cell-breakdown">
+                            <strong>{record.billable_tickets}</strong>
+                            <span>
+                              I:{Math.max(0, record.install_tickets - record.disputed_install)} R:{Math.max(0, record.repair_tickets - record.disputed_repair)}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="num">{currency.format(record.billing_amount)}</td>
+                        <td className="num">{currency.format(record.collectibles_amount)}</td>
+                        <td className="num">{currency.format(record.collections_amount)}</td>
+                        <td>
+                          <span className={`collection-status ${isFullyPaid ? "collected" : "pending"}`}>
+                            {isFullyPaid ? "Paid" : "Unpaid"}
                           </span>
-                        </div>
-                      </td>
-                      <td className="num">{currency.format(record.billing_amount)}</td>
-                      <td className="num">{currency.format(record.collectibles_amount)}</td>
-                      <td className="num">{currency.format(record.collections_amount)}</td>
-                      <td>
-                        <span className={`collection-status ${isFullyPaid ? "collected" : "pending"}`}>
-                          {isFullyPaid ? "Paid" : "Unpaid"}
-                        </span>
-                      </td>
-                      <td>
-                        <div className="billing-row-actions">
-                          <button aria-label="View details" onClick={() => setDetailsRecord(record)} type="button" title="View details">
-                            <Eye size={14} />
-                          </button>
-                          <button aria-label="Edit" onClick={() => setEditingRecord(record)} type="button" title="Edit">
-                            <Pencil size={14} />
-                          </button>
-                          <button aria-label="Delete" onClick={() => void removeBilling(record)} type="button" title="Delete">
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                    {expanded && (
-                      <tr className="subcon-detail-row" key={`${record.id}-subcon`}>
-                        <td colSpan={10}>
-                          <table className="billing-subcon-detail-table">
-                            <thead>
-                              <tr>
-                                <th>Subcontractor</th>
-                                <th className="num">Tickets</th>
-                                <th className="num">Gross</th>
-                                <th className="num">Net payable</th>
-                                <th>Payout</th>
-                                <th>Action</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {record.subcon_items.length === 0 ? (
-                                <tr>
-                                  <td colSpan={6}>No subcontractor billing rows for this billing period.</td>
-                                </tr>
-                              ) : (
-                                record.subcon_items.map((item) => {
-                                  const payment = paymentByItemId.get(item.id);
-                                  return (
-                                    <tr key={item.id}>
-                                      <td className="subcon-detail-name">{item.subcon_name}</td>
-                                      <td className="num">{item.install_tickets + item.repair_tickets}</td>
-                                      <td className="num">{currency.format(item.billing_amount)}</td>
-                                      <td className="num"><strong>{currency.format(item.payable_amount)}</strong></td>
-                                      <td>
-                                        {payment ? (
-                                          <button
-                                            className="billing-subcon-status-link"
-                                            onClick={() => onOpenSubcontractorAccount(item.subcontractor_id)}
-                                            type="button"
-                                          >
-                                            {payment.status}
-                                          </button>
-                                        ) : (
-                                          <span className="subcon-missing-payment">Missing payout</span>
-                                        )}
-                                      </td>
-                                      <td>
-                                        <div className="billing-row-actions">
-                                          <button onClick={() => onOpenSubcontractorAccount(item.subcontractor_id)} type="button">
-                                            View account
-                                          </button>
-                                          {payment?.status === "pending" && (
-                                            <button onClick={() => void markPayoutPaid(payment, userId, onChange)} type="button">
-                                              Mark paid
-                                            </button>
-                                          )}
-                                        </div>
-                                      </td>
-                                    </tr>
-                                  );
-                                })
-                              )}
-                            </tbody>
-                          </table>
+                        </td>
+                        <td>
+                          <div className="billing-row-actions">
+                            <button aria-label="View details" onClick={() => setDetailsRecord(record)} type="button" title="View details">
+                              <Eye size={14} />
+                            </button>
+                            <button aria-label="Edit" onClick={() => setEditingRecord(record)} type="button" title="Edit">
+                              <Pencil size={14} />
+                            </button>
+                            <button aria-label="Delete" onClick={() => void removeBilling(record)} type="button" title="Delete">
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
                         </td>
                       </tr>
-                    )}
-                  </>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                      {expanded && (
+                        <tr className="subcon-detail-row" key={`${record.id}-subcon`}>
+                          <td colSpan={10}>
+                            <table className="billing-subcon-detail-table">
+                              <thead>
+                                <tr>
+                                  <th>Subcontractor</th>
+                                  <th className="num">Tickets</th>
+                                  <th className="num">Gross</th>
+                                  <th className="num">Net payable</th>
+                                  <th>Payout</th>
+                                  <th>Action</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {record.subcon_items.length === 0 ? (
+                                  <tr>
+                                    <td colSpan={6}>No subcontractor billing rows for this billing period.</td>
+                                  </tr>
+                                ) : (
+                                  record.subcon_items.map((item) => {
+                                    const payment = paymentByItemId.get(item.id);
+                                    return (
+                                      <tr key={item.id}>
+                                        <td className="subcon-detail-name">{item.subcon_name}</td>
+                                        <td className="num">{item.install_tickets + item.repair_tickets}</td>
+                                        <td className="num">{currency.format(item.billing_amount)}</td>
+                                        <td className="num"><strong>{currency.format(item.payable_amount)}</strong></td>
+                                        <td>
+                                          {payment ? (
+                                            <button
+                                              className="billing-subcon-status-link"
+                                              onClick={() => onOpenSubcontractorAccount(item.subcontractor_id)}
+                                              type="button"
+                                            >
+                                              {payment.status}
+                                            </button>
+                                          ) : (
+                                            <span className="subcon-missing-payment">Missing payout</span>
+                                          )}
+                                        </td>
+                                        <td>
+                                          <div className="billing-row-actions">
+                                            <button onClick={() => onOpenSubcontractorAccount(item.subcontractor_id)} type="button">
+                                              View account
+                                            </button>
+                                            {payment?.status === "pending" && (
+                                              <button onClick={() => void markPayoutPaid(payment, userId, onChange)} type="button">
+                                                Mark paid
+                                              </button>
+                                            )}
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })
+                                )}
+                              </tbody>
+                            </table>
+                          </td>
+                        </tr>
+                      )}
+                    </>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {billingRecords.length > BILLING_PAGE_SIZE && (
+            <div className="attendance-footer">
+              <span>
+                Showing {pageStart + 1} to {pageEnd} of {billingRecords.length} billing record{billingRecords.length === 1 ? "" : "s"}
+              </span>
+              <div>
+                <button
+                  disabled={safeCurrentPage === 1}
+                  onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+                  type="button"
+                >
+                  {"<"}
+                </button>
+                {Array.from({ length: pageCount }, (_, index) => index + 1).map((page) => (
+                  <button
+                    className={page === safeCurrentPage ? "active" : undefined}
+                    key={page}
+                    onClick={() => setCurrentPage(page)}
+                    type="button"
+                  >
+                    {page}
+                  </button>
+                ))}
+                <button
+                  disabled={safeCurrentPage === pageCount}
+                  onClick={() => setCurrentPage((page) => Math.min(pageCount, page + 1))}
+                  type="button"
+                >
+                  {">"}
+                </button>
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {formOpen && settings && (
@@ -1097,7 +1314,7 @@ function BillingForm({
   subconDailyTickets: SubconDailyTicket[];
   subcontractors: Subcontractor[];
   onClose: () => void;
-  onSubmit: (values: BillingFormValues) => Promise<void>;
+  onSubmit: (values: BillingFormValues, onProgress?: (progress: ActionProgressState | null) => void) => Promise<void>;
 }) {
   const today = new Date();
   const defaultPeriod = (today.getDate() <= 15 ? "first_half" : "second_half") as BillingFormValues["billing_period"];
@@ -1182,6 +1399,7 @@ function BillingForm({
 
   const [values, setValues] = useState<BillingFormValues>(buildInitialValues);
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<ActionProgressState | null>(null);
 
   useEffect(() => {
     if (initial) return;
@@ -1227,6 +1445,10 @@ function BillingForm({
   const repairTickets = Math.max(0, Number(values.repair_tickets) || 0);
   const disputedInstall = Math.min(installTickets, Number(values.disputed_install) || 0);
   const disputedRepair = Math.min(repairTickets, Number(values.disputed_repair) || 0);
+  const employeeDisplayInstall = Math.max(0, employeeTotals.install - disputedInstall);
+  const employeeDisplayRepair = Math.max(0, employeeTotals.repair - disputedRepair);
+  const employeeDisplayTickets = employeeDisplayInstall + employeeDisplayRepair;
+  const employeeDisplayGross = employeeDisplayInstall * settings.installation_rate + employeeDisplayRepair * settings.repair_rate;
   const billableInstall = installTickets - disputedInstall;
   const billableRepair = repairTickets - disputedRepair;
   const billableTickets = billableInstall + billableRepair;
@@ -1257,8 +1479,9 @@ function BillingForm({
     event.preventDefault();
     setBusy(true);
     try {
-      await onSubmit(values);
+      await onSubmit(values, setProgress);
     } finally {
+      setProgress(null);
       setBusy(false);
     }
   }
@@ -1277,8 +1500,10 @@ function BillingForm({
         <form className="cbf-form action-progress-shell" onSubmit={handleSubmit}>
           {busy && (
             <ActionProgress
-              description={initial ? "Updating billing totals, collections, and payout records." : "Building billing totals, collections, and payout records."}
-              title={initial ? "Saving billing" : "Creating billing"}
+              description={progress?.description ?? (initial ? "Updating billing totals, collections, and payout records." : "Building billing totals, collections, and payout records.")}
+              progress={progress ? (progress.completed / Math.max(progress.total, 1)) * 100 : undefined}
+              progressLabel={progress ? `${progress.completed} of ${progress.total} steps` : undefined}
+              title={progress?.title ?? (initial ? "Saving billing" : "Creating billing")}
             />
           )}
           <div className="cbf-cols">
@@ -1370,7 +1595,7 @@ function BillingForm({
                     <h4>Employee Ticket Reference</h4>
                     <p>Closed employee tickets included in this billing period.</p>
                   </div>
-                  <strong>{employeeTotals.tickets} tickets · {currency.format(employeeTotals.gross)}</strong>
+                  <strong>{employeeDisplayTickets} tickets · {currency.format(employeeDisplayGross)}</strong>
                 </div>
                 <div className="billing-details-table-wrap">
                   <table className="billing-details-table billing-employee-reference-table">

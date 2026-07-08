@@ -11,6 +11,8 @@ import {
   paymentReminderDisplayStatus,
   paymentReminderPaymentsTotal,
   paymentReminderRemainingBalance,
+  subcontractorPayoutExpensePayload,
+  SUBCONTRACTOR_PAYOUT_EXPENSE_CATEGORY_NAME,
   validatePaymentReminderPayment,
 } from "../../domain/paymentReminders";
 import { deletePaymentReminderPayment, recordPaymentReminderPayment, saveSubcontractor, updatePaymentReminderCompletion } from "../billing/billingRepository";
@@ -23,7 +25,14 @@ import { NotificationService } from "../../shared/notifications/NotificationServ
 import type { QueueOfflineMutation } from "../../shared/types";
 import { currency, toNumber } from "../../shared/utils/currency";
 import { monthNames, todayKey } from "../../shared/utils/dates";
-import type { BillingPeriod, BillingRecord, CollectionPaymentMethod, PaymentReminder, PaymentReminderPayment, SubconDailyTicket, Subcontractor, SubcontractorAdvance, SubcontractorAdvanceFormValues } from "../../types";
+import type { BillingPeriod, BillingRecord, CollectionPaymentMethod, ExpenseCategory, PaymentReminder, PaymentReminderPayment, SubconDailyTicket, Subcontractor, SubcontractorAdvance, SubcontractorAdvanceFormValues } from "../../types";
+import {
+  deleteExpenseInstallmentPayment,
+  ensureSubcontractorPayoutExpenseCategory,
+  payExpenseInstallment,
+  saveExpense,
+  updateExpenseCompletion,
+} from "../expenses/expenseRepository";
 
 type AccountTab = "daily" | "billing" | "payouts" | "advances";
 
@@ -53,6 +62,7 @@ function subconInitials(name: string) {
 
 export function SubcontractorsFeature({
   billingRecords,
+  expenseCategories,
   initialTab,
   onChange,
   onQueueOfflineMutation,
@@ -65,6 +75,7 @@ export function SubcontractorsFeature({
   userId,
 }: {
   billingRecords: BillingRecord[];
+  expenseCategories: ExpenseCategory[];
   initialTab?: AccountTab;
   onChange: () => Promise<void>;
   onQueueOfflineMutation: QueueOfflineMutation;
@@ -80,6 +91,9 @@ export function SubcontractorsFeature({
   const [tab, setTab] = useState<AccountTab>(initialTab ?? "daily");
   const [editing, setEditing] = useState<Subcontractor | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  const [subcontractorExpenseCategoryId, setSubcontractorExpenseCategoryId] = useState<string | null>(
+    expenseCategories.find((category) => category.type === "company" && category.name === SUBCONTRACTOR_PAYOUT_EXPENSE_CATEGORY_NAME)?.id ?? null,
+  );
   const [drawerRow, setDrawerRow] = useState<(BillingRecord["subcon_items"][number] & {
     billing_month: number;
     billing_year: number;
@@ -89,6 +103,11 @@ export function SubcontractorsFeature({
   useEffect(() => {
     if (initialTab) setTab(initialTab);
   }, [initialTab]);
+
+  useEffect(() => {
+    const found = expenseCategories.find((category) => category.type === "company" && category.name === SUBCONTRACTOR_PAYOUT_EXPENSE_CATEGORY_NAME);
+    if (found) setSubcontractorExpenseCategoryId(found.id);
+  }, [expenseCategories]);
 
   const selected = useMemo(() => {
     return subcontractors.find((subcontractor) => subcontractor.id === selectedSubcontractorId) ?? null;
@@ -157,11 +176,22 @@ export function SubcontractorsFeature({
     await onChange();
   }
 
+  async function resolveSubcontractorExpenseCategoryId() {
+    if (subcontractorExpenseCategoryId) return subcontractorExpenseCategoryId;
+    if (!supabase || !navigator.onLine) return null;
+
+    const result = await ensureSubcontractorPayoutExpenseCategory(supabase, userId);
+    if (result.error || !result.data) return null;
+    setSubcontractorExpenseCategoryId(result.data.id);
+    return result.data.id;
+  }
+
   return (
     <>
       {selected ? (
         <SubcontractorDetailsView
           billingRecords={billingRecords}
+          ensureExpenseCategoryId={resolveSubcontractorExpenseCategoryId}
           onArchive={toggleArchive}
           onBack={() => onSelectSubcontractor("")}
           onChange={onChange}
@@ -312,6 +342,7 @@ function SubconMetric({ helperText, icon, label, tone, value }: {
 
 function SubcontractorDetailsView({
   billingRecords,
+  ensureExpenseCategoryId,
   onChange,
   onArchive,
   onBack,
@@ -327,6 +358,7 @@ function SubcontractorDetailsView({
   userId,
 }: {
   billingRecords: BillingRecord[];
+  ensureExpenseCategoryId: () => Promise<string | null>;
   onChange: () => Promise<void>;
   onArchive: (subcontractor: Subcontractor) => Promise<void>;
   onBack: () => void;
@@ -408,6 +440,28 @@ function SubcontractorDetailsView({
   const activeAdvanceBalance = selectedAdvances
     .filter((advance) => advance.status === "active")
     .reduce((sum, advance) => sum + Number(advance.balance), 0);
+
+  async function syncPayoutExpense(reminder: PaymentReminder, reminderPayments: PaymentReminderPayment[]) {
+    const categoryId = await ensureExpenseCategoryId();
+    if (!categoryId) return false;
+    const payload = subcontractorPayoutExpensePayload(reminder, reminderPayments, categoryId);
+
+    if (!navigator.onLine) {
+      await onQueueOfflineMutation({
+        resource: "expenses",
+        affectedResources: ["expenses"],
+        operation: "upsert",
+        table: "expenses",
+        recordId: payload.id,
+        payload,
+      });
+      return true;
+    }
+
+    if (!supabase) return false;
+    const result = await saveExpense(supabase, payload);
+    return !result.error;
+  }
 
   async function saveAdvance(event: FormEvent) {
     event.preventDefault();
@@ -508,8 +562,14 @@ function SubcontractorDetailsView({
     const newPaymentRecord: PaymentReminderPayment = {
       id: paymentId, user_id: userId, payment_reminder_id: payment.id, ...paymentPayload, created_at: new Date().toISOString(),
     };
-    const next = nextPaymentReminderCompletionState(payment, [...(payment.payments ?? []), newPaymentRecord]);
+    const nextReminderPayments = [...(payment.payments ?? []), newPaymentRecord];
+    const next = nextPaymentReminderCompletionState(payment, nextReminderPayments);
     const complete = next.status === "paid";
+    const expensePaymentPayload = { ...paymentPayload, id: paymentId, user_id: userId, expense_id: payment.id };
+    const expenseCompletionPayload = {
+      status: complete ? "paid" as const : "pending" as const,
+      paid_date: complete ? values.payment_date : null,
+    };
 
     if (!navigator.onLine) {
       await onQueueOfflineMutation({
@@ -523,6 +583,20 @@ function SubcontractorDetailsView({
           reminderUpdate: complete ? { id: payment.id, payload: { status: "paid" } } : null,
         },
       });
+      const expenseSyncOk = await syncPayoutExpense(payment, nextReminderPayments);
+      if (expenseSyncOk) {
+        await onQueueOfflineMutation({
+          resource: "expenses",
+          affectedResources: ["expenses"],
+          operation: "expense_payment_group",
+          table: "expense_installment_payments",
+          recordId: paymentId,
+          payload: {
+            paymentPayload: expensePaymentPayload,
+            expenseUpdate: { id: payment.id, payload: expenseCompletionPayload },
+          },
+        });
+      }
       setPayingPayout(null);
       NotificationService.showSuccess("Payment recorded locally. It will sync when online.");
       return;
@@ -532,6 +606,21 @@ function SubcontractorDetailsView({
     if (paymentResult.error) {
       NotificationService.showError((paymentResult.error as { message?: string }).message ?? "Failed to record the payment.");
       return;
+    }
+    const expenseSyncOk = await syncPayoutExpense(payment, payment.payments ?? []);
+    if (expenseSyncOk) {
+      const expensePaymentResult = await payExpenseInstallment(supabase, userId, payment.id, paymentPayload);
+      if (expensePaymentResult.error) {
+        NotificationService.showError((expensePaymentResult.error as { message?: string }).message ?? "Payment recorded, but couldn't sync it to Expenses.");
+        await onChange();
+        return;
+      }
+      const expenseCompletionResult = await updateExpenseCompletion(supabase, payment.id, expenseCompletionPayload);
+      if (expenseCompletionResult.error) {
+        NotificationService.showError((expenseCompletionResult.error as { message?: string }).message ?? "Payment recorded, but couldn't update the linked expense.");
+        await onChange();
+        return;
+      }
     }
     if (complete) {
       const completionResult = await updatePaymentReminderCompletion(supabase, payment.id, "paid");
@@ -543,6 +632,9 @@ function SubcontractorDetailsView({
     }
     setPayingPayout(null);
     NotificationService.showSuccess(complete ? "Final payment recorded — payout marked paid." : "Payment recorded.");
+    if (!expenseSyncOk) {
+      NotificationService.showError("Payout payment was saved, but couldn't sync it to Expenses.");
+    }
     await onChange();
   }
 
@@ -574,6 +666,26 @@ function SubcontractorDetailsView({
           payload: { status: "pending" },
         });
       }
+      const expenseSyncOk = await syncPayoutExpense(payment, remainingPayments);
+      if (expenseSyncOk) {
+        await onQueueOfflineMutation({
+          resource: "expenses",
+          affectedResources: ["expenses"],
+          operation: "delete",
+          table: "expense_installment_payments",
+          recordId: paymentRecord.id,
+        });
+        if (shouldRevert) {
+          await onQueueOfflineMutation({
+            resource: "expenses",
+            affectedResources: ["expenses"],
+            operation: "update",
+            table: "expenses",
+            recordId: payment.id,
+            payload: { status: "pending", paid_date: null },
+          });
+        }
+      }
       NotificationService.showSuccess("Deleted locally. It will sync when online.");
       return;
     }
@@ -582,6 +694,27 @@ function SubcontractorDetailsView({
     if (deleteResult.error) {
       NotificationService.showError((deleteResult.error as { message?: string }).message ?? "Failed to delete that payment.");
       return;
+    }
+    const expenseSyncOk = await syncPayoutExpense(payment, payment.payments ?? []);
+    if (expenseSyncOk) {
+      const expenseDeleteResult = await deleteExpenseInstallmentPayment(supabase, paymentRecord.id);
+      if (expenseDeleteResult.error) {
+        NotificationService.showError((expenseDeleteResult.error as { message?: string }).message ?? "Payment deleted, but couldn't update the linked expense.");
+        await onChange();
+        return;
+      }
+      const expenseCompletionResult = await updateExpenseCompletion(supabase, payment.id, {
+        status: shouldRevert ? "pending" : "paid",
+        paid_date: shouldRevert
+          ? null
+          : remainingPayments.reduce<string | null>((latest, item) =>
+            !latest || item.payment_date > latest ? item.payment_date : latest, null),
+      });
+      if (expenseCompletionResult.error) {
+        NotificationService.showError((expenseCompletionResult.error as { message?: string }).message ?? "Payment deleted, but couldn't refresh the linked expense.");
+        await onChange();
+        return;
+      }
     }
     if (shouldRevert) {
       const completionResult = await updatePaymentReminderCompletion(supabase, payment.id, "pending");
@@ -592,6 +725,9 @@ function SubcontractorDetailsView({
       }
     }
     NotificationService.showSuccess("Payment deleted.");
+    if (!expenseSyncOk) {
+      NotificationService.showError("Payout payment was updated, but couldn't sync the linked expense.");
+    }
     await onChange();
   }
 

@@ -220,6 +220,7 @@ export function ExpensesFeature({
       payment_date: values.payment_date || null,
       notes: values.notes.trim(),
       payroll_run_id: editingExpense?.payroll_run_id ?? null,
+      subcontractor_payment_reminder_id: editingExpense?.subcontractor_payment_reminder_id ?? null,
     };
 
     if (!navigator.onLine) {
@@ -571,7 +572,7 @@ export function ExpensesFeature({
                 const isOverdue = isExpenseOverdue(expense, expense.installment_payments, todayKey());
                 const hasPayments = expense.installment_payments.length > 0;
                 const canRecordPayment = displayStatus !== "paid" && displayStatus !== "cancelled";
-                const isPayrollLinked = expense.payroll_run_id !== null;
+                const isSystemManaged = expense.payroll_run_id !== null || expense.subcontractor_payment_reminder_id !== null;
                 const isOpenEndedRecurring = expense.frequency !== "one_time" && !expense.duration_months;
                 return (
                 <tr key={expense.id}>
@@ -614,17 +615,17 @@ export function ExpensesFeature({
                       <button onClick={() => setViewingExpense(expense)} title="View details" type="button">
                         <Eye size={14} />
                       </button>
-                      {!isPayrollLinked && canRecordPayment && (
+                      {!isSystemManaged && canRecordPayment && (
                         <button onClick={() => setPayingInstallmentExpense(expense)} title="Record payment" type="button">
                           <CheckCircle2 size={14} />
                         </button>
                       )}
-                      {!isPayrollLinked && canRecordPayment && isOpenEndedRecurring && (
+                      {!isSystemManaged && canRecordPayment && isOpenEndedRecurring && (
                         <button onClick={() => void handleEndRecurringExpense(expense)} title="End expense" type="button">
                           <Square size={14} />
                         </button>
                       )}
-                      {!isPayrollLinked && (
+                      {!isSystemManaged && (
                         <button
                           disabled={hasPayments}
                           onClick={() => { setEditingExpense(expense); setFormOpen(true); }}
@@ -634,7 +635,7 @@ export function ExpensesFeature({
                           <Pencil size={14} />
                         </button>
                       )}
-                      {!isPayrollLinked && canRecordPayment && (
+                      {!isSystemManaged && canRecordPayment && (
                         <button
                           disabled={hasPayments}
                           onClick={() => void handleCancelExpense(expense)}
@@ -644,7 +645,7 @@ export function ExpensesFeature({
                           <Ban size={14} />
                         </button>
                       )}
-                      {!isPayrollLinked && (
+                      {!isSystemManaged && (
                         <button
                           disabled={hasPayments}
                           onClick={() => setDeletingExpense(expense)}
@@ -1079,7 +1080,7 @@ function ExpenseDetailsModal({
                 <p>Audit trail</p>
                 <h2>Payment history</h2>
               </div>
-              {canRecordPayment && expense.payroll_run_id === null && (
+              {canRecordPayment && expense.payroll_run_id === null && expense.subcontractor_payment_reminder_id === null && (
                 <button className="billing-btn primary" onClick={onRecordPayment} type="button">
                   <CheckCircle2 size={15} /> Record Payment
                 </button>

@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   BarChart3,
   CalendarRange,
@@ -14,6 +14,13 @@ import {
   Users,
 } from "lucide-react";
 import { collectionStatus } from "../../domain/collections";
+import {
+  expenseDisplayStatus,
+  expensePaymentsTotal,
+  expenseRemainingBalance,
+  expenseTotalAmount,
+  isExpenseOverdue,
+} from "../../domain/expenses";
 import { PageHeader } from "../../shared/components/PageLayout";
 import { NotificationService } from "../../shared/notifications/NotificationService";
 import { currency, formatMoney } from "../../shared/utils/currency";
@@ -24,10 +31,12 @@ import type {
   CollectionReminder,
   DailyTicketEntry,
   Employee,
+  Expense,
   PayrollHistoryRow,
+  SubconDailyTicket,
 } from "../../types";
 
-type ReportKey = "payroll" | "billing" | "collections" | "tickets";
+type ReportKey = "payroll" | "billing" | "collections" | "tickets" | "expenses";
 type SortDirection = "asc" | "desc";
 
 type FilterState = {
@@ -64,6 +73,16 @@ type BreakdownPoint = {
   value: number;
 };
 
+type TrendVariant = "bars" | "line";
+
+type OverviewMetric = {
+  daily: string;
+  icon: "money" | "collections" | "tickets" | "subcon";
+  label: string;
+  monthly: string;
+  weekly: string;
+};
+
 type PayrollReportRow = PayrollHistoryRow & {
   employeeStatus: string;
 };
@@ -85,11 +104,21 @@ type TicketReportRow = DailyTicketEntry & {
   totalTickets: number;
 };
 
+type ExpenseReportRow = Expense & {
+  displayAmount: number;
+  ownerName: string;
+  paidAmount: number;
+  remainingAmount: number;
+  reportDate: string;
+  statusLabel: string;
+};
+
 const REPORT_TABS: { description: string; key: ReportKey; label: string }[] = [
   { key: "payroll", label: "Payroll Report", description: "Net pay, deductions, payout completion, and department trends." },
   { key: "billing", label: "Billing Report", description: "Invoice totals, collectible balances, and billing cycle performance." },
   { key: "collections", label: "Collection Report", description: "Customer aging, cash recovery, and receivable progress." },
   { key: "tickets", label: "Closed Ticket Report", description: "Closed ticket volume, disputes, and employee output patterns." },
+  { key: "expenses", label: "Expense Report", description: "Expense totals, payment progress, category mix, and overdue exposure." },
 ];
 
 const defaultFilters = (): Record<ReportKey, FilterState> => {
@@ -100,6 +129,7 @@ const defaultFilters = (): Record<ReportKey, FilterState> => {
     billing: { startDate, endDate, entity: "all", status: "all", query: "" },
     collections: { startDate, endDate, entity: "all", status: "all", query: "" },
     tickets: { startDate, endDate, entity: "all", status: "all", query: "" },
+    expenses: { startDate, endDate, entity: "all", status: "all", query: "" },
   };
 };
 
@@ -108,7 +138,10 @@ const defaultSorts: Record<ReportKey, { column: string; direction: SortDirection
   billing: { column: "billedOn", direction: "desc" },
   collections: { column: "due_date", direction: "desc" },
   tickets: { column: "entry_date", direction: "desc" },
+  expenses: { column: "reportDate", direction: "desc" },
 };
+
+const REPORTS_PAGE_SIZE = 10;
 
 export function ReportsFeature({
   billingRecords,
@@ -116,17 +149,28 @@ export function ReportsFeature({
   collections,
   dailyTicketEntries,
   employees,
+  expenses,
   payrollHistoryRows,
+  subconDailyTickets,
 }: {
   billingRecords: BillingRecord[];
   billingSettings: BillingSettings | null;
   collections: CollectionReminder[];
   dailyTicketEntries: DailyTicketEntry[];
   employees: Employee[];
+  expenses: Expense[];
   payrollHistoryRows: PayrollHistoryRow[];
+  subconDailyTickets: SubconDailyTicket[];
 }) {
   const [activeReport, setActiveReport] = useState<ReportKey>("payroll");
   const [filters, setFilters] = useState<Record<ReportKey, FilterState>>(defaultFilters);
+  const [pages, setPages] = useState<Record<ReportKey, number>>({
+    payroll: 1,
+    billing: 1,
+    collections: 1,
+    tickets: 1,
+    expenses: 1,
+  });
   const [sorts, setSorts] = useState(defaultSorts);
   const employeeStatusByName = useMemo(
     () =>
@@ -200,8 +244,136 @@ export function ReportsFeature({
     [dailyTicketEntries],
   );
 
+  const expenseRows = useMemo<ExpenseReportRow[]>(
+    () =>
+      expenses.map((expense) => {
+        const paidAmount = expensePaymentsTotal(expense.installment_payments);
+        const remainingAmount = expenseRemainingBalance(expense, expense.installment_payments) ?? 0;
+        const baseStatus = expenseDisplayStatus(expense, expense.installment_payments);
+        const statusLabel =
+          baseStatus === "cancelled"
+            ? "Cancelled"
+            : isExpenseOverdue(expense, expense.installment_payments, todayKey())
+              ? "Overdue"
+              : baseStatus === "paid"
+                ? "Paid"
+                : baseStatus === "partial"
+                  ? "Partial"
+                  : "Unpaid";
+        return {
+          ...expense,
+          displayAmount: expenseTotalAmount(expense) ?? expense.amount,
+          ownerName: expense.employee_name || "Company",
+          paidAmount,
+          remainingAmount,
+          reportDate: expense.expense_date,
+          statusLabel,
+        };
+      }),
+    [expenses],
+  );
+  const overviewMetrics = useMemo<OverviewMetric[]>(() => {
+    const today = todayKey();
+    const weekStart = startOfWeek(today);
+    const monthKey = today.slice(0, 7);
+
+    const inDay = (value: string) => value === today;
+    const inWeek = (value: string) => value >= weekStart && value <= today;
+    const inMonth = (value: string) => value.slice(0, 7) === monthKey;
+
+    const expenseDaily = expenseRows
+      .filter((row) => inDay(row.reportDate))
+      .reduce((sum, row) => sum + row.displayAmount, 0);
+    const expenseWeekly = expenseRows
+      .filter((row) => inWeek(row.reportDate))
+      .reduce((sum, row) => sum + row.displayAmount, 0);
+    const expenseMonthly = expenseRows
+      .filter((row) => inMonth(row.reportDate))
+      .reduce((sum, row) => sum + row.displayAmount, 0);
+
+    const collectionPayments = collections.flatMap((collection) =>
+      collection.payments
+        .filter((payment) => !payment.is_void)
+        .map((payment) => ({
+          amount: payment.amount,
+          paymentDate: payment.payment_date,
+        })),
+    );
+    const collectionDaily = collectionPayments
+      .filter((payment) => inDay(payment.paymentDate))
+      .reduce((sum, payment) => sum + payment.amount, 0);
+    const collectionWeekly = collectionPayments
+      .filter((payment) => inWeek(payment.paymentDate))
+      .reduce((sum, payment) => sum + payment.amount, 0);
+    const collectionMonthly = collectionPayments
+      .filter((payment) => inMonth(payment.paymentDate))
+      .reduce((sum, payment) => sum + payment.amount, 0);
+
+    const closedTicketCount = (entry: DailyTicketEntry) =>
+      Math.max(
+        entry.installation_tickets + entry.repair_tickets - Number(entry.disputed_install ?? 0) - Number(entry.disputed_repair ?? 0),
+        0,
+      );
+    const ticketDaily = dailyTicketEntries
+      .filter((entry) => inDay(entry.entry_date))
+      .reduce((sum, entry) => sum + closedTicketCount(entry), 0);
+    const ticketWeekly = dailyTicketEntries
+      .filter((entry) => inWeek(entry.entry_date))
+      .reduce((sum, entry) => sum + closedTicketCount(entry), 0);
+    const ticketMonthly = dailyTicketEntries
+      .filter((entry) => inMonth(entry.entry_date))
+      .reduce((sum, entry) => sum + closedTicketCount(entry), 0);
+
+    const closedSubconTicketCount = (entry: SubconDailyTicket) =>
+      Math.max(
+        entry.install_tickets + entry.repair_tickets - Number(entry.disputed_install ?? 0) - Number(entry.disputed_repair ?? 0),
+        0,
+      );
+    const subconDaily = subconDailyTickets
+      .filter((entry) => inDay(entry.entry_date))
+      .reduce((sum, entry) => sum + closedSubconTicketCount(entry), 0);
+    const subconWeekly = subconDailyTickets
+      .filter((entry) => inWeek(entry.entry_date))
+      .reduce((sum, entry) => sum + closedSubconTicketCount(entry), 0);
+    const subconMonthly = subconDailyTickets
+      .filter((entry) => inMonth(entry.entry_date))
+      .reduce((sum, entry) => sum + closedSubconTicketCount(entry), 0);
+
+    return [
+      {
+        label: "Expenses",
+        icon: "money",
+        daily: currency.format(expenseDaily),
+        weekly: currency.format(expenseWeekly),
+        monthly: currency.format(expenseMonthly),
+      },
+      {
+        label: "Collections",
+        icon: "collections",
+        daily: currency.format(collectionDaily),
+        weekly: currency.format(collectionWeekly),
+        monthly: currency.format(collectionMonthly),
+      },
+      {
+        label: "Closed Tickets",
+        icon: "tickets",
+        daily: String(ticketDaily),
+        weekly: String(ticketWeekly),
+        monthly: String(ticketMonthly),
+      },
+      {
+        label: "Subcontractor",
+        icon: "subcon",
+        daily: String(subconDaily),
+        weekly: String(subconWeekly),
+        monthly: String(subconMonthly),
+      },
+    ];
+  }, [collections, dailyTicketEntries, expenseRows, subconDailyTickets]);
+
   const activeFilters = filters[activeReport];
   const activeSort = sorts[activeReport];
+  const activeTab = REPORT_TABS.find((tab) => tab.key === activeReport) ?? REPORT_TABS[0];
 
   const payrollView = useMemo(
     () =>
@@ -222,6 +394,11 @@ export function ReportsFeature({
     () =>
       buildTicketView(ticketRows, filters.tickets, sorts.tickets, (column) => updateSort("tickets", column)),
     [filters.tickets, sorts.tickets, ticketRows],
+  );
+  const expenseView = useMemo(
+    () =>
+      buildExpenseView(expenseRows, filters.expenses, sorts.expenses, (column) => updateSort("expenses", column)),
+    [expenseRows, filters.expenses, sorts.expenses],
   );
 
   const reportConfig: {
@@ -244,12 +421,25 @@ export function ReportsFeature({
     totals: { label: string; value: string }[];
     trend: TrendPoint[];
     trendTitle: string;
+    trendVariant?: TrendVariant;
   } = {
     payroll: payrollView,
     billing: billingView,
     collections: collectionView,
     tickets: ticketView,
+    expenses: expenseView,
   }[activeReport];
+  const pageCount = Math.max(1, Math.ceil(reportConfig.rows.length / REPORTS_PAGE_SIZE));
+  const safeCurrentPage = Math.min(pages[activeReport], pageCount);
+  const pageStart = (safeCurrentPage - 1) * REPORTS_PAGE_SIZE;
+  const pageEnd = Math.min(pageStart + REPORTS_PAGE_SIZE, reportConfig.rows.length);
+  const paginatedRows = reportConfig.rows.slice(pageStart, pageEnd);
+
+  useEffect(() => {
+    if (pages[activeReport] > pageCount) {
+      setPages((current) => ({ ...current, [activeReport]: pageCount }));
+    }
+  }, [activeReport, pageCount, pages]);
 
   function updateFilters(next: Partial<FilterState>) {
     setFilters((current) => ({
@@ -259,6 +449,7 @@ export function ReportsFeature({
         ...next,
       },
     }));
+    setPages((current) => ({ ...current, [activeReport]: 1 }));
   }
 
   function updateSort(report: ReportKey, column: string) {
@@ -271,10 +462,41 @@ export function ReportsFeature({
         [report]: { column, direction },
       };
     });
+    setPages((current) => ({ ...current, [report]: 1 }));
+  }
+
+  function resetActiveFilters() {
+    setFilters((current) => ({
+      ...current,
+      [activeReport]: defaultFilters()[activeReport],
+    }));
+    setPages((current) => ({ ...current, [activeReport]: 1 }));
+  }
+
+  function buildExportSubtitleLines() {
+    const lines = [`Generated on ${new Date().toLocaleString()}`];
+
+    if (activeReport === "payroll" || activeReport === "tickets") {
+      if (activeFilters.entity !== "all") {
+        lines.push(`Employee: ${activeFilters.entity}`);
+      } else {
+        const employeeNames = new Set(
+          reportConfig.rows.map((row) =>
+            activeReport === "payroll"
+              ? String((row as PayrollReportRow).employeeName)
+              : String((row as TicketReportRow).employee_name),
+          ),
+        );
+        lines.push(`Employees: ${employeeNames.size}`);
+      }
+    }
+
+    return lines;
   }
 
   function handleExport(format: "csv" | "excel" | "pdf" | "print") {
     const title = REPORT_TABS.find((tab) => tab.key === activeReport)?.label ?? "Report";
+    const subtitleLines = buildExportSubtitleLines();
     if (reportConfig.rows.length === 0) {
       NotificationService.showWarning("There is no filtered data to export.");
       return;
@@ -292,18 +514,20 @@ export function ReportsFeature({
       return;
     }
 
+    if (format === "pdf") {
+      downloadPdf(`${slugify(title)}.pdf`, reportConfig.exportColumns, reportConfig.rows, title, subtitleLines);
+      NotificationService.showSuccess(`${title} exported as PDF.`);
+      return;
+    }
+
     openPrintPreview({
       columns: reportConfig.exportColumns,
       title,
       rows: reportConfig.rows,
-      subtitle: `Generated on ${new Date().toLocaleString()}`,
-      promptPdf: format === "pdf",
+      subtitleLines,
+      promptPdf: false,
     });
-    NotificationService.showInfo(
-      format === "pdf"
-        ? "Print preview opened. Choose Save as PDF in the browser dialog."
-        : "Print preview opened.",
-    );
+    NotificationService.showInfo("Print preview opened.");
   }
 
   return (
@@ -334,16 +558,35 @@ export function ReportsFeature({
         text="Analyze payroll, billing, collections, and ticket performance with enterprise-grade filters, tables, and visual summaries."
       />
 
+      <section className="reports-overview-card">
+        <div className="reports-card-header">
+          <div>
+            <p className="eyebrow">Overview</p>
+            <h3>Daily, weekly, and monthly summary</h3>
+          </div>
+          <span className="reports-card-chip subtle">
+            <CalendarRange size={14} />
+            Based on today
+          </span>
+        </div>
+        <div className="reports-overview-grid">
+          {overviewMetrics.map((metric) => (
+            <OverviewCard key={metric.label} metric={metric} />
+          ))}
+        </div>
+      </section>
+
       <section className="reports-tabbar" aria-label="Report pages">
         {REPORT_TABS.map((tab) => (
           <button
             className={tab.key === activeReport ? "active" : ""}
             key={tab.key}
             onClick={() => setActiveReport(tab.key)}
+            role="tab"
+            aria-selected={tab.key === activeReport}
             type="button"
           >
             <strong>{tab.label}</strong>
-            <span>{tab.description}</span>
           </button>
         ))}
       </section>
@@ -352,17 +595,22 @@ export function ReportsFeature({
         <div className="reports-filter-header">
           <div>
             <p className="eyebrow">Advanced filters</p>
-            <h2>{REPORT_TABS.find((tab) => tab.key === activeReport)?.label}</h2>
+            <h2>{activeTab.label}</h2>
             <span>Slice the dataset by period, entity, status, and keyword.</span>
           </div>
-          <div className="reports-filter-badge">
-            <Filter size={15} />
-            {reportConfig.filteredCount} of {reportConfig.totalCount} rows
+          <div className="reports-filter-actions">
+            <div className="reports-filter-badge">
+              <Filter size={15} />
+              {reportConfig.filteredCount} of {reportConfig.totalCount} rows
+            </div>
+            <button className="secondary-button compact" onClick={resetActiveFilters} type="button">
+              Reset
+            </button>
           </div>
         </div>
 
         <div className="reports-filter-grid">
-          <label>
+          <label className="reports-field">
             Start date
             <div className="reports-input with-icon">
               <CalendarRange size={16} />
@@ -373,7 +621,7 @@ export function ReportsFeature({
               />
             </div>
           </label>
-          <label>
+          <label className="reports-field">
             End date
             <div className="reports-input with-icon">
               <CalendarRange size={16} />
@@ -384,7 +632,7 @@ export function ReportsFeature({
               />
             </div>
           </label>
-          <label>
+          <label className="reports-field">
             {reportConfig.entityLabel}
             <select
               value={activeFilters.entity}
@@ -398,7 +646,7 @@ export function ReportsFeature({
               ))}
             </select>
           </label>
-          <label>
+          <label className="reports-field">
             Status
             <select
               value={activeFilters.status}
@@ -442,10 +690,14 @@ export function ReportsFeature({
             </div>
             <span className="reports-card-chip">
               <TrendingUp size={14} />
-              Rolling view
+              Last 6 periods
             </span>
           </div>
-          <TrendChart data={reportConfig.trend} formatValue={reportConfig.chartValueFormatter} />
+          <TrendChart
+            data={reportConfig.trend}
+            formatValue={reportConfig.chartValueFormatter}
+            variant={reportConfig.trendVariant ?? "line"}
+          />
         </div>
         <div className="reports-chart-card">
           <div className="reports-card-header">
@@ -470,25 +722,50 @@ export function ReportsFeature({
           </div>
           <span className="reports-card-chip">
             <ReceiptText size={14} />
-            Searchable and sortable
+            {REPORTS_PAGE_SIZE} rows per page
           </span>
         </div>
         <ReportTable
           columns={reportConfig.columns}
-          rows={reportConfig.rows}
+          rows={paginatedRows}
           emptyMessage={reportConfig.emptyMessage}
           onSort={reportConfig.onSort}
           sortColumn={activeSort.column}
           sortDirection={activeSort.direction}
         />
-        <div className="reports-summary-footer">
-          {reportConfig.totals.map((item) => (
-            <div key={item.label}>
-              <span>{item.label}</span>
-              <strong>{item.value}</strong>
+        {reportConfig.rows.length > REPORTS_PAGE_SIZE && (
+          <div className="attendance-footer">
+            <span>
+              Showing {pageStart + 1} to {pageEnd} of {reportConfig.rows.length} record{reportConfig.rows.length === 1 ? "" : "s"}
+            </span>
+            <div>
+              <button
+                disabled={safeCurrentPage === 1}
+                onClick={() => setPages((current) => ({ ...current, [activeReport]: Math.max(1, safeCurrentPage - 1) }))}
+                type="button"
+              >
+                Previous
+              </button>
+              {Array.from({ length: pageCount }, (_, index) => index + 1).map((page) => (
+                <button
+                  className={page === safeCurrentPage ? "active" : undefined}
+                  key={page}
+                  onClick={() => setPages((current) => ({ ...current, [activeReport]: page }))}
+                  type="button"
+                >
+                  {page}
+                </button>
+              ))}
+              <button
+                disabled={safeCurrentPage === pageCount}
+                onClick={() => setPages((current) => ({ ...current, [activeReport]: Math.min(pageCount, safeCurrentPage + 1) }))}
+                type="button"
+              >
+                Next
+              </button>
             </div>
-          ))}
-        </div>
+          </div>
+        )}
       </section>
     </div>
   );
@@ -544,6 +821,7 @@ function buildPayrollView(
     ],
     trendTitle: "Monthly net pay movement",
     trend: buildMonthlyTrend(sorted, (row) => row.processedDate, (row) => row.netPay),
+    trendVariant: "line" as const,
     breakdownTitle: "Department payroll mix",
     breakdown: buildBreakdown(sorted, (row) => row.department || "Unassigned", (row) => row.netPay),
     chartValueFormatter: (value: number) => currency.format(value),
@@ -841,15 +1119,133 @@ function buildTicketView(
   };
 }
 
+function buildExpenseView(
+  rows: ExpenseReportRow[],
+  filters: FilterState,
+  sort: { column: string; direction: SortDirection },
+  onSort: (column: string) => void,
+) {
+  const filtered = rows.filter((row) => {
+    const query = filters.query.trim().toLowerCase();
+    const matchesDate = dateInRange(row.reportDate, filters.startDate, filters.endDate);
+    const matchesEntity = filters.entity === "all" || row.category_name === filters.entity;
+    const matchesStatus = filters.status === "all" || row.statusLabel === filters.status;
+    const matchesQuery =
+      !query ||
+      `${row.ownerName} ${row.category_name} ${row.notes} ${row.frequency}`.toLowerCase().includes(query);
+    return matchesDate && matchesEntity && matchesStatus && matchesQuery;
+  });
+
+  const sorted = sortRows(filtered, sort, {
+    reportDate: (row) => row.reportDate,
+    ownerName: (row) => row.ownerName,
+    category_name: (row) => row.category_name,
+    frequency: (row) => row.frequency,
+    displayAmount: (row) => row.displayAmount,
+    paidAmount: (row) => row.paidAmount,
+    remainingAmount: (row) => row.remainingAmount,
+    statusLabel: (row) => row.statusLabel,
+  });
+
+  const totalExpenses = sorted.reduce((sum, row) => sum + row.displayAmount, 0);
+  const totalPaid = sorted.reduce((sum, row) => sum + row.paidAmount, 0);
+  const totalOutstanding = sorted.reduce((sum, row) => sum + row.remainingAmount, 0);
+  const overdueTotal = sorted
+    .filter((row) => row.statusLabel === "Overdue")
+    .reduce((sum, row) => sum + row.remainingAmount, 0);
+
+  return {
+    rows: sorted,
+    totalCount: rows.length,
+    filteredCount: sorted.length,
+    entityLabel: "Category",
+    entityOptions: uniqueValues(rows.map((row) => row.category_name)),
+    statusOptions: uniqueValues(rows.map((row) => row.statusLabel)),
+    searchPlaceholder: "Search payee, category, notes, or frequency",
+    metrics: [
+      { label: "Expense total", value: currency.format(totalExpenses), helper: `${sorted.length} records`, tone: "neutral" as const },
+      { label: "Paid amount", value: currency.format(totalPaid), helper: "Recorded payments", tone: "success" as const },
+      { label: "Outstanding", value: currency.format(totalOutstanding), helper: "Remaining balance", tone: "warning" as const },
+      { label: "Overdue", value: currency.format(overdueTotal), helper: "Past due expenses", tone: overdueTotal > 0 ? "danger" as const : "success" as const },
+    ],
+    trendTitle: "Expense value by month",
+    trend: buildMonthlyTrend(sorted, (row) => row.reportDate, (row) => row.displayAmount),
+    breakdownTitle: "Expense category mix",
+    breakdown: buildBreakdown(sorted, (row) => row.category_name || "Uncategorized", (row) => row.displayAmount),
+    chartValueFormatter: (value: number) => currency.format(value),
+    tableTitle: "Expense register",
+    emptyMessage: "No expense rows match the current filters.",
+    onSort,
+    columns: [
+      { id: "reportDate", label: "Date", sortValue: (row: ExpenseReportRow) => row.reportDate },
+      { id: "ownerName", label: "Payee", sortValue: (row: ExpenseReportRow) => row.ownerName },
+      { id: "category_name", label: "Category", sortValue: (row: ExpenseReportRow) => row.category_name },
+      { id: "frequency", label: "Frequency", sortValue: (row: ExpenseReportRow) => row.frequency },
+      { id: "displayAmount", label: "Amount", align: "right" as const, sortValue: (row: ExpenseReportRow) => row.displayAmount, render: (row: ExpenseReportRow) => formatMoney(row.displayAmount) },
+      { id: "paidAmount", label: "Paid", align: "right" as const, sortValue: (row: ExpenseReportRow) => row.paidAmount, render: (row: ExpenseReportRow) => formatMoney(row.paidAmount) },
+      { id: "remainingAmount", label: "Balance", align: "right" as const, sortValue: (row: ExpenseReportRow) => row.remainingAmount, render: (row: ExpenseReportRow) => <strong>{formatMoney(row.remainingAmount)}</strong> },
+      { id: "statusLabel", label: "Status", sortValue: (row: ExpenseReportRow) => row.statusLabel, render: (row: ExpenseReportRow) => <StatusPill value={row.statusLabel} /> },
+    ] satisfies TableColumn<ExpenseReportRow>[],
+    exportColumns: [
+      { key: "reportDate", label: "Expense Date" },
+      { key: "ownerName", label: "Payee" },
+      { key: "category_name", label: "Category" },
+      { key: "frequency", label: "Frequency" },
+      { key: "displayAmount", label: "Amount", format: (row: ExpenseReportRow) => row.displayAmount.toFixed(2) },
+      { key: "paidAmount", label: "Paid Amount", format: (row: ExpenseReportRow) => row.paidAmount.toFixed(2) },
+      { key: "remainingAmount", label: "Remaining Balance", format: (row: ExpenseReportRow) => row.remainingAmount.toFixed(2) },
+      { key: "statusLabel", label: "Status" },
+    ],
+    totals: [
+      { label: "Records", value: String(sorted.length) },
+      { label: "Expense total", value: currency.format(totalExpenses) },
+      { label: "Paid total", value: currency.format(totalPaid) },
+      { label: "Outstanding total", value: currency.format(totalOutstanding) },
+    ],
+  };
+}
+
 function MetricCard({ metric }: { metric: SummaryMetric }) {
   return (
     <article className={`reports-metric-card ${metric.tone ?? "neutral"}`}>
       <div className="reports-metric-icon">
         {metric.label.includes("ticket") ? <Ticket size={18} /> : metric.label.includes("Customer") ? <Users size={18} /> : <BarChart3 size={18} />}
       </div>
-      <p>{metric.label}</p>
-      <strong>{metric.value}</strong>
-      <span>{metric.helper}</span>
+      <div className="reports-metric-content">
+        <p>{metric.label}</p>
+        <strong>{metric.value}</strong>
+        <span>{metric.helper}</span>
+      </div>
+    </article>
+  );
+}
+
+function OverviewCard({ metric }: { metric: OverviewMetric }) {
+  return (
+    <article className="reports-overview-item">
+      <div className="reports-overview-item-header">
+        <div className={`reports-overview-icon ${metric.icon}`}>
+          {metric.icon === "tickets" ? <Ticket size={18} /> : metric.icon === "subcon" ? <Users size={18} /> : <BarChart3 size={18} />}
+        </div>
+        <div>
+          <p>{metric.label}</p>
+          <strong>Overview</strong>
+        </div>
+      </div>
+      <div className="reports-overview-stats">
+        <div>
+          <span>Daily</span>
+          <strong>{metric.daily}</strong>
+        </div>
+        <div>
+          <span>Weekly</span>
+          <strong>{metric.weekly}</strong>
+        </div>
+        <div>
+          <span>Monthly</span>
+          <strong>{metric.monthly}</strong>
+        </div>
+      </div>
     </article>
   );
 }
@@ -857,10 +1253,15 @@ function MetricCard({ metric }: { metric: SummaryMetric }) {
 function TrendChart({
   data,
   formatValue,
+  variant,
 }: {
   data: TrendPoint[];
   formatValue: (value: number) => string;
+  variant: TrendVariant;
 }) {
+  if (variant === "line") {
+    return <LineTrendChart data={data} formatValue={formatValue} />;
+  }
   const max = Math.max(...data.map((item) => item.value), 1);
   return (
     <div className="reports-trend-chart">
@@ -876,6 +1277,69 @@ function TrendChart({
           <strong>{item.label}</strong>
         </div>
       ))}
+    </div>
+  );
+}
+
+function LineTrendChart({
+  data,
+  formatValue,
+}: {
+  data: TrendPoint[];
+  formatValue: (value: number) => string;
+}) {
+  const chartWidth = 640;
+  const chartHeight = 220;
+  const paddingX = 20;
+  const paddingTop = 18;
+  const paddingBottom = 36;
+  const innerWidth = chartWidth - paddingX * 2;
+  const innerHeight = chartHeight - paddingTop - paddingBottom;
+  const max = Math.max(...data.map((item) => item.value), 1);
+  const step = data.length > 1 ? innerWidth / (data.length - 1) : 0;
+
+  const points = data.map((item, index) => {
+    const x = paddingX + step * index;
+    const y = paddingTop + innerHeight - (item.value / max) * innerHeight;
+    return {
+      ...item,
+      x,
+      y,
+    };
+  });
+
+  const linePath = points
+    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
+    .join(" ");
+  const areaPath = points.length
+    ? `${linePath} L ${points[points.length - 1].x} ${chartHeight - paddingBottom} L ${points[0].x} ${chartHeight - paddingBottom} Z`
+    : "";
+
+  return (
+    <div className="reports-line-chart">
+      <svg
+        aria-hidden="true"
+        className="reports-line-chart-svg"
+        viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+      >
+        {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+          const y = paddingTop + innerHeight - innerHeight * ratio;
+          return <line className="reports-line-grid" key={ratio} x1={paddingX} x2={chartWidth - paddingX} y1={y} y2={y} />;
+        })}
+        {areaPath ? <path className="reports-line-area" d={areaPath} /> : null}
+        {linePath ? <path className="reports-line-path" d={linePath} /> : null}
+        {points.map((point) => (
+          <circle className="reports-line-point" cx={point.x} cy={point.y} key={point.label} r="4.5" />
+        ))}
+      </svg>
+      <div className="reports-line-chart-labels">
+        {points.map((point) => (
+          <div className="reports-line-chart-label" key={point.label}>
+            <span>{formatValue(point.value)}</span>
+            <strong>{point.label}</strong>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -942,7 +1406,7 @@ function ReportTable<Row extends object>({
                       type="button"
                     >
                       {column.label}
-                      <span>{isActive ? (sortDirection === "asc" ? "↑" : "↓") : "↕"}</span>
+                      <span>{isActive ? (sortDirection === "asc" ? "^" : "v") : "+/-"}</span>
                     </button>
                   ) : (
                     column.label
@@ -1013,6 +1477,14 @@ function uniqueValues(values: string[]) {
   return [...new Set(values.filter(Boolean))].sort((left, right) => left.localeCompare(right));
 }
 
+function startOfWeek(value: string) {
+  const date = new Date(`${value}T00:00:00`);
+  const day = date.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  date.setDate(date.getDate() + diff);
+  return date.toISOString().slice(0, 10);
+}
+
 function dateInRange(value: string, startDate: string, endDate: string) {
   if (!value) return false;
   if (startDate && value < startDate) return false;
@@ -1070,7 +1542,7 @@ function compareValues(left: number | string, right: number | string) {
 }
 
 function formatBillingPeriod(row: BillingReportRow) {
-  return `${monthNames[row.billing_month - 1]} ${row.billing_year} · ${row.billing_period === "first_half" ? "1st half" : "2nd half"}`;
+  return `${monthNames[row.billing_month - 1]} ${row.billing_year} - ${row.billing_period === "first_half" ? "1st half" : "2nd half"}`;
 }
 
 function slugify(value: string) {
@@ -1116,20 +1588,32 @@ function downloadExcel<Row extends object>(
   downloadBlob(filename, "application/vnd.ms-excel", html);
 }
 
+function downloadPdf<Row extends object>(
+  filename: string,
+  columns: { format?: (row: Row) => string; key: string; label: string }[],
+  rows: Row[],
+  title: string,
+  subtitleLines: string[],
+) {
+  const pdfContent = buildPdfLines(columns, rows, title, subtitleLines);
+  const pdfBytes = createSimplePdf(pdfContent);
+  downloadBlob(filename, "application/pdf", pdfBytes);
+}
+
 function openPrintPreview<Row extends object>({
   columns,
   promptPdf,
   rows,
-  subtitle,
+  subtitleLines,
   title,
 }: {
   columns: { format?: (row: Row) => string; key: string; label: string }[];
   promptPdf: boolean;
   rows: Row[];
-  subtitle: string;
+  subtitleLines: string[];
   title: string;
 }) {
-  const popup = window.open("", "_blank", "noopener,noreferrer,width=1200,height=800");
+  const popup = window.open("", "_blank", "width=1200,height=800");
   if (!popup) {
     NotificationService.showError("Allow pop-ups to open the print preview.");
     return;
@@ -1143,14 +1627,27 @@ function openPrintPreview<Row extends object>({
           body { font-family: Arial, sans-serif; color: #0f172a; margin: 32px; }
           h1 { margin: 0 0 8px; }
           p { color: #475569; margin: 0 0 24px; }
+          p.meta-line { margin: 0 0 6px; }
+          p.meta-line:last-of-type { margin: 0 0 24px; }
           table { border-collapse: collapse; width: 100%; }
           th, td { border: 1px solid #cbd5e1; padding: 10px 12px; text-align: left; font-size: 12px; }
           thead { background: #eff6ff; }
+          @media print {
+            body { margin: 20px; }
+          }
         </style>
+        <script>
+          window.addEventListener("load", function () {
+            window.setTimeout(function () {
+              window.focus();
+              window.print();
+            }, 250);
+          });
+        </script>
       </head>
       <body>
         <h1>${escapeHtml(title)}</h1>
-        <p>${escapeHtml(subtitle)}${promptPdf ? " · Use Save as PDF in the print dialog." : ""}</p>
+        ${subtitleLines.map((line, index) => `<p class="meta-line">${escapeHtml(line)}${promptPdf && index === subtitleLines.length - 1 ? " - Use Save as PDF in the print dialog." : ""}</p>`).join("")}
         <table>
           <thead>
             <tr>${columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("")}</tr>
@@ -1170,11 +1667,131 @@ function openPrintPreview<Row extends object>({
     </html>
   `);
   popup.document.close();
-  popup.focus();
-  popup.print();
 }
 
-function downloadBlob(filename: string, mimeType: string, content: string) {
+function buildPdfLines<Row extends object>(
+  columns: { format?: (row: Row) => string; key: string; label: string }[],
+  rows: Row[],
+  title: string,
+  subtitleLines: string[],
+) {
+  const portraitWidth = 96;
+  const landscapeWidth = 132;
+  const widths = columns.map((column) =>
+    Math.min(
+      24,
+      Math.max(
+        column.label.length,
+        ...rows.slice(0, 30).map((row) =>
+          String(column.format ? column.format(row) : (row as Record<string, unknown>)[column.key] ?? "").length,
+        ),
+      ),
+    ),
+  );
+  const totalWidth = widths.reduce((sum, width) => sum + width, 0) + Math.max(columns.length - 1, 0) * 3;
+  const orientation: "landscape" | "portrait" = totalWidth > portraitWidth ? "landscape" : "portrait";
+  const pageWidth = orientation === "landscape" ? landscapeWidth : portraitWidth;
+  if (totalWidth > pageWidth) {
+    let overflow = totalWidth - pageWidth;
+    for (let index = widths.length - 1; index >= 0 && overflow > 0; index -= 1) {
+      const nextWidth = Math.max(8, widths[index] - overflow);
+      overflow -= widths[index] - nextWidth;
+      widths[index] = nextWidth;
+    }
+  }
+
+  const fit = (value: string, width: number) => {
+    if (value.length <= width) return value.padEnd(width, " ");
+    if (width <= 1) return value.slice(0, width);
+    if (width <= 3) return value.slice(0, width);
+    return `${value.slice(0, width - 3)}...`;
+  };
+
+  const header = columns.map((column, index) => fit(column.label, widths[index])).join(" | ");
+  const divider = widths.map((width) => "-".repeat(width)).join("-+-");
+  const body = rows.map((row) =>
+    columns
+      .map((column, index) =>
+        fit(String(column.format ? column.format(row) : (row as Record<string, unknown>)[column.key] ?? ""), widths[index]))
+      .join(" | "),
+  );
+  return {
+    lines: [title, ...subtitleLines, "", header, divider, ...body],
+    orientation,
+  };
+}
+
+function createSimplePdf({
+  lines,
+  orientation,
+}: {
+  lines: string[];
+  orientation: "landscape" | "portrait";
+}) {
+  const encoder = new TextEncoder();
+  const escapePdfText = (value: string) => value.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+  const pageWidth = orientation === "landscape" ? 842 : 612;
+  const pageHeight = orientation === "landscape" ? 612 : 842;
+  const startX = 40;
+  const startY = pageHeight - 42;
+  const lineHeight = 15;
+  const maxLinesPerPage = Math.max(1, Math.floor((pageHeight - 80) / lineHeight));
+  const pages: string[][] = [];
+  for (let index = 0; index < lines.length; index += maxLinesPerPage) {
+    pages.push(lines.slice(index, index + maxLinesPerPage));
+  }
+
+  const objects: string[] = [];
+  const addObject = (content: string) => {
+    objects.push(content);
+    return objects.length;
+  };
+
+  const fontId = addObject("<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>");
+  const contentIds = pages.map((pageLines) => {
+    const text = [
+      "BT",
+      "/F1 9 Tf",
+      `${startX} ${startY} Td`,
+      ...pageLines.flatMap((line, lineIndex) =>
+        lineIndex === 0
+          ? [`(${escapePdfText(line)}) Tj`]
+          : [`0 -${lineHeight} Td`, `(${escapePdfText(line)}) Tj`],
+      ),
+      "ET",
+    ].join("\n");
+    const stream = encoder.encode(text);
+    return addObject(`<< /Length ${stream.length} >>\nstream\n${text}\nendstream`);
+  });
+
+  const pageIds = contentIds.map((contentId) =>
+    addObject(`<< /Type /Page /Parent PAGES_ID 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 ${fontId} 0 R >> >> /Contents ${contentId} 0 R >>`),
+  );
+  const pagesId = addObject(`<< /Type /Pages /Count ${pageIds.length} /Kids [${pageIds.map((id) => `${id} 0 R`).join(" ")}] >>`);
+
+  pageIds.forEach((id, index) => {
+    objects[id - 1] = objects[id - 1].replace("PAGES_ID", String(pagesId));
+  });
+
+  const catalogId = addObject(`<< /Type /Catalog /Pages ${pagesId} 0 R >>`);
+
+  let pdf = "%PDF-1.4\n";
+  const offsets = [0];
+  objects.forEach((object, index) => {
+    offsets.push(pdf.length);
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xrefOffset = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n`;
+  pdf += "0000000000 65535 f \n";
+  for (let index = 1; index < offsets.length; index += 1) {
+    pdf += `${String(offsets[index]).padStart(10, "0")} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root ${catalogId} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+  return encoder.encode(pdf);
+}
+
+function downloadBlob(filename: string, mimeType: string, content: BlobPart) {
   const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");

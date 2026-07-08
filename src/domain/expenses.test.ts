@@ -31,7 +31,7 @@ const expense = (overrides: Partial<Expense> = {}): Expense => ({
   frequency: "one_time", duration_months: null, installment_payments: [],
   status: "pending", paid_date: null, expense_date: "2026-06-01", due_date: "2026-06-30",
   payment_date: null,
-  notes: "", payroll_run_id: null, created_at: "2026-06-01T00:00:00Z", updated_at: "2026-06-01T00:00:00Z", ...overrides,
+  notes: "", payroll_run_id: null, subcontractor_payment_reminder_id: null, created_at: "2026-06-01T00:00:00Z", updated_at: "2026-06-01T00:00:00Z", ...overrides,
 });
 
 afterEach(() => {
