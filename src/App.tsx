@@ -24,6 +24,7 @@ import {
   Mail,
   MapPin,
   Maximize2,
+  Menu,
   MoreVertical,
   Pencil,
   Phone,
@@ -578,7 +579,7 @@ function Login() {
 function Workspace({ session }: { session: Session }) {
   const [view, setView] = useState<View>(() => viewFromPath(window.location.pathname));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => typeof window !== "undefined" && window.innerWidth <= 900);
   const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary>(emptyDashboardSummary);
   const [payments, setPayments] = useState<PaymentReminder[]>([]);
   const [collections, setCollections] = useState<CollectionReminder[]>([]);
@@ -678,6 +679,14 @@ function Workspace({ session }: { session: Session }) {
       const affected = Array.from(new Set(result.synced.flatMap((mutation) => mutation.affectedResources)));
       await Promise.all(affected.map((resource) => loadResource(resource, true)));
     }
+  }
+
+  function toggleSidebarNav() {
+    setSidebarCollapsed((collapsed) => {
+      const nextCollapsed = !collapsed;
+      setMobileNavOpen(!nextCollapsed);
+      return nextCollapsed;
+    });
   }
 
   function navigate(nextView: View) {
@@ -831,6 +840,18 @@ function Workspace({ session }: { session: Session }) {
       setEmployeeDetailOpen(false);
     }
   }, [view]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth <= 900) {
+        setSidebarCollapsed(true);
+        setMobileNavOpen(false);
+      }
+    };
+
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
   useEffect(() => {
     const handlePopState = () => {
@@ -1200,16 +1221,10 @@ function Workspace({ session }: { session: Session }) {
         navigate={navigate}
         onCloseMobile={() => setMobileNavOpen(false)}
         onSignOut={signOut}
-        onToggleMobileNav={() => {
-          setSidebarCollapsed((collapsed) => {
-            const nextCollapsed = !collapsed;
-            setMobileNavOpen(!nextCollapsed);
-            return nextCollapsed;
-          });
-        }}
+        onToggleMobileNav={toggleSidebarNav}
         view={view}
       />
-      {!sidebarCollapsed && <button aria-label="Close navigation" className="sidebar-backdrop" onClick={() => {
+      {mobileNavOpen && <button aria-label="Close navigation" className="sidebar-backdrop" onClick={() => {
         setSidebarCollapsed(true);
         setMobileNavOpen(false);
       }} type="button" />}
@@ -1217,6 +1232,9 @@ function Workspace({ session }: { session: Session }) {
       <div className="main-area">
         <header className="topbar">
           <div className="topbar-left">
+            <button aria-label={mobileNavOpen ? "Close navigation" : "Open navigation"} className="topbar-icon topbar-menu-button" onClick={toggleSidebarNav} type="button">
+              <Menu size={19} />
+            </button>
             <div className="topbar-search-wrap" ref={globalSearchRef}>
               <label className="topbar-search">
                 <span className="sr-only">Search workspace</span>
