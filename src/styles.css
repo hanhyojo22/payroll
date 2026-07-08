@@ -138,6 +138,13 @@ button {
   color: var(--color-text-secondary);
 }
 
+.auth-helper-copy {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-weight: 600;
+  margin: 4px 0 0;
+}
+
 .brand-row {
   align-items: center;
   display: flex;

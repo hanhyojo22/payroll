@@ -43,7 +43,7 @@ import {
   X,
 } from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
-import { hasSupabaseConfig, supabase } from "./supabase";
+import { emailRedirectUrl, hasSupabaseConfig, supabase } from "./supabase";
 import {
   attendanceTotalsForEmployee,
   dailyTicketEntriesForPayrollPeriod,
@@ -491,6 +491,7 @@ function Login() {
   const [password, setPassword] = useState("");
   const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in");
   const [busy, setBusy] = useState(false);
+  const authRedirectTo = emailRedirectUrl ?? (typeof window !== "undefined" ? window.location.origin : undefined);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -500,12 +501,22 @@ function Login() {
     const result =
       mode === "sign-in"
         ? await supabase.auth.signInWithPassword({ email, password })
-        : await supabase.auth.signUp({ email, password });
+        : await supabase.auth.signUp({
+            email,
+            password,
+            options: authRedirectTo
+              ? {
+                  emailRedirectTo: authRedirectTo,
+                }
+              : undefined,
+          });
 
     if (result.error) {
       NotificationService.showError(friendlyError(result.error));
     } else if (mode === "sign-up" && !result.data.session) {
-      NotificationService.showSuccess("Account created. Check your email if confirmation is enabled.");
+      NotificationService.showSuccess("Account created. Please confirm your email before signing in.");
+      setPassword("");
+      setMode("sign-in");
     }
     setBusy(false);
   }
@@ -548,6 +559,9 @@ function Login() {
             {busy && <Spinner size="small" />}
             {busy ? "Please wait..." : mode === "sign-in" ? "Sign in" : "Create admin"}
           </button>
+          {mode === "sign-up" ? (
+            <p className="auth-helper-copy">A confirmation email will be sent to this address after registration.</p>
+          ) : null}
         </form>
         <button
           className="text-button"
