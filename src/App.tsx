@@ -5260,6 +5260,12 @@ export function EmployeesView({
     .map((part) => part[0])
     .join("")
     .toUpperCase() || "E";
+  const formatHireDate = (employee: Employee) => {
+    if (!employee.hire_date) return "—";
+    const [y, m, d] = employee.hire_date.split("-").map(Number);
+    const abbr = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][m - 1];
+    return `${abbr} ${d}, ${y}`;
+  };
 
   if (detailsEmployee) {
     return (
@@ -5439,12 +5445,7 @@ export function EmployeesView({
             </div>,
             employee.department || "Unassigned",
             employee.role || "Unassigned",
-            (() => {
-              if (!employee.hire_date) return "—";
-              const [y, m, d] = employee.hire_date.split("-").map(Number);
-              const abbr = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][m - 1];
-              return `${abbr} ${d}, ${y}`;
-            })(),
+            formatHireDate(employee),
             <span className={employee.status === "active" ? "emp-status-pill active" : "emp-status-pill inactive"} key="status">
               {employee.status === "active" ? "Active" : "Inactive"}
             </span>,
