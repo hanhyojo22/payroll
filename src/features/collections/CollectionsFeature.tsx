@@ -364,22 +364,22 @@ function CollectionWorkspace({
               const dateCollected = dateCollectedFor(collection);
               return (
                 <tr className={isCollected ? "collection-row-done" : ""} key={collection.id}>
-                  <td>
+                  <td data-label="Collection">
                     <strong>{collection.collection_no ?? "Pending sync"}</strong>
                     {collection.title && <span>{collection.title}</span>}
                   </td>
-                  <td>{collection.client_name}</td>
-                  <td className="num">{currency.format(collection.amount)}</td>
-                  <td className="num">{currency.format(collection.amount_paid)}</td>
-                  <td className="num">
+                  <td data-label="Client">{collection.client_name}</td>
+                  <td className="num" data-label="Original">{currency.format(collection.amount)}</td>
+                  <td className="num" data-label="Paid">{currency.format(collection.amount_paid)}</td>
+                  <td className="num" data-label="Balance">
                     <strong className={isCollected ? "collection-bal-zero" : ""}>{currency.format(collection.outstanding_balance)}</strong>
                   </td>
-                  <td>{collection.due_date}</td>
-                  <td>
+                  <td data-label="Due">{collection.due_date}</td>
+                  <td data-label="Status">
                     <span className={`collection-status ${status}`}>{statusLabel(status)}</span>
                   </td>
-                  <td>{dateCollected ?? "—"}</td>
-                  <td>
+                  <td data-label="Date Collected">{dateCollected ?? "—"}</td>
+                  <td data-label="Action">
                     <div className="collection-actions">
                       {historyMode && (
                         <button
@@ -546,12 +546,12 @@ function CollectionDetailsModal({ collection, onClose }: { collection: Collectio
                 <tbody>
                   {paginatedPayments.map((payment) => (
                     <tr className={payment.is_void ? "void-row" : ""} key={payment.id}>
-                      <td>{payment.payment_date}</td>
-                      <td className="num">{currency.format(payment.amount)}</td>
-                      <td>{paymentMethodLabel(payment.payment_method)}</td>
-                      <td>{payment.reference_number || "—"}</td>
-                      <td>{payment.is_void ? `Void: ${payment.void_reason}` : payment.notes || "—"}</td>
-                      <td>
+                      <td data-label="Date">{payment.payment_date}</td>
+                      <td className="num" data-label="Amount">{currency.format(payment.amount)}</td>
+                      <td data-label="Method">{paymentMethodLabel(payment.payment_method)}</td>
+                      <td data-label="Reference">{payment.reference_number || "—"}</td>
+                      <td data-label="Notes">{payment.is_void ? `Void: ${payment.void_reason}` : payment.notes || "—"}</td>
+                      <td data-label="Status">
                         {payment.is_void
                           ? <span className="collection-status archived">Void</span>
                           : <span className="collection-status collected">Posted</span>}

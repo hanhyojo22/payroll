@@ -48,6 +48,17 @@
   --duration-normal: 320ms;
   --duration-slow: 1000ms;
 
+  --space-xs: 8px;
+  --space-sm: 12px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+
+  /* Breakpoints — CSS custom properties can't be read inside @media
+     conditions, so these are documentation only. Keep new @media rules
+     on these three values instead of introducing more ad hoc numbers:
+     narrow phones = 400px, phones = 640px, tablets/mobile-nav = 900px. */
+
   color: var(--color-text);
   background: linear-gradient(
     180deg,
@@ -7673,6 +7684,10 @@ td {
     font-size: var(--font-size-xl);
   }
 
+  .attendance-top-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
   .daily-ticket-table {
     overflow-x: auto;
   }
@@ -7847,6 +7862,18 @@ td {
   .record-title { min-width: 0; }
 
   .row-actions { justify-content: flex-end; }
+
+  .collection-table-wrap {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    overflow: visible;
+  }
+
+  .collection-table,
+  .billing-details-table {
+    min-width: 0;
+  }
 
   .row-actions button,
   .modal header button {
@@ -10835,6 +10862,10 @@ td {
     align-items: flex-start;
     flex-direction: column;
   }
+
+  .attendance-top-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ── Ticket Entry Grid ── */
@@ -12240,12 +12271,19 @@ td {
   }
 
   .reports-trend-chart {
-    gap: 10px;
-    min-width: 580px;
+    gap: 6px;
   }
 
-  .reports-line-chart {
-    min-width: 580px;
+  .reports-trend-bar-wrap strong {
+    font-size: var(--font-size-xs);
+  }
+
+  .reports-line-chart-label span {
+    font-size: 10px;
+  }
+
+  .reports-line-chart-label strong {
+    font-size: 11px;
   }
 
   .reports-table-wrap {

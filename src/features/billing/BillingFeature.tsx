@@ -1131,11 +1131,11 @@ function BillingDetailsModal({
                     <tr><td colSpan={5}>No employee ticket entries for this period.</td></tr>
                   ) : employeeRows.map((row) => (
                     <tr key={row.employeeId}>
-                      <td>{row.employeeName}</td>
-                      <td className="num">{row.install}</td>
-                      <td className="num">{row.repair}</td>
-                      <td className="num">{row.install + row.repair}</td>
-                      <td className="num">{currency.format(row.gross)}</td>
+                      <td data-label="Employee">{row.employeeName}</td>
+                      <td className="num" data-label="Install">{row.install}</td>
+                      <td className="num" data-label="Repair">{row.repair}</td>
+                      <td className="num" data-label="Total">{row.install + row.repair}</td>
+                      <td className="num" data-label="Gross">{currency.format(row.gross)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1172,14 +1172,14 @@ function BillingDetailsModal({
                     const itemPayments = paymentsByItemId.get(item.id) ?? [];
                     return (
                       <tr key={item.id}>
-                        <td>{item.subcon_name}</td>
-                        <td className="num">{item.install_tickets + item.repair_tickets} <span>I:{item.install_tickets} R:{item.repair_tickets}</span></td>
-                        <td className="num">{item.disputed_install + item.disputed_repair} <span>I:{item.disputed_install} R:{item.disputed_repair}</span></td>
-                        <td className="num">{item.billable_tickets}</td>
-                        <td className="num">{currency.format(item.billing_amount)}</td>
-                        <td className="num">{currency.format(item.payable_amount)}</td>
-                        <td className="num">{currency.format(item.collection_amount)}</td>
-                        <td>
+                        <td data-label="Subcontractor">{item.subcon_name}</td>
+                        <td className="num" data-label="Tickets">{item.install_tickets + item.repair_tickets} <span>I:{item.install_tickets} R:{item.repair_tickets}</span></td>
+                        <td className="num" data-label="Disputed">{item.disputed_install + item.disputed_repair} <span>I:{item.disputed_install} R:{item.disputed_repair}</span></td>
+                        <td className="num" data-label="Billable">{item.billable_tickets}</td>
+                        <td className="num" data-label="Gross">{currency.format(item.billing_amount)}</td>
+                        <td className="num" data-label="1st Payout">{currency.format(item.payable_amount)}</td>
+                        <td className="num" data-label="2nd Payout">{currency.format(item.collection_amount)}</td>
+                        <td data-label="Payout Status">
                           {itemPayments.length === 0 ? (
                             <span className="billing-payout-status missing">Missing payout</span>
                           ) : (
@@ -1686,11 +1686,11 @@ function BillingForm({
                         <tr><td colSpan={5}>No employee ticket entries for this period.</td></tr>
                       ) : employeeRows.map((row) => (
                         <tr key={row.employeeId}>
-                          <td className="billing-col-left">{row.employeeName}</td>
-                          <td className="billing-col-center">{row.install}</td>
-                          <td className="billing-col-center">{row.repair}</td>
-                          <td className="billing-col-center">{row.install + row.repair}</td>
-                          <td className="billing-col-right">{currency.format(row.gross)}</td>
+                          <td className="billing-col-left" data-label="Employee">{row.employeeName}</td>
+                          <td className="billing-col-center" data-label="Install">{row.install}</td>
+                          <td className="billing-col-center" data-label="Repair">{row.repair}</td>
+                          <td className="billing-col-center" data-label="Total">{row.install + row.repair}</td>
+                          <td className="billing-col-right" data-label="Gross">{currency.format(row.gross)}</td>
                         </tr>
                       ))}
                     </tbody>

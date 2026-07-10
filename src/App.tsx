@@ -737,10 +737,14 @@ function ChangePasswordModal({ onClose, userEmail }: { onClose: () => void; user
   );
 }
 
+// Matches the tablet/mobile-nav breakpoint in styles.css (max-width: 900px)
+// that switches the sidebar into an off-canvas drawer.
+const MOBILE_NAV_BREAKPOINT = 900;
+
 function Workspace({ session }: { session: Session }) {
   const [view, setView] = useState<View>(() => viewFromPath(window.location.pathname));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => typeof window !== "undefined" && window.innerWidth <= 900);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => typeof window !== "undefined" && window.innerWidth <= MOBILE_NAV_BREAKPOINT);
   const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary>(emptyDashboardSummary);
   const [payments, setPayments] = useState<PaymentReminder[]>([]);
   const [collections, setCollections] = useState<CollectionReminder[]>([]);
@@ -856,7 +860,7 @@ function Workspace({ session }: { session: Session }) {
 
   function navigate(nextView: View) {
     setView(nextView);
-    if (window.innerWidth <= 900) {
+    if (window.innerWidth <= MOBILE_NAV_BREAKPOINT) {
       setSidebarCollapsed(true);
       setMobileNavOpen(false);
     }
@@ -1020,10 +1024,10 @@ function Workspace({ session }: { session: Session }) {
     const handleResize = () => {
       const prevWidth = prevWidthRef.current;
       const width = window.innerWidth;
-      if (width <= 900) {
+      if (width <= MOBILE_NAV_BREAKPOINT) {
         setSidebarCollapsed(true);
         setMobileNavOpen(false);
-      } else if (prevWidth <= 900) {
+      } else if (prevWidth <= MOBILE_NAV_BREAKPOINT) {
         // returning from a narrow layout — restore the sidebar instead of
         // leaving it stuck collapsed on a wide monitor
         setSidebarCollapsed(false);
@@ -1038,7 +1042,7 @@ function Workspace({ session }: { session: Session }) {
   useEffect(() => {
     const handlePopState = () => {
       setView(viewFromPath(window.location.pathname));
-      if (window.innerWidth <= 900) {
+      if (window.innerWidth <= MOBILE_NAV_BREAKPOINT) {
         setSidebarCollapsed(true);
         setMobileNavOpen(false);
       }
