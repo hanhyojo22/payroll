@@ -5451,6 +5451,13 @@ export function EmployeesView({
             </span>,
           ])}
         />
+        <EmployeeMobileCardList
+          employeeCodeFor={employeeCodeFor}
+          employeeInitialsFor={employeeInitialsFor}
+          employees={rows}
+          formatHireDate={formatHireDate}
+          onOpenDetails={setDetailsEmployee}
+        />
       </section>
       {formOpen && (
         <EmployeeForm
@@ -5460,6 +5467,64 @@ export function EmployeesView({
           positions={positions}
         />
       )}
+    </div>
+  );
+}
+
+function EmployeeMobileCardList({
+  employees,
+  employeeCodeFor,
+  employeeInitialsFor,
+  formatHireDate,
+  onOpenDetails,
+}: {
+  employees: Employee[];
+  employeeCodeFor: (employee: Employee) => string;
+  employeeInitialsFor: (employee: Employee) => string;
+  formatHireDate: (employee: Employee) => string;
+  onOpenDetails: (employee: Employee) => void;
+}) {
+  if (employees.length === 0) {
+    return <p className="emp-mobile-empty">No employees yet.</p>;
+  }
+  return (
+    <div className="emp-mobile-list">
+      {employees.map((employee) => (
+        <div
+          className="emp-mobile-card"
+          key={employee.id}
+          onClick={() => onOpenDetails(employee)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              onOpenDetails(employee);
+            }
+          }}
+          role="button"
+          tabIndex={0}
+        >
+          <div className="employee-list-avatar">
+            {employee.profile_photo_url
+              ? <img alt="" src={employee.profile_photo_url} />
+              : <span>{employeeInitialsFor(employee)}</span>}
+          </div>
+          <div className="emp-mobile-card-main">
+            <strong className="emp-mobile-card-name">{employee.full_name}</strong>
+            <span className="emp-mobile-card-email">{employee.email || "No email"}</span>
+            <span className="emp-mobile-card-meta">
+              {employee.department || "Unassigned"} <span className="emp-mobile-card-dot">•</span> {employee.role || "Unassigned"}
+            </span>
+          </div>
+          <div className="emp-mobile-card-side">
+            <span className="emp-mobile-card-id">{employeeCodeFor(employee)}</span>
+            <span className="emp-mobile-card-date">{formatHireDate(employee)}</span>
+            <span className={employee.status === "active" ? "emp-status-pill active" : "emp-status-pill inactive"}>
+              {employee.status === "active" ? "Active" : "Inactive"}
+            </span>
+          </div>
+          <ChevronRight className="emp-mobile-card-chevron" size={18} />
+        </div>
+      ))}
     </div>
   );
 }

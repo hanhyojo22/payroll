@@ -4635,6 +4635,94 @@ input[type="radio"] {
   font-weight: 400;
 }
 
+.emp-mobile-list {
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+}
+
+.emp-mobile-empty {
+  color: var(--color-text-secondary);
+  padding: 24px 14px;
+  text-align: center;
+}
+
+.emp-mobile-card {
+  align-items: flex-start;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  display: flex;
+  gap: 12px;
+  padding: 14px;
+}
+
+.emp-mobile-card:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.emp-mobile-card-main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.emp-mobile-card-name {
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+}
+
+.emp-mobile-card-email {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.emp-mobile-card-meta {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+.emp-mobile-card-dot {
+  color: var(--color-border);
+}
+
+.emp-mobile-card-side {
+  align-items: flex-end;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.emp-mobile-card-id {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.emp-mobile-card-date {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.emp-mobile-card-chevron {
+  align-self: center;
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
 .metric.danger .metric-icon {
   background: var(--color-danger-bg);
   color: var(--color-danger);
@@ -4690,6 +4778,14 @@ input[type="radio"] {
 
   .employee-list-panel .toolbar > select {
     transform: none;
+  }
+
+  .employee-list-panel .table-wrap {
+    display: none;
+  }
+
+  .emp-mobile-list {
+    display: flex;
   }
 
   .employee-list-panel td {
