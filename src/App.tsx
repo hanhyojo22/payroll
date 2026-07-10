@@ -5485,7 +5485,11 @@ function EmployeeMobileCardList({
   onOpenDetails: (employee: Employee) => void;
 }) {
   if (employees.length === 0) {
-    return <p className="emp-mobile-empty">No employees yet.</p>;
+    return (
+      <div className="emp-mobile-list">
+        <p className="emp-mobile-empty">No employees yet.</p>
+      </div>
+    );
   }
   return (
     <div className="emp-mobile-list">
