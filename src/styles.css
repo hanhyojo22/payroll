@@ -1902,6 +1902,7 @@ input[type="radio"] {
 .page-stack {
   display: grid;
   gap: 20px;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .page-header {
@@ -5337,6 +5338,7 @@ td {
 .attendance-page {
   display: grid;
   gap: 16px;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .attendance-top-grid {
