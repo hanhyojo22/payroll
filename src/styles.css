@@ -7863,7 +7863,8 @@ td {
 
   .row-actions { justify-content: flex-end; }
 
-  .collection-table-wrap {
+  .collection-table-wrap,
+  .billing-table-wrap {
     background: transparent;
     border: 0;
     box-shadow: none;
@@ -7871,7 +7872,8 @@ td {
   }
 
   .collection-table,
-  .billing-details-table {
+  .billing-details-table,
+  .attendance-table {
     min-width: 0;
   }
 
@@ -10583,6 +10585,10 @@ td {
   }
 
   .billing-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .billing-summary-split {
     grid-template-columns: 1fr;
   }
 

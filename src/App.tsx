@@ -5034,11 +5034,11 @@ export function AttendanceView({
                   const employeeIndex = dailyEmployees.findIndex((item) => item.id === emp.id);
                   return (
                     <tr key={emp.id}>
-                      <td className="att-no-cell">
+                      <td className="att-no-cell" data-label="No.">
                         <span className="att-row-no">{employeeIndex + 1}</span>
                       </td>
-                      <td>{employeeCode(employeeIndex)}</td>
-                      <td>
+                      <td data-label="Employee ID">{employeeCode(employeeIndex)}</td>
+                      <td data-label="Employee">
                         <div className="employee-list-identity">
                           <div className="employee-list-avatar">
                             {emp.profile_photo_url ? <img src={emp.profile_photo_url} alt="" /> : <span>{initials(emp.full_name)}</span>}
@@ -5049,8 +5049,8 @@ export function AttendanceView({
                           </div>
                         </div>
                       </td>
-                      <td>{emp.department || "Unassigned"}</td>
-                      <td>
+                      <td data-label="Department">{emp.department || "Unassigned"}</td>
+                      <td data-label="Status">
                         <div className={`attendance-status-control ${current || "unmarked"}`}>
                           <span>{statusLabel(current)}</span>
                           <select
@@ -5065,7 +5065,7 @@ export function AttendanceView({
                           </select>
                         </div>
                       </td>
-                      <td>
+                      <td data-label="Time In">
                         {requiresTimeTracking(current) ? (
                           <input
                             type="time"
@@ -5076,7 +5076,7 @@ export function AttendanceView({
                           />
                         ) : "--"}
                       </td>
-                      <td>
+                      <td data-label="Time Out">
                         {requiresTimeTracking(current) ? (
                           <input
                             type="time"
@@ -5087,9 +5087,9 @@ export function AttendanceView({
                           />
                         ) : "--"}
                       </td>
-                      <td><strong>{formatMoney(earnings)}</strong></td>
-                      <td>{current === "absent" ? "No Entry" : current === "half_day" ? "Half Day" : "--"}</td>
-                      <td>
+                      <td data-label="Daily Earnings"><strong>{formatMoney(earnings)}</strong></td>
+                      <td data-label="Remarks">{current === "absent" ? "No Entry" : current === "half_day" ? "Half Day" : "--"}</td>
+                      <td data-label="Actions">
                         <div className="attendance-row-actions">
                           <button
                             disabled={!dirty || busyEmployeeId === emp.id}

@@ -767,8 +767,8 @@ export function BillingFeature({
                   return (
                     <>
                       <tr className="expandable" key={record.id}>
-                        <td className="billing-invoice-no">{record.invoice_no}</td>
-                        <td>
+                        <td className="billing-invoice-no" data-label="Invoice No.">{record.invoice_no}</td>
+                        <td data-label="Period">
                           <div className="billing-period-cell">
                             <button
                               className="billing-expand-btn"
@@ -783,19 +783,19 @@ export function BillingFeature({
                             </div>
                           </div>
                         </td>
-                        <td className="num">
+                        <td className="num" data-label="Tickets">
                           <div className="billing-cell-breakdown">
                             <strong>{record.total_tickets}</strong>
                             <span>I:{record.install_tickets} R:{record.repair_tickets}</span>
                           </div>
                         </td>
-                        <td className="num">
+                        <td className="num" data-label="Disputed">
                           <div className="billing-cell-breakdown">
                             <strong>{record.disputed_tickets}</strong>
                             <span>I:{record.disputed_install + record.company_disputed_install} R:{record.disputed_repair + record.company_disputed_repair}</span>
                           </div>
                         </td>
-                        <td className="num">
+                        <td className="num" data-label="Billable">
                           <div className="billing-cell-breakdown">
                             <strong>{record.billable_tickets}</strong>
                             <span>
@@ -803,15 +803,15 @@ export function BillingFeature({
                             </span>
                           </div>
                         </td>
-                        <td className="num">{currency.format(record.billing_amount)}</td>
-                        <td className="num">{currency.format(record.collectibles_amount)}</td>
-                        <td className="num">{currency.format(record.collections_amount)}</td>
-                        <td>
+                        <td className="num" data-label="Amount">{currency.format(record.billing_amount)}</td>
+                        <td className="num" data-label="Payable">{currency.format(record.collectibles_amount)}</td>
+                        <td className="num" data-label="Collection">{currency.format(record.collections_amount)}</td>
+                        <td data-label="Status">
                           <span className={`collection-status ${isFullyPaid ? "collected" : "pending"}`}>
                             {isFullyPaid ? "Paid" : "Unpaid"}
                           </span>
                         </td>
-                        <td>
+                        <td data-label="Action">
                           <div className="billing-row-actions">
                             <button aria-label="View details" onClick={() => setDetailsRecord(record)} type="button" title="View details">
                               <Eye size={14} />
@@ -849,11 +849,11 @@ export function BillingFeature({
                                     const itemPayments = paymentsByItemId.get(item.id) ?? [];
                                     return (
                                       <tr key={item.id}>
-                                        <td className="subcon-detail-name">{item.subcon_name}</td>
-                                        <td className="num">{item.install_tickets + item.repair_tickets}</td>
-                                        <td className="num">{currency.format(item.billing_amount)}</td>
-                                        <td className="num"><strong>{currency.format(item.payable_amount)}</strong></td>
-                                        <td>
+                                        <td className="subcon-detail-name" data-label="Subcontractor">{item.subcon_name}</td>
+                                        <td className="num" data-label="Tickets">{item.install_tickets + item.repair_tickets}</td>
+                                        <td className="num" data-label="Gross">{currency.format(item.billing_amount)}</td>
+                                        <td className="num" data-label="Net payable"><strong>{currency.format(item.payable_amount)}</strong></td>
+                                        <td data-label="Payout">
                                           {itemPayments.length === 0 ? (
                                             <span className="subcon-missing-payment">Missing payout</span>
                                           ) : (
@@ -871,7 +871,7 @@ export function BillingFeature({
                                             </div>
                                           )}
                                         </td>
-                                        <td>
+                                        <td data-label="Action">
                                           <div className="billing-row-actions">
                                             <button onClick={() => onOpenSubcontractorAccount(item.subcontractor_id)} type="button">
                                               View account
