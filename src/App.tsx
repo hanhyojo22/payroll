@@ -3682,7 +3682,7 @@ export function DailyTicketEntryView({
       entryBillingPeriod,
     ).installation + totalInstallationForDate;
   return (
-    <div className="page-stack">
+    <div className="page-stack daily-ticket-page">
       {employees.some((employee) => employee.status === "active" && !employee.position_id) && (
         <div className="notice error" role="alert">
           <div>
@@ -4322,7 +4322,7 @@ function SubconDailyTicketView({
   }
 
   return (
-    <div className="page-stack">
+    <div className="page-stack daily-ticket-page">
       <section className="subcon-ticket-stats">
         <div className="subcon-ticket-stat">
           <div className="subcon-ticket-stat-icon"><Wrench size={20} /></div>
