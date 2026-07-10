@@ -22,6 +22,7 @@ import {
   paymentMethodLabel,
   validateExpensePayment,
 } from "../../domain/expenses";
+import { normalizeSubcontractorPayoutTitle } from "../../domain/paymentReminders";
 import type { CollectionPaymentMethod, Employee, Expense, ExpenseCategory, ExpenseCategoryType, ExpenseFrequency, ExpenseInstallmentPayment } from "../../types";
 import {
   cancelExpense,
@@ -574,6 +575,9 @@ export function ExpensesFeature({
                 const canRecordPayment = displayStatus !== "paid" && displayStatus !== "cancelled";
                 const isSystemManaged = expense.payroll_run_id !== null || expense.subcontractor_payment_reminder_id !== null;
                 const isOpenEndedRecurring = expense.frequency !== "one_time" && !expense.duration_months;
+                const expenseDisplayName = expense.subcontractor_payment_reminder_id !== null
+                  ? normalizeSubcontractorPayoutTitle(expense.employee_name)
+                  : expense.employee_name;
                 return (
                 <tr key={expense.id}>
                   <td>{expense.expense_date}</td>
@@ -586,12 +590,22 @@ export function ExpensesFeature({
                         <div className="employee-list-avatar">
                           {(() => {
                             const emp = employees.find((e) => e.id === expense.employee_id);
+                            const avatarName = expense.subcontractor_payment_reminder_id !== null
+                              ? normalizeSubcontractorPayoutTitle(expense.employee_name)
+                              : expense.employee_name;
                             return emp?.profile_photo_url
                               ? <img alt="" src={emp.profile_photo_url} />
-                              : <span>{expense.employee_name.split(" ").filter(Boolean).slice(0, 2).map((p: string) => p[0]).join("").toUpperCase() || "E"}</span>;
+                              : <span>{avatarName.split(" ").filter(Boolean).slice(0, 2).map((p: string) => p[0]).join("").toUpperCase() || "E"}</span>;
                           })()}
                         </div>
-                        <RecordTitle title={expense.employee_name} notes={employees.find((e) => e.id === expense.employee_id)?.email || "No email"} />
+                        <RecordTitle
+                          title={expenseDisplayName}
+                          notes={
+                            expense.subcontractor_payment_reminder_id !== null
+                              ? expense.notes
+                              : employees.find((e) => e.id === expense.employee_id)?.email || "No email"
+                          }
+                        />
                       </div>
                     )}
                   </td>

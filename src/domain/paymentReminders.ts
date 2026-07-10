@@ -5,6 +5,11 @@ export { paymentMethodLabel } from "./expenses";
 
 export type PaymentReminderDisplayStatus = "pending" | "partial" | "paid" | "overdue";
 export const SUBCONTRACTOR_PAYOUT_EXPENSE_CATEGORY_NAME = "Subcontractor Payout";
+const SUBCONTRACTOR_PAYOUT_TITLE_SUFFIX = /\s*\((?:1st|2nd)\s+payout\)\s*$/i;
+
+export function normalizeSubcontractorPayoutTitle(title: string): string {
+  return title.replace(SUBCONTRACTOR_PAYOUT_TITLE_SUFFIX, "").trim() || title;
+}
 
 export const paymentReminderPaymentsTotal = (payments: PaymentReminderPayment[] | null | undefined) =>
   (payments ?? []).reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
@@ -65,12 +70,13 @@ export function subcontractorPayoutExpensePayload(
     ? (payments ?? []).reduce<string | null>((latest, payment) =>
       !latest || payment.payment_date > latest ? payment.payment_date : latest, null)
     : null;
+  const expenseName = normalizeSubcontractorPayoutTitle(reminder.title);
 
   return {
     id: reminder.id,
     user_id: reminder.user_id,
     employee_id: null,
-    employee_name: reminder.title,
+    employee_name: expenseName,
     category_id: categoryId,
     category_name: SUBCONTRACTOR_PAYOUT_EXPENSE_CATEGORY_NAME,
     amount: Number(reminder.amount) || 0,

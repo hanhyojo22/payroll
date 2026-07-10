@@ -141,4 +141,24 @@ describe("subcontractorPayoutExpensePayload", () => {
     expect(payload.status).toBe("paid");
     expect(payload.paid_date).toBe("2026-07-12");
   });
+
+  it("removes payout suffixes from the subcontractor name used by expenses", () => {
+    const payload = subcontractorPayoutExpensePayload(
+      {
+        id: "rem-2",
+        user_id: "u1",
+        title: "Matos (2nd payout)",
+        amount: 500,
+        due_date: "2026-07-31",
+        status: "pending",
+        notes: "July 2026 · 1st - 15th (2nd payout)",
+        created_at: "2026-07-10T12:00:00Z",
+      },
+      [],
+      "cat-1",
+    );
+
+    expect(payload.employee_name).toBe("Matos");
+    expect(payload.notes).toBe("July 2026 · 1st - 15th (2nd payout)");
+  });
 });

@@ -389,6 +389,7 @@ export function BillingFeature({
       userId,
       monthName: monthNames[month - 1],
       subcontractorAdvances,
+      today: todayKey(),
     });
 
     return { billingPayload, collectionPayload, collectiblesCollectionPayload, payoutPayloads, advanceUpdates };

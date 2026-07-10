@@ -204,6 +204,7 @@ export function buildSubcontractorPayoutArtifacts(args: {
   existingPayments?: PaymentReminder[];
   monthName: string;
   subcontractorAdvances?: SubcontractorAdvance[];
+  today?: string;
 }): {
   payoutPayloads: Array<Omit<PaymentReminder, "created_at" | "updated_at" | "payments">>;
   advanceUpdates: SubcontractorAdvanceUpdate[];
@@ -213,7 +214,7 @@ export function buildSubcontractorPayoutArtifacts(args: {
       .filter((p) => p.billing_subcon_item_id !== null)
       .map((payment) => [`${payment.billing_subcon_item_id}:${payment.payout_leg}`, payment]),
   );
-  const periodLabel = billingPeriodLabel(args.billingPeriod);
+  const billingDate = args.today ?? new Date().toISOString().slice(0, 10);
   const activeAdvancesBySubcontractor = new Map<string, SubcontractorAdvance[]>();
   (args.subcontractorAdvances ?? [])
     .filter((advance) => advance.status === "active" && advance.subcontractor_id && Number(advance.balance) > 0)
@@ -289,16 +290,16 @@ export function buildSubcontractorPayoutArtifacts(args: {
       const netAmount = shouldPreserveExisting
         ? existing!.amount
         : Math.round((grossAmount - advanceDeduction) * 100) / 100;
-      const legSuffix = leg === "remainder" ? " (2nd payout)" : "";
-      const baseNote = `${args.monthName} ${args.billingYear} · ${periodLabel}${legSuffix}`;
+      const legPct = leg === "remainder" ? 100 - item.payable_pct : item.payable_pct;
+      const baseNote = `${legPct}% | ${billingDate}`;
       const deductionNote = advanceDeduction > 0
-        ? `Gross payout PHP ${grossAmount.toFixed(2)} - Cash advance PHP ${advanceDeduction.toFixed(2)} = Net payout PHP ${netAmount.toFixed(2)}`
+        ? `${baseNote} · Gross payout PHP ${grossAmount.toFixed(2)} - Cash advance PHP ${advanceDeduction.toFixed(2)} = Net payout PHP ${netAmount.toFixed(2)}`
         : baseNote;
 
       return {
         id: existing?.id ?? crypto.randomUUID(),
         user_id: args.userId,
-        title: leg === "remainder" ? `${item.subcon_name} (2nd payout)` : item.subcon_name,
+        title: item.subcon_name,
         type: "subcontractor" as const,
         amount: netAmount,
         due_date: existing?.due_date ?? args.dueDate,
