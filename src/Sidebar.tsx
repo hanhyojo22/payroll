@@ -12,6 +12,7 @@ import {
   Menu,
   Settings,
   Users,
+  Wallet,
 } from "lucide-react";
 
 type View =
@@ -34,6 +35,7 @@ type View =
   | "payments"
   | "collections"
   | "collection-history"
+  | "salary-bonds"
   | "subcontractors";
 
 export function Sidebar({
@@ -96,6 +98,7 @@ export function Sidebar({
         <NavButton active={view === "subcontractors"} icon={<Users size={18} />} label="Subcontractors" onClick={() => goTo("subcontractors")} />
         <NavButton active={view === "collections" || view === "collection-history"} icon={<BadgeDollarSign size={18} />} label="Collections" onClick={() => goTo("collections")} />
         <NavButton active={view === "payments"} icon={<CreditCard size={18} />} label="Payment History" onClick={() => goTo("payments")} />
+        <NavButton active={view === "salary-bonds"} icon={<Wallet size={18} />} label="Salary Bonds" onClick={() => goTo("salary-bonds")} />
 
         <p className="nav-section-label">Personal</p>
         <NavButton active={view === "personal-expenses"} icon={<CreditCard size={18} />} label="Expenses" onClick={() => goTo("personal-expenses")} />

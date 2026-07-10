@@ -131,7 +131,7 @@ describe("lastDayOfMonth", () => {
 });
 
 describe("buildSubcontractorPaymentPayloads", () => {
-  it("creates one payout row per subcontractor billing item", () => {
+  it("creates two payout rows per subcontractor billing item -- payable and remainder, both owed to the subcontractor", () => {
     const items: BillingSubconItem[] = [
       {
         id: "item-1",
@@ -164,14 +164,60 @@ describe("buildSubcontractorPaymentPayloads", () => {
       monthName: "June",
     });
 
-    expect(payloads).toHaveLength(1);
+    expect(payloads).toHaveLength(2);
     expect(payloads[0]).toMatchObject({
       billing_subcon_item_id: "item-1",
       subcontractor_id: "sub-1",
       amount: 3500,
       status: "pending",
       type: "subcontractor",
+      payout_leg: "payable",
     });
+    expect(payloads[1]).toMatchObject({
+      billing_subcon_item_id: "item-1",
+      subcontractor_id: "sub-1",
+      amount: 1500,
+      status: "pending",
+      type: "subcontractor",
+      payout_leg: "remainder",
+    });
+  });
+
+  it("skips a leg entirely when its gross amount is zero (e.g. payable_pct of 100)", () => {
+    const items: BillingSubconItem[] = [
+      {
+        id: "item-1",
+        user_id: "u1",
+        billing_record_id: "bill-1",
+        subcontractor_id: "sub-1",
+        subcon_name: "Alpha",
+        install_tickets: 4,
+        repair_tickets: 2,
+        disputed_install: 0,
+        disputed_repair: 0,
+        installation_rate: 1000,
+        repair_rate: 500,
+        billable_tickets: 6,
+        billing_amount: 5000,
+        payable_pct: 100,
+        payable_amount: 5000,
+        collection_amount: 0,
+        created_at: "",
+      },
+    ];
+
+    const payloads = buildSubcontractorPaymentPayloads({
+      billingMonth: 6,
+      billingYear: 2026,
+      billingPeriod: "first_half",
+      dueDate: "2026-06-15",
+      items,
+      userId: "u1",
+      monthName: "June",
+    });
+
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0].payout_leg).toBe("payable");
   });
 
   it("preserves paid payout amounts when billing is recalculated", () => {
@@ -211,6 +257,7 @@ describe("buildSubcontractorPaymentPayloads", () => {
         billing_month: 6,
         billing_year: 2026,
         billing_period: "first_half",
+        payout_leg: "payable",
         created_at: "",
         updated_at: "",
         payments: [],
@@ -232,6 +279,14 @@ describe("buildSubcontractorPaymentPayloads", () => {
       id: "payment-1",
       amount: 3500,
       status: "paid",
+      payout_leg: "payable",
+    });
+    // The remainder leg has no existing payment yet, so a new pending row is created for
+    // its full gross amount (1800) -- the paid leg being preserved doesn't affect it.
+    expect(payloads[1]).toMatchObject({
+      amount: 1800,
+      status: "pending",
+      payout_leg: "remainder",
     });
   });
 
@@ -289,6 +344,9 @@ describe("buildSubcontractorPaymentPayloads", () => {
 
     expect(result.payoutPayloads[0].amount).toBe(2500);
     expect(result.payoutPayloads[0].notes).toContain("Cash advance PHP 1000.00");
+    // The advance's full balance (1000) is consumed by the payable leg alone, so the
+    // remainder leg gets no further deduction -- its full gross amount is owed.
+    expect(result.payoutPayloads[1].amount).toBe(1500);
     expect(result.advanceUpdates).toEqual([
       { id: "advance-1", payload: { balance: 0, status: "completed" } },
     ]);
@@ -346,9 +404,14 @@ describe("buildSubcontractorPaymentPayloads", () => {
       monthName: "June",
     });
 
+    // The advance deduction is now computed against BOTH legs' combined gross amount
+    // (1400 + 600 = 2000), not just the payable leg, since the full amount belongs to
+    // the subcontractor -- so it caps out at 0 for both legs, and the advance balance
+    // drops by the full 2000 (5000 - 2000 = 3000), not just 1400.
     expect(result.payoutPayloads[0].amount).toBe(0);
+    expect(result.payoutPayloads[1].amount).toBe(0);
     expect(result.advanceUpdates).toEqual([
-      { id: "advance-1", payload: { balance: 3600, status: "active" } },
+      { id: "advance-1", payload: { balance: 3000, status: "active" } },
     ]);
   });
 
@@ -404,7 +467,10 @@ describe("buildSubcontractorPaymentPayloads", () => {
       monthName: "June",
     });
 
+    // The fixed 1000 per-billing deduction is applied ONCE per item (not once per leg),
+    // fully consumed by the payable leg -- the remainder leg is untouched.
     expect(result.payoutPayloads[0].amount).toBe(2500);
+    expect(result.payoutPayloads[1].amount).toBe(1500);
     expect(result.advanceUpdates).toEqual([
       { id: "advance-1", payload: { balance: 4000, status: "active" } },
     ]);
@@ -420,6 +486,9 @@ describe("buildSubcontractorAccountSummary", () => {
     repair_rate: 500,
     payable_pct: 70,
     status: "active",
+    email: "",
+    contact_number: "",
+    address: "",
     created_at: "",
     updated_at: "",
   };
@@ -455,6 +524,7 @@ describe("buildSubcontractorAccountSummary", () => {
         billing_month: 6,
         billing_year: 2026,
         billing_period: "first_half",
+        payout_leg: "payable",
         created_at: "",
         updated_at: "",
         payments: [],
@@ -473,6 +543,7 @@ describe("buildSubcontractorAccountSummary", () => {
         billing_month: 6,
         billing_year: 2026,
         billing_period: "second_half",
+        payout_leg: "payable",
         created_at: "",
         updated_at: "2026-06-29T00:00:00Z",
         payments: [
@@ -548,6 +619,7 @@ describe("buildSubcontractorAccountSummary", () => {
       billing_month: 6,
       billing_year: 2026,
       billing_period: "second_half",
+      payout_leg: "payable",
       created_at: "",
       updated_at: "",
       payments: [

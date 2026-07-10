@@ -1,5 +1,6 @@
+import { useState } from "react";
 import type { InputHTMLAttributes, ReactNode } from "react";
-import { CalendarClock, CheckCircle2, Pencil, Trash2, X } from "lucide-react";
+import { CalendarClock, CheckCircle2, Eye, EyeOff, Pencil, Trash2, X } from "lucide-react";
 import { Spinner } from "./Spinner";
 
 export function Modal({
@@ -61,6 +62,40 @@ export function TextField({
         onChange={(event) => onChange(event.target.value)}
         type={type}
       />
+    </label>
+  );
+}
+
+export function PasswordField({
+  label,
+  onChange,
+  ...props
+}: {
+  label: string;
+  onChange: (value: string) => void;
+  value: string;
+} & Omit<InputHTMLAttributes<HTMLInputElement>, "onChange" | "type" | "value">) {
+  const [revealed, setRevealed] = useState(false);
+
+  return (
+    <label>
+      {label}
+      <div className="password-field">
+        <input
+          {...props}
+          onChange={(event) => onChange(event.target.value)}
+          type={revealed ? "text" : "password"}
+        />
+        <button
+          aria-label={revealed ? "Hide password" : "Show password"}
+          className="password-field-toggle"
+          onClick={() => setRevealed((current) => !current)}
+          tabIndex={-1}
+          type="button"
+        >
+          {revealed ? <EyeOff size={16} /> : <Eye size={16} />}
+        </button>
+      </div>
     </label>
   );
 }

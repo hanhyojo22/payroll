@@ -1557,6 +1557,9 @@ create table if not exists public.subcontractors (
   repair_rate numeric(12, 2) not null default 0 check (repair_rate >= 0),
   payable_pct integer not null default 30 check (payable_pct >= 0 and payable_pct <= 100),
   status text not null default 'active' check (status in ('active', 'archived')),
+  email text not null default '',
+  contact_number text not null default '',
+  address text not null default '',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (user_id, name)
@@ -2001,3 +2004,269 @@ drop constraint if exists expenses_subcontractor_payment_reminder_id_key;
 
 alter table public.expenses
 add constraint expenses_subcontractor_payment_reminder_id_key unique (subcontractor_payment_reminder_id);
+
+-- Salary Bond: a forced-savings account per employee, distinct from employee_advances
+-- (which pays a debt down to zero). A bond accumulates toward a target_amount via payroll
+-- deductions and can be reduced by Emergency Withdrawals; the balance is never stored, it is
+-- always derived by summing employee_salary_bond_transactions, so "reached target" / "auto-resume below
+-- target" fall out of that sum automatically instead of needing a stored status to keep in sync.
+create table if not exists public.employee_salary_bonds (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  employee_id uuid references public.employees(id) on delete set null,
+  employee_name text not null,
+  bond_reference text not null,
+  target_amount numeric(12, 2) not null check (target_amount > 0),
+  deduction_per_payroll numeric(12, 2) not null check (deduction_per_payroll > 0),
+  start_deduction date not null default current_date,
+  status text not null default 'active' check (status in ('active', 'archived')),
+  notes text not null default '',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, bond_reference)
+);
+
+create index if not exists employee_salary_bonds_user_status_idx
+on public.employee_salary_bonds (user_id, status);
+
+create index if not exists employee_salary_bonds_employee_status_idx
+on public.employee_salary_bonds (employee_id, status);
+
+drop trigger if exists set_employee_salary_bonds_updated_at on public.employee_salary_bonds;
+create trigger set_employee_salary_bonds_updated_at
+before update on public.employee_salary_bonds
+for each row execute function public.set_updated_at();
+
+alter table public.employee_salary_bonds enable row level security;
+
+drop policy if exists "salary bonds are owned by their user" on public.employee_salary_bonds;
+create policy "salary bonds are owned by their user"
+on public.employee_salary_bonds
+for all
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+-- Append-only ledger. Deductions are inserted directly by the payroll code (bulk/offline-queue
+-- friendly, mirrors how payroll_run_items itself is written); withdrawals can only be created
+-- through record_salary_bond_withdrawal below, which validates amount/note/balance atomically -
+-- the insert policy enforces this split at the database level, not just in the client.
+create table if not exists public.employee_salary_bond_transactions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  salary_bond_id uuid not null references public.employee_salary_bonds(id) on delete cascade,
+  employee_id uuid references public.employees(id) on delete set null,
+  type text not null check (type in ('deduction', 'withdrawal')),
+  amount numeric(12, 2) not null check (amount > 0),
+  transaction_date date not null default current_date,
+  payroll_run_id uuid references public.payroll_runs(id) on delete set null,
+  payroll_run_item_id uuid references public.payroll_run_items(id) on delete set null,
+  note text not null default '',
+  is_void boolean not null default false,
+  void_reason text not null default '',
+  voided_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists employee_salary_bond_transactions_bond_date_idx
+on public.employee_salary_bond_transactions (salary_bond_id, transaction_date desc, created_at desc);
+
+create index if not exists employee_salary_bond_transactions_user_date_idx
+on public.employee_salary_bond_transactions (user_id, transaction_date desc);
+
+drop trigger if exists set_employee_salary_bond_transactions_updated_at on public.employee_salary_bond_transactions;
+create trigger set_employee_salary_bond_transactions_updated_at
+before update on public.employee_salary_bond_transactions
+for each row execute function public.set_updated_at();
+
+alter table public.employee_salary_bond_transactions enable row level security;
+
+drop policy if exists "salary bond transactions are owned by their user" on public.employee_salary_bond_transactions;
+drop policy if exists "salary bond deduction transactions insertable by owner" on public.employee_salary_bond_transactions;
+
+create policy "salary bond transactions are owned by their user"
+on public.employee_salary_bond_transactions for select
+using (auth.uid() = user_id);
+
+create policy "salary bond deduction transactions insertable by owner"
+on public.employee_salary_bond_transactions for insert
+with check (auth.uid() = user_id and type = 'deduction');
+
+create or replace function public.record_salary_bond_withdrawal(
+  bond_id uuid,
+  transaction_id uuid,
+  withdrawal_amount numeric,
+  withdrawn_on date,
+  withdrawal_note text
+)
+returns public.employee_salary_bond_transactions
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  bond public.employee_salary_bonds%rowtype;
+  current_balance numeric(12, 2);
+  result public.employee_salary_bond_transactions%rowtype;
+begin
+  if auth.uid() is null then raise exception 'Authentication required.'; end if;
+  if withdrawal_amount is null or withdrawal_amount <= 0 then raise exception 'Withdrawal amount must be greater than zero.'; end if;
+  if withdrawn_on is null or withdrawn_on > current_date then raise exception 'Withdrawal date cannot be in the future.'; end if;
+  if withdrawal_note is null or btrim(withdrawal_note) = '' then raise exception 'A reason is required for every withdrawal.'; end if;
+
+  if transaction_id is not null then
+    select * into result from public.employee_salary_bond_transactions
+    where id = transaction_id and user_id = auth.uid();
+    if found then return result; end if;
+  end if;
+
+  select * into bond from public.employee_salary_bonds
+  where id = bond_id and user_id = auth.uid()
+  for update;
+  if not found then raise exception 'Salary bond not found.'; end if;
+  if bond.status = 'archived' then raise exception 'Archived salary bonds cannot accept withdrawals.'; end if;
+
+  select coalesce(sum(amount) filter (where type = 'deduction'), 0)
+       - coalesce(sum(amount) filter (where type = 'withdrawal'), 0)
+    into current_balance
+  from public.employee_salary_bond_transactions
+  where salary_bond_id = bond_id and not is_void;
+
+  if withdrawal_amount > current_balance then raise exception 'Withdrawal exceeds the current bond balance.'; end if;
+
+  insert into public.employee_salary_bond_transactions
+    (id, user_id, salary_bond_id, employee_id, type, amount, transaction_date, note)
+  values
+    (coalesce(transaction_id, gen_random_uuid()), auth.uid(), bond_id, bond.employee_id, 'withdrawal',
+     withdrawal_amount, withdrawn_on, btrim(withdrawal_note))
+  returning * into result;
+  return result;
+end;
+$$;
+
+create or replace function public.void_salary_bond_transaction(transaction_id uuid, reason text)
+returns public.employee_salary_bond_transactions
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  result public.employee_salary_bond_transactions%rowtype;
+begin
+  if auth.uid() is null then raise exception 'Authentication required.'; end if;
+  if reason is null or btrim(reason) = '' then raise exception 'A void reason is required.'; end if;
+
+  select * into result from public.employee_salary_bond_transactions
+  where id = transaction_id and user_id = auth.uid()
+  for update;
+  if not found then raise exception 'Transaction not found.'; end if;
+  if result.type <> 'withdrawal' then raise exception 'Only withdrawals can be voided.'; end if;
+  if result.is_void then return result; end if;
+
+  update public.employee_salary_bond_transactions
+  set is_void = true, void_reason = btrim(reason), voided_at = now()
+  where id = transaction_id
+  returning * into result;
+  return result;
+end;
+$$;
+
+revoke insert, update, delete on public.employee_salary_bond_transactions from authenticated;
+grant select, insert on public.employee_salary_bond_transactions to authenticated;
+revoke all on function public.record_salary_bond_withdrawal(uuid, uuid, numeric, date, text) from public;
+revoke all on function public.void_salary_bond_transaction(uuid, text) from public;
+grant execute on function public.record_salary_bond_withdrawal(uuid, uuid, numeric, date, text) to authenticated;
+grant execute on function public.void_salary_bond_transaction(uuid, text) to authenticated;
+
+-- Company-closed tickets: installation/repair tickets closed by the company itself
+-- (not attributable to any employee or subcontractor), billed alongside them.
+alter table public.billing_records
+add column if not exists company_install_tickets integer not null default 0 check (company_install_tickets >= 0),
+add column if not exists company_repair_tickets integer not null default 0 check (company_repair_tickets >= 0),
+add column if not exists company_disputed_install integer not null default 0 check (company_disputed_install >= 0),
+add column if not exists company_disputed_repair integer not null default 0 check (company_disputed_repair >= 0);
+
+-- "Salary Bond" is no longer a selectable employee_advances.advance_type (superseded by
+-- the dedicated employee_salary_bonds feature above). Move any existing/defaulted rows
+-- off that value and stop allowing it, so the advance-type dropdown never has to render
+-- a legacy value it no longer has an <option> for.
+update public.employee_advances
+set advance_type = 'Other Loan'
+where advance_type = 'Salary Bond';
+
+alter table public.employee_advances
+alter column advance_type set default 'Other Loan';
+
+alter table public.employee_advances
+drop constraint if exists employee_advances_type_check;
+
+alter table public.employee_advances
+add constraint employee_advances_type_check
+check (advance_type in ('Cash Advance', 'Salary Loan', 'Company Loan', 'Other Loan'));
+
+-- Subcontractor billing "collection_amount" (the 100 - payable_pct remainder) is not
+-- company revenue -- the full billing_subcon_items.billing_amount belongs to the
+-- subcontractor, just paid out as two installments (payable_pct now, the remainder
+-- later), mirroring the client billing's Collection/Collectibles split. Add a leg
+-- discriminator so both payouts can coexist as separate payment_reminders rows linked
+-- to the same billing_subcon_items row.
+alter table public.payment_reminders
+add column if not exists payout_leg text not null default 'payable'
+check (payout_leg in ('payable', 'remainder'));
+
+drop index if exists public.payment_reminders_billing_subcon_item_uidx;
+
+-- The live database's actual old single-column uniqueness came from a CONSTRAINT (most
+-- likely added via the Supabase table editor UI, hence the "_key" suffix Postgres
+-- auto-generates for that path), not the "_uidx"-named index this migration originally
+-- assumed -- so the drop above was a no-op on real data. Drop the real one: it still
+-- blocks two payment_reminders rows (payable + remainder) sharing one
+-- billing_subcon_item_id even after the composite index below exists, since Postgres
+-- enforces every unique constraint on the table, not just the one an upsert's ON
+-- CONFLICT targets.
+alter table public.payment_reminders
+drop constraint if exists payment_reminders_billing_subcon_item_id_key;
+
+-- Not partial (no "where ... is not null"): a partial index isn't inferred by a plain
+-- ON CONFLICT (columns) clause with no matching WHERE predicate, which is exactly what
+-- PostgREST's upsert(..., { onConflict: "billing_subcon_item_id,payout_leg" }) generates
+-- -- Postgres would reject it with "no unique or exclusion constraint matching the ON
+-- CONFLICT specification". A full index is safe here since NULL billing_subcon_item_id
+-- values (loan/bill reminders) never conflict with each other under uniqueness anyway.
+drop index if exists public.payment_reminders_billing_subcon_item_leg_uidx;
+
+create unique index payment_reminders_billing_subcon_item_leg_uidx
+on public.payment_reminders (billing_subcon_item_id, payout_leg);
+
+-- The "on delete cascade" on billing_subcon_items.billing_record_id (and the two FKs on
+-- the legacy subcontractor_payments table) only takes effect for a table created fresh
+-- from this CREATE TABLE statement -- on a live database where these tables already
+-- existed before cascade was added to this file, the constraint is silently left at
+-- Postgres's RESTRICT default, causing "violates foreign key constraint" when deleting
+-- or regenerating a billing record. Re-assert cascade explicitly so it actually applies.
+alter table public.billing_subcon_items
+drop constraint if exists billing_subcon_items_billing_record_id_fkey;
+
+alter table public.billing_subcon_items
+add constraint billing_subcon_items_billing_record_id_fkey
+foreign key (billing_record_id) references public.billing_records(id) on delete cascade;
+
+alter table public.subcontractor_payments
+drop constraint if exists subcontractor_payments_billing_record_id_fkey;
+
+alter table public.subcontractor_payments
+add constraint subcontractor_payments_billing_record_id_fkey
+foreign key (billing_record_id) references public.billing_records(id) on delete cascade;
+
+alter table public.subcontractor_payments
+drop constraint if exists subcontractor_payments_billing_subcon_item_id_fkey;
+
+alter table public.subcontractor_payments
+add constraint subcontractor_payments_billing_subcon_item_id_fkey
+foreign key (billing_subcon_item_id) references public.billing_subcon_items(id) on delete cascade;
+
+-- Contact details for subcontractors (email, phone, address), mirroring the same
+-- fields already tracked on employees.
+alter table public.subcontractors add column if not exists email text not null default '';
+alter table public.subcontractors add column if not exists contact_number text not null default '';
+alter table public.subcontractors add column if not exists address text not null default '';

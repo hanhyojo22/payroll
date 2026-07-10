@@ -18,6 +18,7 @@ import {
 import { deletePaymentReminderPayment, recordPaymentReminderPayment, saveSubcontractor, updatePaymentReminderCompletion } from "../billing/billingRepository";
 import { supabase } from "../../supabase";
 import { DataTable } from "../../shared/components/DataTable";
+import { TextField } from "../../shared/components/FormLayout";
 import { MoneyField } from "../../shared/components/MoneyField";
 import { PageHeader, RecordTitle, Toolbar } from "../../shared/components/PageLayout";
 import { StatusBadge } from "../../shared/components/StatusBadge";
@@ -25,6 +26,7 @@ import { NotificationService } from "../../shared/notifications/NotificationServ
 import type { QueueOfflineMutation } from "../../shared/types";
 import { currency, toNumber } from "../../shared/utils/currency";
 import { monthNames, todayKey } from "../../shared/utils/dates";
+import { formatPhoneNumber, normalizePhoneDigits } from "../../shared/utils/phone";
 import type { BillingPeriod, BillingRecord, CollectionPaymentMethod, ExpenseCategory, PaymentReminder, PaymentReminderPayment, SubconDailyTicket, Subcontractor, SubcontractorAdvance, SubcontractorAdvanceFormValues } from "../../types";
 import {
   deleteExpenseInstallmentPayment,
@@ -167,6 +169,9 @@ export function SubcontractorsFeature({
       repair_rate: subcontractor.repair_rate,
       payable_pct: subcontractor.payable_pct,
       status: nextStatus,
+      email: subcontractor.email,
+      contact_number: subcontractor.contact_number,
+      address: subcontractor.address,
     });
     if (result.error) {
       NotificationService.showError((result.error as { message?: string }).message ?? "Failed to update subcontractor.");
@@ -246,8 +251,8 @@ export function SubcontractorsFeature({
               </div>
               <div className="billing-preview">
                 <div className="billing-preview-row"><span>Gross billed</span><strong>{currency.format(drawerRow.billing_amount)}</strong></div>
-                <div className="billing-preview-row highlight"><span>Net payable</span><strong>{currency.format(drawerRow.payable_amount)}</strong></div>
-                <div className="billing-preview-row"><span>Company share</span><strong>{currency.format(drawerRow.collection_amount)}</strong></div>
+                <div className="billing-preview-row highlight"><span>1st payout</span><strong>{currency.format(drawerRow.payable_amount)}</strong></div>
+                <div className="billing-preview-row"><span>2nd payout</span><strong>{currency.format(drawerRow.collection_amount)}</strong></div>
               </div>
             </div>
           </aside>
@@ -523,19 +528,6 @@ function SubcontractorDetailsView({
     await onChange();
   }
 
-  function openLatestPayoutPaymentForm() {
-    const latestOutstanding = payments
-      .filter((payment) => payment.type === "subcontractor" && payment.subcontractor_id === selected.id)
-      .filter((payment) => paymentReminderDisplayStatus(payment, payment.payments) !== "paid")
-      .sort((a, b) =>
-        `${b.billing_year ?? 0}-${String(b.billing_month ?? 0).padStart(2, "0")}-${b.billing_period ?? ""}`.localeCompare(
-          `${a.billing_year ?? 0}-${String(a.billing_month ?? 0).padStart(2, "0")}-${a.billing_period ?? ""}`,
-        ),
-      )[0];
-    if (!latestOutstanding) return;
-    setPayingPayout(latestOutstanding);
-  }
-
   async function handleRecordPayoutPayment(payment: PaymentReminder, values: PayoutPaymentFormValues) {
     if (!supabase) return;
     const amount = toNumber(values.amount);
@@ -745,28 +737,46 @@ function SubcontractorDetailsView({
     setTab("advances");
   }
 
-  const paymentByItemId = useMemo(() => new Map(
+  const paymentsByItemId = useMemo(() => {
+    const map = new Map<string, PaymentReminder[]>();
     subconPayments
       .filter((p) => p.billing_subcon_item_id !== null)
-      .map((payment) => [payment.billing_subcon_item_id!, payment]),
-  ), [subconPayments]);
+      .forEach((payment) => {
+        const list = map.get(payment.billing_subcon_item_id!) ?? [];
+        list.push(payment);
+        map.set(payment.billing_subcon_item_id!, list);
+      });
+    return map;
+  }, [subconPayments]);
+
+  const paymentsByItemLeg = useMemo(() => {
+    const map = new Map<string, PaymentReminder>();
+    subconPayments
+      .filter((payment) => payment.billing_subcon_item_id !== null)
+      .forEach((payment) => {
+        map.set(`${payment.billing_subcon_item_id!}:${payment.payout_leg}`, payment);
+      });
+    return map;
+  }, [subconPayments]);
 
   const displaySummary = useMemo(() => {
     if (periodFilter === "all") return summary;
 
     const billingRows = summary.billingRows.filter((row) => row.billing_period === periodFilter);
     const filteredPayments = subconPayments.filter((payment) => payment.billing_period === periodFilter);
-    const filteredPaymentByItemId = new Map(
+    const filteredBillingItemIdsWithAnyPayment = new Set(
       filteredPayments
         .filter((p) => p.billing_subcon_item_id !== null)
-        .map((payment) => [payment.billing_subcon_item_id!, payment]),
+        .map((p) => p.billing_subcon_item_id!),
     );
     const pendingFromPayments = filteredPayments
       .filter((payment) => paymentReminderDisplayStatus(payment, payment.payments) !== "paid")
       .reduce((sum, payment) => sum + paymentReminderRemainingBalance(payment, payment.payments), 0);
+    // Both the payable and remainder installments belong to the subcontractor, so a row
+    // with no payment_reminders row tracked yet is fully pending for its full amount.
     const pendingFromUntrackedBilling = billingRows
-      .filter((row) => !filteredPaymentByItemId.has(row.id))
-      .reduce((sum, row) => sum + row.payable_amount, 0);
+      .filter((row) => !filteredBillingItemIdsWithAnyPayment.has(row.id))
+      .reduce((sum, row) => sum + row.payable_amount + row.collection_amount, 0);
     const paidThisMonth = filteredPayments
       .reduce((sum, payment) => sum + paymentReminderPaymentsTotal(payment.payments), 0);
 
@@ -897,10 +907,6 @@ function SubcontractorDetailsView({
             <button className="secondary-button compact" onClick={() => onEdit(selected)} type="button"><Pencil size={16} /> Edit profile</button>
             <button className="secondary-button compact" onClick={() => void onArchive(selected)} type="button">
               {selected.status === "active" ? <><Trash2 size={16} /> Archive</> : <><Plus size={16} /> Restore</>}
-            </button>
-            <button className="primary-button compact" disabled={displaySummary.netPending <= 0} onClick={openLatestPayoutPaymentForm} type="button">
-              <CheckCircle2 size={16} />
-              Record payout payment
             </button>
           </div>
         </header>
@@ -1096,21 +1102,32 @@ function SubcontractorDetailsView({
           <section className="emp-content-card">
             <DataTable
               empty="No billing rows for this subcontractor yet."
-              headers={["Period", "Tickets", "Disputed", "Billable", "Gross billed", "Split", "Net payable", "Payout"]}
+              headers={["Period", "Tickets", "Disputed", "Billable", "Gross billed", "Collection", "Net payable", "Payout"]}
               onRowClick={(index) => onOpenBillingRow(latestBillingRows[index])}
               rows={latestBillingRows.map((row) => {
-                const payment = paymentByItemId.get(row.id);
+                const itemPayments = paymentsByItemId.get(row.id) ?? [];
+                const payoutStatus = itemPayments.length === 0
+                  ? null
+                  : itemPayments.some((payment) => paymentReminderDisplayStatus(payment, payment.payments) === "partial")
+                    || (itemPayments.some((payment) => paymentReminderDisplayStatus(payment, payment.payments) === "paid")
+                      && itemPayments.some((payment) => paymentReminderDisplayStatus(payment, payment.payments) !== "paid"))
+                    ? "partial"
+                    : itemPayments.some((payment) => paymentReminderDisplayStatus(payment, payment.payments) === "overdue")
+                      ? "overdue"
+                      : itemPayments.every((payment) => paymentReminderDisplayStatus(payment, payment.payments) === "paid")
+                        ? "paid"
+                        : "pending";
                 return [
                   `${monthNames[row.billing_month - 1]} ${row.billing_year} · ${billingPeriodLabel(row.billing_period)}`,
                   `${row.install_tickets + row.repair_tickets} (I:${row.install_tickets} R:${row.repair_tickets})`,
                   row.disputed_install + row.disputed_repair,
                   row.billable_tickets,
                   currency.format(row.billing_amount),
-                  `${100 - row.payable_pct}% collection · ${row.payable_pct}% payable`,
+                  <strong className="subcon-net-value" key={`${row.id}-collection`}>{currency.format(row.collection_amount)}</strong>,
                   <strong className="subcon-net-value" key={`${row.id}-net`}>{currency.format(row.payable_amount)}</strong>,
-                  payment
-                    ? <StatusBadge key={`${row.id}-status`} status={paymentReminderDisplayStatus(payment, payment.payments)} />
-                    : <span className="subcon-missing-payment"><AlertTriangle size={14} /> Missing payout</span>,
+                  payoutStatus === null
+                    ? <span className="subcon-missing-payment" key={`${row.id}-status`}><AlertTriangle size={14} /> Missing payout</span>
+                    : <StatusBadge key={`${row.id}-status`} status={payoutStatus} />,
                 ];
               })}
             />
@@ -1119,32 +1136,85 @@ function SubcontractorDetailsView({
 
         {tab === "payouts" && (
           <section className="emp-content-card">
-            <DataTable
-              empty="No payout records yet."
-              headers={["Period", "Net amount", "Paid", "Remaining", "Due date", "Status", "Notes", "Action"]}
-              rows={subconPayments.map((payment) => {
-                const displayStatus = paymentReminderDisplayStatus(payment, payment.payments);
-                const paidAmount = paymentReminderPaymentsTotal(payment.payments);
-                const remainingBalance = paymentReminderRemainingBalance(payment, payment.payments);
-                return [
-                  payment.billing_month != null
-                    ? `${monthNames[payment.billing_month - 1]} ${payment.billing_year} · ${billingPeriodLabel(payment.billing_period!)}`
-                    : payment.notes || "—",
-                  <strong className="subcon-net-value" key={`${payment.id}-net`}>{currency.format(payment.amount)}</strong>,
-                  currency.format(paidAmount),
-                  currency.format(remainingBalance),
-                  payment.due_date,
-                  <StatusBadge key={`${payment.id}-status`} status={displayStatus} />,
-                  payment.notes || "—",
-                  <div className="billing-row-actions" key={`${payment.id}-action`}>
-                    <button onClick={() => setViewingPayout(payment)} title="View details" type="button"><Eye size={14} /></button>
-                    {displayStatus !== "paid" && (
-                      <button onClick={() => setPayingPayout(payment)} title="Record payment" type="button"><CheckCircle2 size={14} /></button>
-                    )}
-                  </div>,
-                ];
-              })}
-            />
+            <div className="billing-table-wrap">
+              <table className="billing-table">
+                <thead>
+                  <tr>
+                    <th>Period</th>
+                    <th>Payout</th>
+                    <th className="num">Tickets</th>
+                    <th className="num">Gross Billed</th>
+                    <th className="num">Split</th>
+                    <th className="num">Amount</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {displaySummary.billingRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={8}>No payout records yet.</td>
+                    </tr>
+                  ) : displaySummary.billingRows.flatMap((row) => {
+                    const payableReminder = paymentsByItemLeg.get(`${row.id}:payable`) ?? null;
+                    const remainderReminder = paymentsByItemLeg.get(`${row.id}:remainder`) ?? null;
+                    const payableStatus = payableReminder ? paymentReminderDisplayStatus(payableReminder, payableReminder.payments) : "pending";
+                    const remainderStatus = payableStatus !== "paid"
+                      ? "waiting"
+                      : remainderReminder
+                        ? paymentReminderDisplayStatus(remainderReminder, remainderReminder.payments)
+                        : "pending";
+                    const periodLabel = `${monthNames[row.billing_month - 1]} ${row.billing_year} · ${billingPeriodLabel(row.billing_period)}`;
+                    const renderAction = (payment: PaymentReminder | null, status: string) => {
+                      if (!payment || status === "waiting") return "—";
+                      return (
+                        <div className="billing-row-actions" key={`${payment.id}-action`}>
+                          <button onClick={() => setViewingPayout(payment)} title="View details" type="button"><Eye size={14} /></button>
+                          {status !== "paid" && (
+                            <button onClick={() => setPayingPayout(payment)} title="Record payment" type="button"><CheckCircle2 size={14} /></button>
+                          )}
+                        </div>
+                      );
+                    };
+
+                    return [
+                      <tr key={`${row.id}-payable`}>
+                        <td>{periodLabel}</td>
+                        <td>1st Payout</td>
+                        <td className="num">
+                          {row.install_tickets + row.repair_tickets} <span>I:{row.install_tickets} · R:{row.repair_tickets}</span>
+                        </td>
+                        <td className="num">{currency.format(row.billing_amount)}</td>
+                        <td className="num">{row.payable_pct}%</td>
+                        <td className="num">{currency.format(row.payable_amount)}</td>
+                        <td>
+                          <span className={`billing-payout-status ${payableStatus}`}>
+                            {payableStatus}
+                          </span>
+                        </td>
+                        <td>{renderAction(payableReminder, payableStatus)}</td>
+                      </tr>,
+                      <tr key={`${row.id}-remainder`}>
+                        <td>{periodLabel}</td>
+                        <td>2nd Payout</td>
+                        <td className="num">
+                          {row.install_tickets + row.repair_tickets} <span>I:{row.install_tickets} · R:{row.repair_tickets}</span>
+                        </td>
+                        <td className="num">{currency.format(row.billing_amount)}</td>
+                        <td className="num">{100 - row.payable_pct}%</td>
+                        <td className="num">{currency.format(row.collection_amount)}</td>
+                        <td>
+                          <span className={`billing-payout-status ${remainderStatus}`}>
+                            {remainderStatus}
+                          </span>
+                        </td>
+                        <td>{renderAction(remainderReminder, remainderStatus)}</td>
+                      </tr>,
+                    ];
+                  })}
+                </tbody>
+              </table>
+            </div>
           </section>
         )}
 
@@ -1234,7 +1304,6 @@ function SubcontractorDetailsView({
         <PayoutDetailsModal
           onClose={() => setViewingPayout(null)}
           onDeletePayment={(paymentRecord) => handleDeletePayoutPayment(viewingPayout, paymentRecord)}
-          onRecordPayment={() => setPayingPayout(viewingPayout)}
           payment={payments.find((item) => item.id === viewingPayout.id) ?? viewingPayout}
         />
       )}
@@ -1258,6 +1327,9 @@ function SubcontractorProfileModal({
     installation_rate: String(initial?.installation_rate ?? 0),
     repair_rate: String(initial?.repair_rate ?? 0),
     payable_pct: String(initial?.payable_pct ?? 30),
+    email: initial?.email ?? "",
+    contact_number: initial?.contact_number ?? "",
+    address: initial?.address ?? "",
   });
   const [busy, setBusy] = useState(false);
 
@@ -1272,6 +1344,9 @@ function SubcontractorProfileModal({
       repair_rate: Number(values.repair_rate) || 0,
       payable_pct: Number(values.payable_pct) || 30,
       status: initial?.status ?? "active",
+      email: values.email.trim(),
+      contact_number: values.contact_number.trim(),
+      address: values.address.trim(),
     });
     setBusy(false);
     if (result.error) {
@@ -1301,12 +1376,24 @@ function SubcontractorProfileModal({
             <MoneyField label="Installation rate (PHP)" value={values.installation_rate} onChange={(value) => setValues((current) => ({ ...current, installation_rate: value }))} required />
             <MoneyField label="Repair rate (PHP)" value={values.repair_rate} onChange={(value) => setValues((current) => ({ ...current, repair_rate: value }))} required />
             <label>
-              Payable % (default 30)
+              1st payout % (default 30)
               <input max="100" min="0" type="number" value={values.payable_pct} onChange={(event) => setValues((current) => ({ ...current, payable_pct: event.target.value }))} required />
             </label>
             <label>
-              Collection % (derived)
+              2nd payout % (derived)
               <input disabled type="number" value={100 - (Number(values.payable_pct) || 0)} />
+            </label>
+            <TextField label="Email address" type="email" value={values.email} onChange={(email) => setValues((current) => ({ ...current, email }))} />
+            <TextField
+              label="Contact number"
+              onChange={(value) => setValues((current) => ({ ...current, contact_number: normalizePhoneDigits(value) }))}
+              placeholder="+63 XXXX XXX XXXX"
+              type="tel"
+              value={formatPhoneNumber(values.contact_number)}
+            />
+            <label className="full">
+              Address
+              <textarea onChange={(event) => setValues((current) => ({ ...current, address: event.target.value }))} placeholder="Street, city, province" rows={2} value={values.address} />
             </label>
           </div>
           <div className="form-actions">
@@ -1409,19 +1496,16 @@ function PayoutPaymentForm({
 function PayoutDetailsModal({
   onClose,
   onDeletePayment,
-  onRecordPayment,
   payment,
 }: {
   onClose: () => void;
   onDeletePayment: (paymentRecord: PaymentReminderPayment) => Promise<void>;
-  onRecordPayment: () => void;
   payment: PaymentReminder;
 }) {
   const history = [...(payment.payments ?? [])].sort((a, b) => b.payment_date.localeCompare(a.payment_date) || b.created_at.localeCompare(a.created_at));
   const displayStatus = paymentReminderDisplayStatus(payment, payment.payments);
   const paidAmount = paymentReminderPaymentsTotal(payment.payments);
   const remainingBalance = paymentReminderRemainingBalance(payment, payment.payments);
-  const canRecordPayment = displayStatus !== "paid";
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -1465,11 +1549,6 @@ function PayoutDetailsModal({
                 <p>Audit trail</p>
                 <h2>Payment history</h2>
               </div>
-              {canRecordPayment && (
-                <button className="billing-btn primary" onClick={onRecordPayment} type="button">
-                  <CheckCircle2 size={15} /> Record Payment
-                </button>
-              )}
             </div>
             <div className="billing-table-wrap">
               <table className="billing-table">

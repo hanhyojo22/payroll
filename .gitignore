@@ -29,3 +29,8 @@ Thumbs.db
 
 # Git worktrees for isolated feature work
 .worktrees/
+
+# Playwright debug/test artifacts
+.playwright-mcp/
+test-results/
+playwright-report/

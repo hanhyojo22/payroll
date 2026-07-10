@@ -9,6 +9,7 @@ import {
   payrollExpensePayload,
   payrollItemPayloadForEmployee,
 } from "../../domain/payroll";
+import { salaryBondDeductionsForEmployee, salaryBondHasDeductionForItem } from "../../domain/salaryBonds";
 import { netPay, normalizeTicketCount, ticketGrossPay } from "../../domain/tickets";
 import { isOfflineLikeError } from "../../lib/offlineSync";
 import { supabase } from "../../supabase";
@@ -36,6 +37,7 @@ import type {
   PayrollSettings,
   PayrollRunWithItems,
   Position,
+  SalaryBond,
 } from "../../types";
 
 function initials(name: string) {
@@ -67,7 +69,13 @@ type EmployeeAdvancePayrollDeduction = {
   advance: EmployeeAdvance;
 };
 
+type SalaryBondPayrollDeduction = {
+  amount: number;
+  bond: SalaryBond;
+};
+
 const EMPLOYEE_ADVANCE_NOTE_PREFIX = "Employee advance deduction:";
+const SALARY_BOND_NOTE_PREFIX = "Salary bond deduction:";
 const GOVERNMENT_DEDUCTION_NOTE_PREFIX = "Government deduction:";
 
 function employeeAdvanceDeductionsForEmployee(
@@ -97,6 +105,7 @@ function payrollItemPayloadForEmployeeWithEmployeeAdvances(
   userId: string,
   dailyTicketEntries: DailyTicketEntry[],
   employeeAdvances: EmployeeAdvance[],
+  salaryBonds: SalaryBond[],
   payrollSettings: PayrollSettings | null,
   payrollDate: string,
   attendanceEntries: AttendanceEntry[] = [],
@@ -118,19 +127,23 @@ function payrollItemPayloadForEmployeeWithEmployeeAdvances(
   const governmentDeduction = governmentDeductionForEmployee(employee, payrollSettings, payPeriod);
   const advanceDeductions = employeeAdvanceDeductionsForEmployee(employeeAdvances, employee, payrollDate);
   const employeeAdvanceDeduction = advanceDeductions.reduce((sum, deduction) => sum + deduction.amount, 0);
+  const bondDeductions = salaryBondDeductionsForEmployee(salaryBonds, employee, payrollDate);
+  const salaryBondDeduction = bondDeductions.reduce((sum, deduction) => sum + deduction.amount, 0);
 
-  if (governmentDeduction === 0 && employeeAdvanceDeduction === 0) {
-    return { advanceDeductions, payload };
+  if (governmentDeduction === 0 && employeeAdvanceDeduction === 0 && salaryBondDeduction === 0) {
+    return { advanceDeductions, bondDeductions, payload };
   }
 
-  const deductions = toNumber(payload.deductions) + governmentDeduction + employeeAdvanceDeduction;
+  const deductions = toNumber(payload.deductions) + governmentDeduction + employeeAdvanceDeduction + salaryBondDeduction;
   const notes = [
     governmentDeduction > 0 ? `${GOVERNMENT_DEDUCTION_NOTE_PREFIX} ${currency.format(governmentDeduction)}` : "",
     employeeAdvanceDeduction > 0 ? `${EMPLOYEE_ADVANCE_NOTE_PREFIX} ${currency.format(employeeAdvanceDeduction)}` : "",
+    salaryBondDeduction > 0 ? `${SALARY_BOND_NOTE_PREFIX} ${currency.format(salaryBondDeduction)}` : "",
   ].filter(Boolean);
 
   return {
     advanceDeductions,
+    bondDeductions,
     payload: {
       ...payload,
       deductions,
@@ -171,10 +184,81 @@ function employeeAdvanceUpdatesForDeductions(deductions: EmployeeAdvancePayrollD
   });
 }
 
+function salaryBondTransactionPayloadsForDeductions(
+  deductions: SalaryBondPayrollDeduction[],
+  payrollRunId: string,
+  paidDate: string,
+) {
+  return deductions.map(({ amount, bond }) => ({
+    user_id: bond.user_id,
+    salary_bond_id: bond.id,
+    employee_id: bond.employee_id,
+    type: "deduction" as const,
+    amount,
+    transaction_date: paidDate,
+    payroll_run_id: payrollRunId,
+  }));
+}
+
+async function insertSalaryBondTransactionPayloads(payloads: Array<Record<string, unknown>>) {
+  if (!supabase || payloads.length === 0) return null;
+  const result = await supabase.from("employee_salary_bond_transactions").insert(payloads);
+  return result.error ?? null;
+}
+
+async function applySalaryBondPayrollDeductions(
+  deductions: SalaryBondPayrollDeduction[],
+  payrollRunId: string,
+  paidDate: string,
+) {
+  return insertSalaryBondTransactionPayloads(salaryBondTransactionPayloadsForDeductions(deductions, payrollRunId, paidDate));
+}
+
+// Item-linked variant: records which payroll_run_item a deduction belongs to and skips
+// any bond that already has a non-void deduction transaction for that item, so retrying
+// after a partial failure (item patched but ledger write failed, or vice versa) can't
+// double-deduct the employee's bond balance.
+function salaryBondTransactionPayloadsForItemDeductions(
+  entries: Array<{ itemId: string; deductions: SalaryBondPayrollDeduction[] }>,
+  payrollRunId: string,
+  paidDate: string,
+) {
+  return entries.flatMap(({ itemId, deductions }) =>
+    deductions
+      .filter(({ bond }) => !salaryBondHasDeductionForItem(bond, itemId))
+      .map(({ amount, bond }) => ({
+        user_id: bond.user_id,
+        salary_bond_id: bond.id,
+        employee_id: bond.employee_id,
+        type: "deduction" as const,
+        amount,
+        transaction_date: paidDate,
+        payroll_run_id: payrollRunId,
+        payroll_run_item_id: itemId,
+      })),
+  );
+}
+
+// Applies both deduction ledgers in parallel (they touch independent tables with no
+// data dependency), and is called BEFORE the corresponding payroll_run_items write at
+// every call site, so an item is only ever created/patched to show a deduction once the
+// ledger write it depends on has actually succeeded.
+async function applyPayrollDeductionLedger(
+  advanceDeductions: EmployeeAdvancePayrollDeduction[],
+  bondTransactionPayloads: Array<Record<string, unknown>>,
+) {
+  const [advanceError, bondError] = await Promise.all([
+    applyEmployeeAdvancePayrollDeductions(advanceDeductions),
+    insertSalaryBondTransactionPayloads(bondTransactionPayloads),
+  ]);
+  return advanceError ?? bondError ?? null;
+}
+
 function payrollItemAdvanceDeductionPatch(
   item: PayrollRunItem,
   employee: Employee | undefined,
   employeeAdvances: EmployeeAdvance[],
+  salaryBonds: SalaryBond[],
   payrollSettings: PayrollSettings | null,
   payPeriod: PayrollPayPeriod,
   payrollDate: string,
@@ -183,21 +267,28 @@ function payrollItemAdvanceDeductionPatch(
   const notes = item.notes ?? "";
   const hasGovernmentDeduction = notes.includes(GOVERNMENT_DEDUCTION_NOTE_PREFIX);
   const hasAdvanceDeduction = notes.includes(EMPLOYEE_ADVANCE_NOTE_PREFIX);
+  const hasBondDeduction = notes.includes(SALARY_BOND_NOTE_PREFIX);
   const governmentDeduction = hasGovernmentDeduction ? 0 : governmentDeductionForEmployee(employee, payrollSettings, payPeriod);
   const advanceDeductions = employeeAdvanceDeductionsForEmployee(employeeAdvances, employee, payrollDate);
   const employeeAdvanceDeduction = hasAdvanceDeduction
     ? 0
     : advanceDeductions.reduce((sum, deduction) => sum + deduction.amount, 0);
-  if (governmentDeduction === 0 && employeeAdvanceDeduction === 0) return null;
+  const bondDeductions = salaryBondDeductionsForEmployee(salaryBonds, employee, payrollDate);
+  const salaryBondDeduction = hasBondDeduction
+    ? 0
+    : bondDeductions.reduce((sum, deduction) => sum + deduction.amount, 0);
+  if (governmentDeduction === 0 && employeeAdvanceDeduction === 0 && salaryBondDeduction === 0) return null;
 
-  const deductions = toNumber(item.deductions) + governmentDeduction + employeeAdvanceDeduction;
+  const deductions = toNumber(item.deductions) + governmentDeduction + employeeAdvanceDeduction + salaryBondDeduction;
   const deductionNotes = [
     governmentDeduction > 0 ? `${GOVERNMENT_DEDUCTION_NOTE_PREFIX} ${currency.format(governmentDeduction)}` : "",
     employeeAdvanceDeduction > 0 ? `${EMPLOYEE_ADVANCE_NOTE_PREFIX} ${currency.format(employeeAdvanceDeduction)}` : "",
+    salaryBondDeduction > 0 ? `${SALARY_BOND_NOTE_PREFIX} ${currency.format(salaryBondDeduction)}` : "",
   ].filter(Boolean);
 
   return {
     advanceDeductions: hasAdvanceDeduction ? [] : advanceDeductions,
+    bondDeductions: hasBondDeduction ? [] : bondDeductions,
     payload: {
       deductions,
       net_pay: netPay(toNumber(item.gross_pay), toNumber(item.allowances), deductions),
@@ -219,6 +310,7 @@ export function PayrollFeature({
   payrollSettings,
   positions,
   employeeAdvances,
+  salaryBonds,
   tabs,
   userId,
 }: {
@@ -234,6 +326,7 @@ export function PayrollFeature({
   payrollSettings: PayrollSettings | null;
   positions: Position[];
   employeeAdvances: EmployeeAdvance[];
+  salaryBonds: SalaryBond[];
   tabs?: ReactNode;
   userId: string;
 }) {
@@ -495,6 +588,7 @@ export function PayrollFeature({
           userId,
           periodDailyEntries,
           employeeAdvances,
+          salaryBonds,
           resolvedPayrollSettings,
           offlineRun.generated_date,
           attendanceEntries,
@@ -507,6 +601,11 @@ export function PayrollFeature({
       const employeeAdvanceUpdates = employeeAdvanceUpdatesForDeductions(
         employeePayrollItems.flatMap((item) => item.advanceDeductions),
       );
+      const salaryBondTransactionPayloads = salaryBondTransactionPayloadsForDeductions(
+        employeePayrollItems.flatMap((item) => item.bondDeductions),
+        offlineRun.id,
+        offlineRun.generated_date,
+      );
 
       reportProgress({
         title: "Generating payroll",
@@ -516,7 +615,7 @@ export function PayrollFeature({
       });
       await onQueueOfflineMutation({
         resource: "payrollRuns",
-        affectedResources: ["payrollRuns", "payrollHistory", "employeeAdvances", "dashboardSummary"],
+        affectedResources: ["payrollRuns", "payrollHistory", "employeeAdvances", "salaryBonds", "dashboardSummary"],
         operation: "payroll_group",
         table: "payroll_runs",
         payload: {
@@ -524,6 +623,7 @@ export function PayrollFeature({
           itemPayloads,
           detailPayloads,
           employeeAdvanceUpdates,
+          salaryBondTransactionPayloads,
         },
       });
       reportProgress({
@@ -567,6 +667,7 @@ export function PayrollFeature({
             userId,
             periodDailyEntries,
             employeeAdvances,
+            salaryBonds,
             resolvedPayrollSettings,
             offlineRun.generated_date,
             attendanceEntries,
@@ -579,6 +680,11 @@ export function PayrollFeature({
         const employeeAdvanceUpdates = employeeAdvanceUpdatesForDeductions(
           employeePayrollItems.flatMap((item) => item.advanceDeductions),
         );
+        const salaryBondTransactionPayloads = salaryBondTransactionPayloadsForDeductions(
+          employeePayrollItems.flatMap((item) => item.bondDeductions),
+          offlineRun.id,
+          offlineRun.generated_date,
+        );
 
         reportProgress({
           title: "Generating payroll",
@@ -588,7 +694,7 @@ export function PayrollFeature({
         });
         await onQueueOfflineMutation({
           resource: "payrollRuns",
-          affectedResources: ["payrollRuns", "payrollHistory", "employeeAdvances", "dashboardSummary"],
+          affectedResources: ["payrollRuns", "payrollHistory", "employeeAdvances", "salaryBonds", "dashboardSummary"],
           operation: "payroll_group",
           table: "payroll_runs",
           payload: {
@@ -596,6 +702,7 @@ export function PayrollFeature({
             itemPayloads,
             detailPayloads,
             employeeAdvanceUpdates,
+            salaryBondTransactionPayloads,
           },
         });
         reportProgress({
@@ -652,6 +759,7 @@ export function PayrollFeature({
         userId,
         periodDailyEntries,
         employeeAdvances,
+        salaryBonds,
         resolvedPayrollSettings,
         newRun.generated_date,
         attendanceEntries,
@@ -661,28 +769,35 @@ export function PayrollFeature({
       ),
     );
     const itemPayloads = employeePayrollItems.map((item) => item.payload);
+    const advanceDeductions = employeePayrollItems.flatMap((item) => item.advanceDeductions);
+    const bondDeductions = employeePayrollItems.flatMap((item) => item.bondDeductions);
+    reportProgress({
+      title: "Generating payroll",
+      description: "Applying deductions.",
+      completed: 2,
+      total: 4,
+    });
+    // Apply the deduction ledger writes before creating any payroll item, so an item is
+    // never inserted showing a deduction that never actually happened against the
+    // employee's advance balance / salary bond.
+    const ledgerError = await applyPayrollDeductionLedger(
+      advanceDeductions,
+      salaryBondTransactionPayloadsForDeductions(bondDeductions, newRun.id, newRun.generated_date),
+    );
+    if (ledgerError) {
+      NotificationService.showError(friendlyError(ledgerError));
+      return;
+    }
+
     reportProgress({
       title: "Generating payroll",
       description: "Saving payroll items.",
-      completed: 2,
+      completed: 3,
       total: 4,
     });
     const itemResult = await insertPayrollItems(itemPayloads);
     if (itemResult.error) {
       NotificationService.showError(friendlyError(itemResult.error));
-      return;
-    }
-
-    const advanceDeductions = employeePayrollItems.flatMap((item) => item.advanceDeductions);
-    reportProgress({
-      title: "Generating payroll",
-      description: "Applying deductions.",
-      completed: 3,
-      total: 4,
-    });
-    const advanceError = await applyEmployeeAdvancePayrollDeductions(advanceDeductions);
-    if (advanceError) {
-      NotificationService.showError(friendlyError(advanceError));
       return;
     }
 
@@ -798,6 +913,7 @@ export function PayrollFeature({
         userId,
         periodDailyEntries,
         employeeAdvances,
+        salaryBonds,
         resolvedPayrollSettings,
         selectedRun.generated_date,
         attendanceEntries,
@@ -810,6 +926,11 @@ export function PayrollFeature({
     const employeeAdvanceUpdates = employeeAdvanceUpdatesForDeductions(
       employeePayrollItems.flatMap((item) => item.advanceDeductions),
     );
+    const salaryBondTransactionPayloads = salaryBondTransactionPayloadsForDeductions(
+      employeePayrollItems.flatMap((item) => item.bondDeductions),
+      selectedRun.id,
+      selectedRun.generated_date,
+    );
     if (!navigator.onLine) {
       const { detailPayloads, itemPayloads: offlineItemPayloads, items: offlineItems } = createOfflinePayrollItems(itemPayloads);
       onLocalPayrollRunsChange(payrollRuns.map((run) =>
@@ -817,27 +938,42 @@ export function PayrollFeature({
       ));
       await onQueueOfflineMutation({
         resource: "payrollRuns",
-        affectedResources: ["payrollRuns", "payrollHistory", "employeeAdvances", "dashboardSummary"],
+        affectedResources: ["payrollRuns", "payrollHistory", "employeeAdvances", "salaryBonds", "dashboardSummary"],
         operation: "payroll_items_group",
         table: "payroll_run_items",
-        payload: { itemPayloads: offlineItemPayloads, detailPayloads, employeeAdvanceUpdates },
+        payload: { itemPayloads: offlineItemPayloads, detailPayloads, employeeAdvanceUpdates, salaryBondTransactionPayloads },
       });
       await syncPayrollExpense(selectedRun, [...selectedRun.items, ...itemPayloads]);
       return;
     }
+    // Apply the deduction ledger writes before creating any payroll item, so an item is
+    // never inserted showing a deduction that never actually happened against the
+    // employee's advance balance / salary bond.
+    const ledgerError = await applyPayrollDeductionLedger(
+      employeePayrollItems.flatMap((item) => item.advanceDeductions),
+      salaryBondTransactionPayloads,
+    );
+    if (ledgerError) {
+      NotificationService.showError(friendlyError(ledgerError));
+      return;
+    }
+
     const { error } = await insertPayrollItems(itemPayloads);
     if (error) {
       if (isOfflineLikeError(error)) {
+        // The deduction ledger was already applied above (online), so the queued
+        // composite mutation must only create the items on sync, not reapply the
+        // advance/bond ledger writes a second time.
         const { detailPayloads, itemPayloads: offlineItemPayloads, items: offlineItems } = createOfflinePayrollItems(itemPayloads);
         onLocalPayrollRunsChange(payrollRuns.map((run) =>
           run.id === selectedRun.id ? { ...run, items: [...run.items, ...offlineItems] } : run,
         ));
         await onQueueOfflineMutation({
           resource: "payrollRuns",
-          affectedResources: ["payrollRuns", "payrollHistory", "employeeAdvances", "dashboardSummary"],
+          affectedResources: ["payrollRuns", "payrollHistory", "employeeAdvances", "salaryBonds", "dashboardSummary"],
           operation: "payroll_items_group",
           table: "payroll_run_items",
-          payload: { itemPayloads: offlineItemPayloads, detailPayloads, employeeAdvanceUpdates },
+          payload: { itemPayloads: offlineItemPayloads, detailPayloads, employeeAdvanceUpdates: [], salaryBondTransactionPayloads: [] },
         });
         await syncPayrollExpense(selectedRun, [...selectedRun.items, ...itemPayloads]);
         return;
@@ -846,35 +982,35 @@ export function PayrollFeature({
       return;
     }
 
-    const advanceDeductions = employeePayrollItems.flatMap((item) => item.advanceDeductions);
-    const advanceError = await applyEmployeeAdvancePayrollDeductions(advanceDeductions);
-    if (advanceError) {
-      NotificationService.showError(friendlyError(advanceError));
-      return;
-    }
-
     NotificationService.showSuccess(`${missingEmployees.length} employee${missingEmployees.length === 1 ? "" : "s"} added to payroll.`);
     await syncPayrollExpense(selectedRun, [...selectedRun.items, ...itemPayloads]);
     await onChange();
   }
 
-  const employeesById = new Map(employees.map((employee) => [employee.id, employee]));
-  const itemsNeedingPayrollDeductions = selectedRun
-    ? selectedRun.items
-      .filter((item) => item.status !== "paid")
-      .map((item) => ({
-        item,
-        patch: payrollItemAdvanceDeductionPatch(
+  const employeesById = useMemo(() => new Map(employees.map((employee) => [employee.id, employee])), [employees]);
+  // Memoized: markAllPaid's per-item progress updates trigger a re-render on every paid
+  // item, and this scan re-derives a deduction check (which itself scans employeeAdvances
+  // and salaryBonds) per pending item — without memoizing on the underlying data, that
+  // becomes O(items^2) work during "Pay all" on a large payroll run.
+  const itemsNeedingPayrollDeductions = useMemo(() => (
+    selectedRun
+      ? selectedRun.items
+        .filter((item) => item.status !== "paid")
+        .map((item) => ({
           item,
-          item.employee_id ? employeesById.get(item.employee_id) : undefined,
-          employeeAdvances,
-          activePayrollSettings,
-          selectedRun.pay_period,
-          todayKey(),
-        ),
-      }))
-      .filter((entry): entry is { item: PayrollRunItem; patch: NonNullable<ReturnType<typeof payrollItemAdvanceDeductionPatch>> } => Boolean(entry.patch))
-    : [];
+          patch: payrollItemAdvanceDeductionPatch(
+            item,
+            item.employee_id ? employeesById.get(item.employee_id) : undefined,
+            employeeAdvances,
+            salaryBonds,
+            activePayrollSettings,
+            selectedRun.pay_period,
+            todayKey(),
+          ),
+        }))
+        .filter((entry): entry is { item: PayrollRunItem; patch: NonNullable<ReturnType<typeof payrollItemAdvanceDeductionPatch>> } => Boolean(entry.patch))
+      : []
+  ), [selectedRun, employeesById, employeeAdvances, salaryBonds, activePayrollSettings]);
   const deductionPatchByItemId = new Map(itemsNeedingPayrollDeductions.map((entry) => [entry.item.id, entry.patch.payload]));
   const allItems = (selectedRun?.items ?? []).map((item) => {
     const patch = deductionPatchByItemId.get(item.id);
@@ -907,20 +1043,30 @@ export function PayrollFeature({
     });
     if (!confirmed) return;
 
+    // Apply the deduction ledger first, item-linked and idempotent (skips any bond that
+    // already has a deduction transaction recorded for a given item), before patching
+    // payroll_run_items. This way a retry after a partial failure — in either order —
+    // can't double-deduct a bond balance or leave an item's notes claiming a deduction
+    // that was never actually applied to the ledger.
+    const ledgerError = await applyPayrollDeductionLedger(
+      itemsNeedingPayrollDeductions.flatMap((entry) => entry.patch.advanceDeductions),
+      salaryBondTransactionPayloadsForItemDeductions(
+        itemsNeedingPayrollDeductions.map(({ item, patch }) => ({ itemId: item.id, deductions: patch.bondDeductions })),
+        selectedRun.id,
+        todayKey(),
+      ),
+    );
+    if (ledgerError) {
+      NotificationService.showError(friendlyError(ledgerError));
+      return;
+    }
+
     for (const { item, patch } of itemsNeedingPayrollDeductions) {
       const { error } = await supabase.from("payroll_run_items").update(patch.payload).eq("id", item.id);
       if (error) {
         NotificationService.showError(friendlyError(error));
         return;
       }
-    }
-
-    const advanceError = await applyEmployeeAdvancePayrollDeductions(
-      itemsNeedingPayrollDeductions.flatMap((entry) => entry.patch.advanceDeductions),
-    );
-    if (advanceError) {
-      NotificationService.showError(friendlyError(advanceError));
-      return;
     }
 
     NotificationService.showSuccess(`Applied payroll deductions to ${itemsNeedingPayrollDeductions.length} payroll item${itemsNeedingPayrollDeductions.length === 1 ? "" : "s"}.`);
@@ -943,6 +1089,24 @@ export function PayrollFeature({
     const paidDate = todayKey();
     setPayAllProgress({ completed: 0, total: pendingItems.length });
     try {
+      // Apply the deduction ledger first, item-linked and idempotent, before marking any
+      // item paid — so an item is never marked paid with a deduction note that was never
+      // actually applied to the advance balance / salary bond ledger.
+      if (itemsNeedingPayrollDeductions.length > 0) {
+        const ledgerError = await applyPayrollDeductionLedger(
+          itemsNeedingPayrollDeductions.flatMap((entry) => entry.patch.advanceDeductions),
+          salaryBondTransactionPayloadsForItemDeductions(
+            itemsNeedingPayrollDeductions.map(({ item, patch }) => ({ itemId: item.id, deductions: patch.bondDeductions })),
+            selectedRun.id,
+            paidDate,
+          ),
+        );
+        if (ledgerError) {
+          NotificationService.showError(friendlyError(ledgerError));
+          return;
+        }
+      }
+
       for (let index = 0; index < pendingItems.length; index += 1) {
         const item = pendingItems[index];
         const deductionPatch = deductionPatchByItemId.get(item.id);
@@ -956,16 +1120,6 @@ export function PayrollFeature({
           return;
         }
         setPayAllProgress({ completed: index + 1, total: pendingItems.length });
-      }
-
-      if (itemsNeedingPayrollDeductions.length > 0) {
-        const advanceError = await applyEmployeeAdvancePayrollDeductions(
-          itemsNeedingPayrollDeductions.flatMap((entry) => entry.patch.advanceDeductions),
-        );
-        if (advanceError) {
-          NotificationService.showError(friendlyError(advanceError));
-          return;
-        }
       }
 
       NotificationService.showSuccess(`Marked ${pendingItems.length} payroll item${pendingItems.length === 1 ? "" : "s"} as paid.`);
@@ -1047,27 +1201,9 @@ export function PayrollFeature({
         </div>
       )}
 
-      {selectedRun && false && missingEmployees.length > 0 && (
-        <div className="payroll-missing-banner">
-          <span>ÃƒÂ¢Ã…Â¡Ã‚Â  {missingEmployees.length} active employee{missingEmployees.length !== 1 ? "s" : ""} not in this run</span>
-          <button className="secondary-button compact" onClick={addMissingEmployees} type="button">
-            <Plus size={14} /> Add missing
-          </button>
-        </div>
-      )}
-
       {selectedRun && itemsNeedingPayrollDeductions.length > 0 && (
         <div className="payroll-missing-banner">
           <span>Warning: {itemsNeedingPayrollDeductions.length} payroll item{itemsNeedingPayrollDeductions.length !== 1 ? "s" : ""} missing payroll deductions</span>
-          <button className="secondary-button compact" onClick={applyMissingPayrollDeductions} type="button">
-            <BadgeDollarSign size={14} /> Apply deductions
-          </button>
-        </div>
-      )}
-
-      {selectedRun && false && itemsNeedingPayrollDeductions.length > 0 && (
-        <div className="payroll-missing-banner">
-          <span>ÃƒÂ¢Ã…Â¡Ã‚Â  {itemsNeedingPayrollDeductions.length} payroll item{itemsNeedingPayrollDeductions.length !== 1 ? "s" : ""} missing payroll deductions</span>
           <button className="secondary-button compact" onClick={applyMissingPayrollDeductions} type="button">
             <BadgeDollarSign size={14} /> Apply deductions
           </button>
@@ -1148,7 +1284,7 @@ function PayrollItemsTable({
     const sorted = [...employees].sort((a, b) => a.created_at.localeCompare(b.created_at));
     return new Map(sorted.map((e, i) => [e.id, `EMP-${String(i + 1).padStart(3, "0")}`]));
   }, [employees]);
-  const empCode = (id: string | null) => (id ? employeeCodeMap.get(id) ?? "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â" : "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â");
+  const empCode = (id: string | null) => (id ? employeeCodeMap.get(id) ?? "-" : "-");
 
   function payBasis(item: PayrollRunItem): string {
     if (item.pay_mode === "daily") {
@@ -1162,7 +1298,7 @@ function PayrollItemsTable({
       : toNumber(item.installation_tickets) + toNumber(item.repair_tickets);
     if (item.pay_mode === "ticket") return `${ticketCount} tickets`;
     if (item.pay_mode === "hybrid") return `Base ${currency.format(toNumber(item.base_pay))} + ${ticketCount} tickets`;
-    return "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â";
+    return "-";
   }
 
   return (
@@ -1296,7 +1432,7 @@ export function PayrollSettingsManager({
     label: string;
     helper: string;
   }> = [
-    { value: "first_half", label: "1st ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ 15th Payroll", helper: "Deductions come out of the first payroll of the month." },
+    { value: "first_half", label: "1st - 15th Payroll", helper: "Deductions come out of the first payroll of the month." },
     { value: "second_half", label: "30th / Second Cutoff Payroll", helper: "Deductions come out of the second payroll of the month." },
   ];
 
@@ -1357,7 +1493,7 @@ export function PayrollSettingsManager({
           <div className={`payroll-settings-section${enabled ? "" : " disabled"}`}>
             <h3>Government deduction cutoff</h3>
             <p className="payroll-settings-hint">
-              SSS, PhilHealth, Pag-IBIG, and Withholding Tax are deducted once a month ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â only on the payroll you pick below, never both.
+              SSS, PhilHealth, Pag-IBIG, and Withholding Tax are deducted once a month - only on the payroll you pick below, never both.
             </p>
             <div className="payroll-cutoff-options" role="radiogroup" aria-label="Government deduction cutoff">
               {cutoffOptions.map((option) => (
@@ -1393,7 +1529,7 @@ export function PayrollSettingsManager({
                   <strong>{currency.format(totalMonthlyDeduction)}</strong>
                   <span>
                     total government deductions across {activeEmployeesWithDeductions.length} active employee{activeEmployeesWithDeductions.length === 1 ? "" : "s"} will be applied
-                    on the {cutoff === "first_half" ? "1st ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ 15th" : "30th / second cutoff"} payroll each month.
+                    on the {cutoff === "first_half" ? "1st - 15th" : "30th / second cutoff"} payroll each month.
                   </span>
                 </>
               ) : (
@@ -1427,7 +1563,7 @@ export function PayrollHistoryFeature({ employees, rows, tabs }: { employees: Em
     const sorted = [...employees].sort((a, b) => a.created_at.localeCompare(b.created_at));
     return new Map(sorted.map((e, i) => [e.id, `EMP-${String(i + 1).padStart(3, "0")}`]));
   }, [employees]);
-  const empCode = (id: string | null) => (id ? employeeCodeMap.get(id) ?? "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â" : "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â");
+  const empCode = (id: string | null) => (id ? employeeCodeMap.get(id) ?? "-" : "-");
 
   const filteredRows = rows.filter((row) => {
     const matchesQuery = row.searchText.includes(query.trim().toLowerCase());

@@ -3,6 +3,7 @@ import type {
   BillingSubconItem,
   DailyTicketEntry,
   PaymentReminder,
+  PaymentReminderPayoutLeg,
   SubconDailyTicket,
   Subcontractor,
   SubcontractorAdvance,
@@ -207,10 +208,10 @@ export function buildSubcontractorPayoutArtifacts(args: {
   payoutPayloads: Array<Omit<PaymentReminder, "created_at" | "updated_at" | "payments">>;
   advanceUpdates: SubcontractorAdvanceUpdate[];
 } {
-  const paymentByItemId = new Map(
+  const paymentByItemLeg = new Map(
     (args.existingPayments ?? [])
       .filter((p) => p.billing_subcon_item_id !== null)
-      .map((payment) => [payment.billing_subcon_item_id!, payment]),
+      .map((payment) => [`${payment.billing_subcon_item_id}:${payment.payout_leg}`, payment]),
   );
   const periodLabel = billingPeriodLabel(args.billingPeriod);
   const activeAdvancesBySubcontractor = new Map<string, SubcontractorAdvance[]>();
@@ -224,63 +225,93 @@ export function buildSubcontractorPayoutArtifacts(args: {
     });
   const advanceUpdates = new Map<string, SubcontractorAdvanceUpdate>();
 
-  const payoutPayloads = args.items.map((item) => {
-    const existing = paymentByItemId.get(item.id);
-    const isPaid = existing?.status === "paid";
-    const shouldPreserveExisting = Boolean(existing);
-    let advanceDeduction = 0;
+  function deductFromAdvances(subcontractorId: string, capacity: number): number {
+    if (capacity <= 0) return 0;
+    const advances = activeAdvancesBySubcontractor.get(subcontractorId) ?? [];
+    let remainingDeductionCapacity = capacity;
+    let deducted = 0;
 
-    if (!shouldPreserveExisting) {
-      const advances = activeAdvancesBySubcontractor.get(item.subcontractor_id) ?? [];
-      let remainingDeductionCapacity = item.payable_amount;
-
-      for (const advance of advances) {
-        if (remainingDeductionCapacity <= 0) break;
-        const currentBalance = Number(advance.balance) || 0;
-        if (currentBalance <= 0) continue;
-        const configuredDeduction = advance.deduction_mode === "per_billing"
-          ? Number(advance.deduction_per_billing) || 0
-          : currentBalance;
-        if (configuredDeduction <= 0) continue;
-        const deduction = Math.min(currentBalance, configuredDeduction, remainingDeductionCapacity);
-        const nextBalance = Math.round((currentBalance - deduction) * 100) / 100;
-        advance.balance = nextBalance;
-        advance.status = nextBalance === 0 ? "completed" : advance.status;
-        advanceDeduction += deduction;
-        remainingDeductionCapacity = Math.round((remainingDeductionCapacity - deduction) * 100) / 100;
-        advanceUpdates.set(advance.id, {
-          id: advance.id,
-          payload: {
-            balance: nextBalance,
-            status: nextBalance === 0 ? "completed" : advance.status,
-          },
-        });
-      }
+    for (const advance of advances) {
+      if (remainingDeductionCapacity <= 0) break;
+      const currentBalance = Number(advance.balance) || 0;
+      if (currentBalance <= 0) continue;
+      const configuredDeduction = advance.deduction_mode === "per_billing"
+        ? Number(advance.deduction_per_billing) || 0
+        : currentBalance;
+      if (configuredDeduction <= 0) continue;
+      const deduction = Math.min(currentBalance, configuredDeduction, remainingDeductionCapacity);
+      const nextBalance = Math.round((currentBalance - deduction) * 100) / 100;
+      advance.balance = nextBalance;
+      advance.status = nextBalance === 0 ? "completed" : advance.status;
+      deducted += deduction;
+      remainingDeductionCapacity = Math.round((remainingDeductionCapacity - deduction) * 100) / 100;
+      advanceUpdates.set(advance.id, {
+        id: advance.id,
+        payload: {
+          balance: nextBalance,
+          status: nextBalance === 0 ? "completed" : advance.status,
+        },
+      });
     }
+    return deducted;
+  }
 
-    const netAmount = shouldPreserveExisting
-      ? existing!.amount
-      : Math.round((item.payable_amount - advanceDeduction) * 100) / 100;
-    const baseNote = `${args.monthName} ${args.billingYear} · ${periodLabel}`;
-    const deductionNote = advanceDeduction > 0
-      ? `Gross payable PHP ${item.payable_amount.toFixed(2)} - Cash advance PHP ${advanceDeduction.toFixed(2)} = Net payout PHP ${netAmount.toFixed(2)}`
-      : baseNote;
+  // The full billing_amount belongs to the subcontractor -- payable_amount is the first
+  // installment (payable_pct%), collection_amount is the second/remainder installment,
+  // not company revenue. Both become their own payment_reminders row, linked to the same
+  // billing_subcon_item via (billing_subcon_item_id, payout_leg). An active cash advance's
+  // deduction is computed ONCE per item (against the combined new-leg capacity, not per
+  // leg) so a "per_billing" fixed deduction amount isn't accidentally applied twice for
+  // the same billing period -- then allocated payable-leg-first into the remainder leg.
+  const payoutPayloads = args.items.flatMap((item) => {
+    const legs: Array<{ leg: PaymentReminderPayoutLeg; grossAmount: number }> = [
+      { leg: "payable", grossAmount: item.payable_amount },
+      { leg: "remainder", grossAmount: item.collection_amount },
+    ];
+    const activeLegs = legs
+      .filter(({ grossAmount }) => grossAmount > 0)
+      .map((legInfo) => ({ ...legInfo, existing: paymentByItemLeg.get(`${item.id}:${legInfo.leg}`) }));
 
-    return {
-      id: existing?.id ?? crypto.randomUUID(),
-      user_id: args.userId,
-      title: item.subcon_name,
-      type: "subcontractor" as const,
-      amount: netAmount,
-      due_date: existing?.due_date ?? args.dueDate,
-      status: (isPaid ? "paid" : "pending") as PaymentReminder["status"],
-      notes: shouldPreserveExisting ? existing!.notes : deductionNote,
-      subcontractor_id: item.subcontractor_id,
-      billing_subcon_item_id: item.id,
-      billing_month: args.billingMonth,
-      billing_year: args.billingYear,
-      billing_period: args.billingPeriod,
-    };
+    const newLegsCapacity = activeLegs
+      .filter((legInfo) => !legInfo.existing)
+      .reduce((sum, legInfo) => sum + legInfo.grossAmount, 0);
+    let remainingItemDeduction = deductFromAdvances(item.subcontractor_id, newLegsCapacity);
+
+    return activeLegs.map(({ leg, grossAmount, existing }) => {
+      const isPaid = existing?.status === "paid";
+      const shouldPreserveExisting = Boolean(existing);
+
+      let advanceDeduction = 0;
+      if (!shouldPreserveExisting) {
+        advanceDeduction = Math.min(remainingItemDeduction, grossAmount);
+        remainingItemDeduction = Math.round((remainingItemDeduction - advanceDeduction) * 100) / 100;
+      }
+      const netAmount = shouldPreserveExisting
+        ? existing!.amount
+        : Math.round((grossAmount - advanceDeduction) * 100) / 100;
+      const legSuffix = leg === "remainder" ? " (2nd payout)" : "";
+      const baseNote = `${args.monthName} ${args.billingYear} · ${periodLabel}${legSuffix}`;
+      const deductionNote = advanceDeduction > 0
+        ? `Gross payout PHP ${grossAmount.toFixed(2)} - Cash advance PHP ${advanceDeduction.toFixed(2)} = Net payout PHP ${netAmount.toFixed(2)}`
+        : baseNote;
+
+      return {
+        id: existing?.id ?? crypto.randomUUID(),
+        user_id: args.userId,
+        title: leg === "remainder" ? `${item.subcon_name} (2nd payout)` : item.subcon_name,
+        type: "subcontractor" as const,
+        amount: netAmount,
+        due_date: existing?.due_date ?? args.dueDate,
+        status: (isPaid ? "paid" : "pending") as PaymentReminder["status"],
+        notes: shouldPreserveExisting ? existing!.notes : deductionNote,
+        subcontractor_id: item.subcontractor_id,
+        billing_subcon_item_id: item.id,
+        billing_month: args.billingMonth,
+        billing_year: args.billingYear,
+        billing_period: args.billingPeriod,
+        payout_leg: leg,
+      };
+    });
   });
 
   return { payoutPayloads, advanceUpdates: Array.from(advanceUpdates.values()) };
@@ -343,17 +374,20 @@ export function buildSubcontractorAccountSummary(args: {
   const ticketsThisPeriod = latestDailyTicket
     ? countSubconTickets(args.dailyTickets, args.subcontractor.id, month, year, period)
     : (latestBillingRow?.install_tickets ?? 0) + (latestBillingRow?.repair_tickets ?? 0);
-  const paymentByBillingItemId = new Map(
+  const billingItemIdsWithAnyPayment = new Set(
     payments
       .filter((p) => p.billing_subcon_item_id !== null)
-      .map((payment) => [payment.billing_subcon_item_id!, payment]),
+      .map((p) => p.billing_subcon_item_id!),
   );
   const pendingFromPayments = payments
     .filter((payment) => paymentReminderDisplayStatus(payment, payment.payments) !== "paid")
     .reduce((sum, payment) => sum + paymentReminderRemainingBalance(payment, payment.payments), 0);
+  // A row with no payment_reminders row at all yet (e.g. generated before payouts were
+  // synced) is fully pending -- both installments (payable + remainder) belong to the
+  // subcontractor, so the full billing_amount (not just payable_amount) is owed.
   const pendingFromUntrackedBilling = billingRows
-    .filter((row) => !paymentByBillingItemId.has(row.id))
-    .reduce((sum, row) => sum + row.payable_amount, 0);
+    .filter((row) => !billingItemIdsWithAnyPayment.has(row.id))
+    .reduce((sum, row) => sum + row.payable_amount + row.collection_amount, 0);
   const pending = pendingFromPayments + pendingFromUntrackedBilling;
   const paidMonthKey = `${year}-${String(month).padStart(2, "0")}`;
   const paidThisMonth = payments

@@ -8,10 +8,11 @@ export type SubcontractorAdvanceStatus = "active" | "completed" | "archived";
 export type SubcontractorAdvanceDeductionMode = "per_billing" | "full_payout";
 export type EmployeeAdvanceType =
   | "Cash Advance"
-  | "Salary Bond"
   | "Salary Loan"
   | "Company Loan"
   | "Other Loan";
+export type SalaryBondStatus = "active" | "archived";
+export type SalaryBondTransactionType = "deduction" | "withdrawal";
 export type EmployeeStatus = "active" | "inactive";
 export type EmployeeWageCategory = "new" | "special_old";
 export type AttendanceStatus = "present" | "absent" | "half_day";
@@ -37,6 +38,7 @@ export type ResourceKey =
   | "payrollSettings"
   | "positions"
   | "employeeAdvances"
+  | "salaryBonds"
   | "subcontractorAdvances"
   | "subconDailyTickets"
   | "subcontractors";
@@ -86,6 +88,8 @@ export type PositionFormValues = {
   }>;
 };
 
+export type PaymentReminderPayoutLeg = "payable" | "remainder";
+
 export type PaymentReminder = {
   id: string;
   user_id: string;
@@ -100,6 +104,10 @@ export type PaymentReminder = {
   billing_month: number | null;
   billing_year: number | null;
   billing_period: BillingPeriod | null;
+  // Only meaningful when type === "subcontractor": distinguishes the payable_pct
+  // installment from the remainder installment, since both belong to the subcontractor
+  // and are tracked as two separate reminders linked to the same billing_subcon_item_id.
+  payout_leg: PaymentReminderPayoutLeg;
   created_at: string;
   updated_at: string;
   payments: PaymentReminderPayment[];
@@ -236,6 +244,42 @@ export type EmployeeAdvance = {
   deduction_per_payroll: number;
   status: EmployeeAdvanceStatus;
   notes: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SalaryBondTransaction = {
+  id: string;
+  user_id: string;
+  salary_bond_id: string;
+  employee_id: string | null;
+  type: SalaryBondTransactionType;
+  amount: number;
+  transaction_date: string;
+  payroll_run_id: string | null;
+  payroll_run_item_id: string | null;
+  note: string;
+  is_void: boolean;
+  void_reason: string;
+  voided_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SalaryBond = {
+  id: string;
+  user_id: string;
+  employee_id: string | null;
+  employee_name: string;
+  bond_reference: string;
+  target_amount: number;
+  deduction_per_payroll: number;
+  start_deduction: string;
+  status: SalaryBondStatus;
+  notes: string;
+  transactions: SalaryBondTransaction[];
+  balance: number;
+  remaining_to_target: number;
   created_at: string;
   updated_at: string;
 };
@@ -460,6 +504,9 @@ export type Subcontractor = {
   repair_rate: number;
   payable_pct: number;
   status: SubcontractorStatus;
+  email: string;
+  contact_number: string;
+  address: string;
   created_at: string;
   updated_at: string;
 };
@@ -531,6 +578,10 @@ export type BillingRecord = {
   repair_tickets: number;
   disputed_install: number;
   disputed_repair: number;
+  company_install_tickets: number;
+  company_repair_tickets: number;
+  company_disputed_install: number;
+  company_disputed_repair: number;
   total_tickets: number;
   disputed_tickets: number;
   billable_tickets: number;
@@ -557,6 +608,10 @@ export type BillingFormValues = {
   repair_tickets: string;
   disputed_install: string;
   disputed_repair: string;
+  company_install_tickets: string;
+  company_repair_tickets: string;
+  company_disputed_install: string;
+  company_disputed_repair: string;
   subcon_items: Array<{
     id?: string;
     subcontractor_id: string;
@@ -610,6 +665,20 @@ export type EmployeeAdvanceFormValues = {
   deduction_per_payroll: string;
   status: EmployeeAdvanceStatus;
   notes: string;
+};
+
+export type SalaryBondFormValues = {
+  employee_id: string;
+  target_amount: string;
+  deduction_per_payroll: string;
+  start_deduction: string;
+  notes: string;
+};
+
+export type SalaryBondWithdrawalFormValues = {
+  amount: string;
+  transaction_date: string;
+  note: string;
 };
 
 export type SubcontractorAdvanceFormValues = {

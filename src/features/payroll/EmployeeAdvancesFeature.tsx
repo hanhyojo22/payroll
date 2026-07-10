@@ -14,7 +14,6 @@ import type { Employee, EmployeeAdvance, EmployeeAdvanceFormValues, EmployeeAdva
 
 const advanceTypeOptions: EmployeeAdvanceType[] = [
   "Cash Advance",
-  "Salary Bond",
   "Salary Loan",
   "Company Loan",
   "Other Loan",
@@ -22,7 +21,7 @@ const advanceTypeOptions: EmployeeAdvanceType[] = [
 
 const emptyEmployeeAdvance = (employeeId: string): EmployeeAdvanceFormValues => ({
   employee_id: employeeId,
-  advance_type: "Salary Bond",
+  advance_type: "Cash Advance",
   date_granted: todayKey(),
   start_deduction: todayKey(),
   purpose: "",
@@ -35,7 +34,10 @@ const emptyEmployeeAdvance = (employeeId: string): EmployeeAdvanceFormValues => 
 
 const valuesFromEmployeeAdvance = (advance: EmployeeAdvance): EmployeeAdvanceFormValues => ({
   employee_id: advance.employee_id ?? "",
-  advance_type: advance.advance_type,
+  // Legacy/unmigrated rows (e.g. "Salary Bond", superseded by the dedicated Salary Bond
+  // feature, or a stale offline-cached record) won't match any current dropdown option --
+  // fall back to "Other Loan" so the <select> never renders in a blank/mismatched state.
+  advance_type: advanceTypeOptions.includes(advance.advance_type) ? advance.advance_type : "Other Loan",
   date_granted: advance.date_granted,
   start_deduction: advance.start_deduction,
   purpose: advance.purpose,
@@ -150,7 +152,7 @@ export function EmployeeAdvancesFeature({
       <div className="ticket-section-heading">
         <div>
           <h3>Employee Advances</h3>
-          <p>Track cash advances, salary bonds, loans, balances, and payroll deductions.</p>
+          <p>Track cash advances, loans, balances, and payroll deductions.</p>
         </div>
       </div>
 

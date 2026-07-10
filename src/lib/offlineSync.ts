@@ -46,6 +46,7 @@ async function applyMutation(supabase: SupabaseClient, mutation: PendingMutation
         itemPayloads: Record<string, unknown>[];
         detailPayloads?: Record<string, unknown>[];
         employeeAdvanceUpdates: Array<{ id: string; payload: Record<string, unknown> }>;
+        salaryBondTransactionPayloads?: Record<string, unknown>[];
       };
       const runResult = await supabase.from("payroll_runs").insert(payload.runPayload);
       if (runResult.error) return runResult;
@@ -63,6 +64,11 @@ async function applyMutation(supabase: SupabaseClient, mutation: PendingMutation
         if (advanceResult.error) return advanceResult;
       }
 
+      if ((payload.salaryBondTransactionPayloads?.length ?? 0) > 0) {
+        const bondResult = await supabase.from("employee_salary_bond_transactions").insert(payload.salaryBondTransactionPayloads!);
+        if (bondResult.error) return bondResult;
+      }
+
       return { error: null };
     }
     case "payroll_items_group": {
@@ -70,6 +76,7 @@ async function applyMutation(supabase: SupabaseClient, mutation: PendingMutation
         itemPayloads: Record<string, unknown>[];
         detailPayloads: Record<string, unknown>[];
         employeeAdvanceUpdates?: Array<{ id: string; payload: Record<string, unknown> }>;
+        salaryBondTransactionPayloads?: Record<string, unknown>[];
       };
       const itemResult = await supabase.from("payroll_run_items").insert(payload.itemPayloads);
       if (itemResult.error) return itemResult;
@@ -80,6 +87,10 @@ async function applyMutation(supabase: SupabaseClient, mutation: PendingMutation
       for (const update of payload.employeeAdvanceUpdates ?? []) {
         const advanceResult = await supabase.from("employee_advances").update(update.payload).eq("id", update.id);
         if (advanceResult.error) return advanceResult;
+      }
+      if ((payload.salaryBondTransactionPayloads?.length ?? 0) > 0) {
+        const bondResult = await supabase.from("employee_salary_bond_transactions").insert(payload.salaryBondTransactionPayloads!);
+        if (bondResult.error) return bondResult;
       }
       return { error: null };
     }
@@ -107,7 +118,7 @@ async function applyMutation(supabase: SupabaseClient, mutation: PendingMutation
       if ((payload.subcontractorPaymentPayloads?.length ?? 0) > 0) {
         const paymentResult = await supabase
           .from("payment_reminders")
-          .upsert(payload.subcontractorPaymentPayloads!, { onConflict: "billing_subcon_item_id" });
+          .upsert(payload.subcontractorPaymentPayloads!, { onConflict: "billing_subcon_item_id,payout_leg" });
         if (paymentResult.error) return paymentResult;
       }
       for (const update of payload.subcontractorAdvanceUpdates ?? []) {

@@ -19,6 +19,7 @@ import {
   Heart,
   HelpCircle,
   History,
+  KeyRound,
   LayoutDashboard,
   LogOut,
   Mail,
@@ -40,6 +41,7 @@ import {
   UserRound,
   Users,
   UserX,
+  Wallet,
   Wrench,
   X,
 } from "lucide-react";
@@ -79,6 +81,7 @@ import {
   loadPayrollSettings,
   loadPositions,
   loadEmployeeAdvances,
+  loadSalaryBonds,
 } from "./lib/supabaseData";
 import { queueMutation, readCachedResource, writeCachedResource } from "./lib/offlineDb";
 import { flushPendingMutations, isOfflineLikeError } from "./lib/offlineSync";
@@ -92,6 +95,8 @@ import { PaymentsFeature } from "./features/payments/PaymentsFeature";
 import { EmployeeAdvancesFeature } from "./features/payroll/EmployeeAdvancesFeature";
 import { PayrollFeature, PayrollHistoryFeature, PayrollSettingsManager } from "./features/payroll/PayrollFeature";
 import { ReportsFeature } from "./features/reports/ReportsFeature";
+import { SalaryBondsFeature } from "./features/salaryBonds/SalaryBondsFeature";
+import { normalizeSalaryBond } from "./features/salaryBonds/salaryBondRepository";
 import { SubcontractorsFeature } from "./features/subcontractors/SubcontractorsFeature";
 import { Sidebar } from "./Sidebar";
 import { MoneyField as MoneyInput } from "./shared/components/MoneyField";
@@ -100,7 +105,7 @@ import { Spinner, SyncIndicator, PageSkeleton } from "./shared/components/Spinne
 import { StatusBadge as StatusPill } from "./shared/components/StatusBadge";
 import { DataTable } from "./shared/components/DataTable";
 import { PageHeader, RecordTitle, Toolbar } from "./shared/components/PageLayout";
-import { FormActions, Modal, RowActions, TextField } from "./shared/components/FormLayout";
+import { FormActions, Modal, PasswordField, RowActions, TextField } from "./shared/components/FormLayout";
 import type { QueueOfflineMutation } from "./shared/types";
 import { currency, formatMoney, toNumber } from "./shared/utils/currency";
 import { currentMonth, currentYear, isBeforeToday, isToday, monthNames, todayKey } from "./shared/utils/dates";
@@ -134,6 +139,7 @@ import type {
   Position,
   PositionFormValues,
   ResourceKey,
+  SalaryBond,
 } from "./types";
 
 type View =
@@ -156,6 +162,7 @@ type View =
   | "payments"
   | "collections"
   | "collection-history"
+  | "salary-bonds"
   | "subcontractors";
 type ResourceStatus = "idle" | "loading" | "ready";
 
@@ -176,6 +183,7 @@ const initialResourceStatuses: Record<ResourceKey, ResourceStatus> = {
   payrollSettings: "idle",
   positions: "idle",
   employeeAdvances: "idle",
+  salaryBonds: "idle",
   subcontractorAdvances: "idle",
   subcontractors: "idle",
 };
@@ -197,6 +205,7 @@ const initialResourceHydration: Record<ResourceKey, boolean> = {
   payrollSettings: false,
   positions: false,
   employeeAdvances: false,
+  salaryBonds: false,
   subcontractorAdvances: false,
   subcontractors: false,
 };
@@ -245,6 +254,7 @@ const viewPaths: Record<View, string> = {
   payments: "/payments",
   collections: "/collections",
   "collection-history": "/collections/history",
+  "salary-bonds": "/salary-bonds",
   subcontractors: "/subcontractors",
 };
 
@@ -253,21 +263,22 @@ const viewResources: Record<View, ResourceKey[]> = {
   billing: ["billingRecords", "billingSettings", "dailyTicketEntries", "collections", "subcontractors", "subcontractorAdvances", "subconDailyTickets", "payments", "expenses", "expenseCategories"],
   "billing-settings": ["billingSettings", "subcontractors"],
   dashboard: ["dashboardSummary"],
-  employees: ["employees", "positions", "payrollRuns", "employeeAdvances"],
-  "employee-add": ["employees", "positions", "payrollRuns", "employeeAdvances"],
+  employees: ["employees", "positions", "payrollRuns", "employeeAdvances", "salaryBonds"],
+  "employee-add": ["employees", "positions", "payrollRuns", "employeeAdvances", "salaryBonds"],
   expenses: ["employees", "expenses", "expenseCategories"],
   "personal-expenses": ["employees", "expenses", "expenseCategories"],
   "expense-categories": ["expenseCategories"],
   compensation: ["positions", "employees"],
   "daily-tickets": ["positions", "employees", "dailyTicketEntries", "subcontractors", "subconDailyTickets", "payrollRuns"],
   "daily-tickets-subcon": ["positions", "employees", "dailyTicketEntries", "subcontractors", "subconDailyTickets", "payrollRuns"],
-  payroll: ["positions", "employees", "attendanceEntries", "dailyTicketEntries", "payrollRuns", "employeeAdvances", "payrollHistory", "payrollSettings", "expenses", "expenseCategories"],
+  payroll: ["positions", "employees", "attendanceEntries", "dailyTicketEntries", "payrollRuns", "employeeAdvances", "salaryBonds", "payrollHistory", "payrollSettings", "expenses", "expenseCategories"],
   "payroll-settings": ["payrollSettings"],
-  "payroll-history": ["positions", "employees", "attendanceEntries", "dailyTicketEntries", "payrollRuns", "employeeAdvances", "payrollHistory", "payrollSettings", "expenses", "expenseCategories"],
+  "payroll-history": ["positions", "employees", "attendanceEntries", "dailyTicketEntries", "payrollRuns", "employeeAdvances", "salaryBonds", "payrollHistory", "payrollSettings", "expenses", "expenseCategories"],
   reports: ["employees", "billingRecords", "billingSettings", "collections", "dailyTicketEntries", "payrollHistory", "expenses"],
   payments: ["expenses", "expenseCategories"],
   collections: ["collections"],
   "collection-history": ["collections"],
+  "salary-bonds": ["employees", "salaryBonds"],
   subcontractors: ["subcontractors", "subcontractorAdvances", "subconDailyTickets", "billingRecords", "payments", "expenses", "expenseCategories"],
 };
 
@@ -312,6 +323,7 @@ const viewBreadcrumbs: Record<View, BreadcrumbItem[]> = {
   payments: [{ label: "Dashboard", view: "dashboard" }, { label: "Payment History", view: "payments" }],
   collections: [{ label: "Dashboard", view: "dashboard" }, { label: "Collections", view: "collections" }],
   "collection-history": [{ label: "Dashboard", view: "dashboard" }, { label: "Collections", view: "collections" }, { label: "History", view: "collection-history" }],
+  "salary-bonds": [{ label: "Dashboard", view: "dashboard" }, { label: "Salary Bonds", view: "salary-bonds" }],
   subcontractors: [{ label: "Dashboard", view: "dashboard" }, { label: "Subcontractors", view: "subcontractors" }],
 };
 
@@ -492,7 +504,16 @@ function Login() {
   const [password, setPassword] = useState("");
   const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in");
   const [busy, setBusy] = useState(false);
+  const [credentialsInvalid, setCredentialsInvalid] = useState(false);
+  const [rememberMe, setRememberMe] = useState(true);
   const authRedirectTo = emailRedirectUrl ?? (typeof window !== "undefined" ? window.location.origin : undefined);
+  const rememberedEmailKey = "jms-login-email";
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const rememberedEmail = window.localStorage.getItem(rememberedEmailKey);
+    if (rememberedEmail) setEmail(rememberedEmail);
+  }, []);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -514,65 +535,205 @@ function Login() {
 
     if (result.error) {
       NotificationService.showError(friendlyError(result.error));
+      if (mode === "sign-in") {
+        setCredentialsInvalid(true);
+        setPassword("");
+      }
     } else if (mode === "sign-up" && !result.data.session) {
       NotificationService.showSuccess("Account created. Please confirm your email before signing in.");
       setPassword("");
       setMode("sign-in");
+    }
+    if (!result.error && typeof window !== "undefined") {
+      if (rememberMe) {
+        window.localStorage.setItem(rememberedEmailKey, email);
+      } else {
+        window.localStorage.removeItem(rememberedEmailKey);
+      }
     }
     setBusy(false);
   }
 
   return (
     <main className="center-screen login-screen">
-      <section className="auth-panel">
-        <div className="brand-row auth-brand-row">
-          <div className="brand-mark logo-brand-mark">
-            <img className="brand-logo mark-logo" src="/logo.png" alt="JMSolution Information Services" />
+      <section className="auth-shell">
+        <section className="auth-panel">
+          <div className="auth-icon-badge" aria-hidden="true">
+            <KeyRound size={28} />
           </div>
-          <div className="auth-brand-copy">
+          <div className="auth-panel-copy">
             <p className="eyebrow">Payroll workspace</p>
-            <h1>Payroll System</h1>
+            <h1>{mode === "sign-in" ? "Welcome Back" : "Create Admin Account"}</h1>
+            <p>
+              {mode === "sign-in"
+                ? "Sign in to your account to continue"
+                : "Create the first admin account to start managing payroll, billing, and payouts."}
+            </p>
           </div>
-        </div>
-        <form onSubmit={handleSubmit} className="stack">
-          <label>
-            Email
-            <input
-              autoComplete="email"
-              onChange={(event) => setEmail(event.target.value)}
-              required
-              type="email"
-              value={email}
-            />
-          </label>
-          <label>
-            Password
-            <input
-              autoComplete={mode === "sign-in" ? "current-password" : "new-password"}
-              minLength={6}
-              onChange={(event) => setPassword(event.target.value)}
-              required
-              type="password"
-              value={password}
-            />
-          </label>
-          <button className="primary-button" disabled={busy} type="submit">
-            {busy && <Spinner size="small" />}
-            {busy ? "Please wait..." : mode === "sign-in" ? "Sign in" : "Create admin"}
-          </button>
-          {mode === "sign-up" ? (
-            <p className="auth-helper-copy">A confirmation email will be sent to this address after registration.</p>
-          ) : null}
-        </form>
-        <button
-          className="text-button"
-          onClick={() => setMode(mode === "sign-in" ? "sign-up" : "sign-in")}
-          type="button"
-        >
-          {mode === "sign-in" ? "Create the admin account" : "Use existing account"}
-        </button>
+          <form onSubmit={handleSubmit} className="stack auth-form-stack">
+            <div className="auth-input-shell">
+              <span className="auth-input-icon" aria-hidden="true"><Mail size={16} /></span>
+              <label>
+                Email Address
+                <input
+                  autoComplete="email"
+                  className={credentialsInvalid ? "field-invalid" : undefined}
+                  onChange={(event) => {
+                    setEmail(event.target.value);
+                    setCredentialsInvalid(false);
+                  }}
+                  placeholder="Enter your email"
+                  required
+                  type="email"
+                  value={email}
+                />
+              </label>
+            </div>
+            <div className="auth-input-shell auth-password-shell">
+              <span className="auth-input-icon" aria-hidden="true"><KeyRound size={16} /></span>
+              <PasswordField
+                autoComplete={mode === "sign-in" ? "current-password" : "new-password"}
+                className={credentialsInvalid ? "field-invalid" : undefined}
+                label="Password"
+                minLength={6}
+                onChange={(value) => {
+                  setPassword(value);
+                  setCredentialsInvalid(false);
+                }}
+                placeholder="Enter your password"
+                required
+                value={password}
+              />
+            </div>
+            {mode === "sign-in" ? (
+              <div className="auth-utility-row">
+                <label className="auth-checkbox">
+                  <input
+                    checked={rememberMe}
+                    onChange={(event) => setRememberMe(event.target.checked)}
+                    type="checkbox"
+                  />
+                  <span>Remember me</span>
+                </label>
+                <button
+                  className="text-button auth-forgot-button"
+                  onClick={() => NotificationService.showError("Please contact the administrator to reset your password.")}
+                  type="button"
+                >
+                  Forgot password?
+                </button>
+              </div>
+            ) : null}
+            {credentialsInvalid ? (
+              <p className="auth-inline-error">Incorrect email or password. Please try again.</p>
+            ) : null}
+            <button className="primary-button auth-submit-button" disabled={busy} type="submit">
+              {busy && <Spinner size="small" />}
+              {busy ? "Please wait..." : mode === "sign-in" ? "Sign in" : "Create admin"}
+            </button>
+            {mode === "sign-up" ? (
+              <p className="auth-helper-copy">A confirmation email will be sent to this address after registration.</p>
+            ) : null}
+          </form>
+          <p className="auth-footer-copy">
+            {mode === "sign-in" ? "Need an account?" : "Already have an account?"}{" "}
+            <button
+              className="text-button auth-switch-button"
+              onClick={() => {
+                setMode(mode === "sign-in" ? "sign-up" : "sign-in");
+                setCredentialsInvalid(false);
+              }}
+              type="button"
+            >
+              {mode === "sign-in" ? "Create admin account" : "Sign in"}
+            </button>
+          </p>
+        </section>
       </section>
     </main>
+  );
+}
+
+function ChangePasswordModal({ onClose, userEmail }: { onClose: () => void; userEmail: string }) {
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (!supabase) return;
+    if (newPassword.length < 6) {
+      NotificationService.showError("New password must be at least 6 characters.");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      NotificationService.showError("New password and confirmation do not match.");
+      return;
+    }
+    setBusy(true);
+    const verify = await supabase.auth.signInWithPassword({ email: userEmail, password: currentPassword });
+    if (verify.error) {
+      setBusy(false);
+      NotificationService.showError("Current password is incorrect.");
+      return;
+    }
+    const result = await supabase.auth.updateUser({ password: newPassword });
+    setBusy(false);
+    if (result.error) {
+      NotificationService.showError(result.error.message || "Failed to update password.");
+      return;
+    }
+    NotificationService.showSuccess("Password updated.");
+    onClose();
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal billing-form-modal subcon-form-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-header">
+          <h3>Change Password</h3>
+          <button aria-label="Close" onClick={onClose} type="button"><X size={18} /></button>
+        </div>
+        <form className="billing-form-body" onSubmit={handleSubmit}>
+          <div className="billing-form-fields subcon-form-fields">
+            <PasswordField
+              autoComplete="current-password"
+              autoFocus
+              label="Current password"
+              minLength={6}
+              onChange={setCurrentPassword}
+              required
+              value={currentPassword}
+            />
+            <PasswordField
+              autoComplete="new-password"
+              label="New password"
+              minLength={6}
+              onChange={setNewPassword}
+              required
+              value={newPassword}
+            />
+            <PasswordField
+              autoComplete="new-password"
+              label="Confirm new password"
+              minLength={6}
+              onChange={setConfirmPassword}
+              required
+              value={confirmPassword}
+            />
+          </div>
+          <div className="form-actions">
+            <button className="billing-btn outline" onClick={onClose} type="button">
+              Cancel
+            </button>
+            <button className="billing-btn primary" disabled={busy} type="submit">
+              {busy ? "Saving..." : "Update password"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }
 
@@ -594,6 +755,7 @@ function Workspace({ session }: { session: Session }) {
   const [positions, setPositions] = useState<Position[]>([]);
   const [payrollHistoryRows, setPayrollHistoryRows] = useState<PayrollHistoryRow[]>([]);
   const [employeeAdvances, setEmployeeAdvances] = useState<EmployeeAdvance[]>([]);
+  const [salaryBonds, setSalaryBonds] = useState<SalaryBond[]>([]);
   const [subcontractorAdvances, setSubcontractorAdvances] = useState<SubcontractorAdvance[]>([]);
   const [billingRecords, setBillingRecords] = useState<BillingRecord[]>([]);
   const [billingSettings, setBillingSettings] = useState<BillingSettings | null>(null);
@@ -606,6 +768,7 @@ function Workspace({ session }: { session: Session }) {
   const [resourceStatuses, setResourceStatuses] = useState(initialResourceStatuses);
   const [resourceHydration, setResourceHydration] = useState(initialResourceHydration);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [notificationMenuOpen, setNotificationMenuOpen] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
   const notificationMenuRef = useRef<HTMLDivElement | null>(null);
@@ -636,6 +799,7 @@ function Workspace({ session }: { session: Session }) {
     payrollSettings: (data) => setPayrollSettings(data as PayrollSettings | null),
     positions: (data) => setPositions(data as Position[]),
     employeeAdvances: (data) => setEmployeeAdvances(data as EmployeeAdvance[]),
+    salaryBonds: (data) => setSalaryBonds((data as SalaryBond[]).map(normalizeSalaryBond)),
     subcontractorAdvances: (data) => setSubcontractorAdvances(data as SubcontractorAdvance[]),
     subconDailyTickets: (data) => setSubconDailyTickets(data as SubconDailyTicket[]),
     subcontractors: (data) => setSubcontractors(data as Subcontractor[]),
@@ -657,6 +821,7 @@ function Workspace({ session }: { session: Session }) {
     payrollSettings: async () => loadPayrollSettings(supabase!),
     positions: async () => loadPositions(supabase!),
     employeeAdvances: async () => loadEmployeeAdvances(supabase!),
+    salaryBonds: async () => loadSalaryBonds(supabase!),
     subcontractorAdvances: async () => loadSubcontractorAdvances(supabase!),
     subconDailyTickets: async () => loadSubconDailyTickets(supabase!),
     subcontractors: async () => loadSubcontractors(supabase!),
@@ -762,6 +927,7 @@ function Workspace({ session }: { session: Session }) {
       loadResource("positions", true),
       loadResource("payrollRuns", true),
       loadResource("employeeAdvances", true),
+      loadResource("salaryBonds", true),
       loadResource("dashboardSummary", true),
     ]);
   }
@@ -790,6 +956,7 @@ function Workspace({ session }: { session: Session }) {
     await Promise.all([
       loadResource("payrollRuns", true),
       loadResource("employeeAdvances", true),
+      loadResource("salaryBonds", true),
       loadResource("payrollHistory", true),
       loadResource("payrollSettings", true),
       loadResource("dashboardSummary", true),
@@ -835,6 +1002,13 @@ function Workspace({ session }: { session: Session }) {
     ]);
   }
 
+  async function refreshSalaryBonds() {
+    await Promise.all([
+      loadResource("salaryBonds", true),
+      loadResource("dashboardSummary", true),
+    ]);
+  }
+
   useEffect(() => {
     if (view !== "employees") {
       setEmployeeDetailOpen(false);
@@ -842,11 +1016,19 @@ function Workspace({ session }: { session: Session }) {
   }, [view]);
 
   useEffect(() => {
+    const prevWidthRef = { current: window.innerWidth };
     const handleResize = () => {
-      if (window.innerWidth <= 900) {
+      const prevWidth = prevWidthRef.current;
+      const width = window.innerWidth;
+      if (width <= 900) {
         setSidebarCollapsed(true);
         setMobileNavOpen(false);
+      } else if (prevWidth <= 900) {
+        // returning from a narrow layout — restore the sidebar instead of
+        // leaving it stuck collapsed on a wide monitor
+        setSidebarCollapsed(false);
       }
+      prevWidthRef.current = width;
     };
 
     window.addEventListener("resize", handleResize);
@@ -1355,6 +1537,18 @@ function Workspace({ session }: { session: Session }) {
                     <span>{session.user.email ?? "Administrator"}</span>
                   </div>
                   <button
+                    className="account-dropdown-item"
+                    onClick={() => {
+                      setAccountMenuOpen(false);
+                      setChangePasswordOpen(true);
+                    }}
+                    role="menuitem"
+                    type="button"
+                  >
+                    <KeyRound size={16} />
+                    Change password
+                  </button>
+                  <button
                     className="account-dropdown-item danger"
                     onClick={() => {
                       setAccountMenuOpen(false);
@@ -1370,6 +1564,9 @@ function Workspace({ session }: { session: Session }) {
               )}
             </div>
           </div>
+          {changePasswordOpen && (
+            <ChangePasswordModal onClose={() => setChangePasswordOpen(false)} userEmail={session.user.email ?? ""} />
+          )}
         </header>
         <section className="content">
           {view !== "dashboard" && (
@@ -1407,6 +1604,7 @@ function Workspace({ session }: { session: Session }) {
                   payrollRuns={payrollRuns}
                   positions={positions}
                   employeeAdvances={employeeAdvances}
+                  salaryBonds={salaryBonds}
                   userId={session.user.id}
                 />
             )}
@@ -1424,6 +1622,7 @@ function Workspace({ session }: { session: Session }) {
                 payrollRuns={payrollRuns}
                 positions={positions}
                 employeeAdvances={employeeAdvances}
+                salaryBonds={salaryBonds}
                 userId={session.user.id}
               />
             )}
@@ -1499,6 +1698,7 @@ function Workspace({ session }: { session: Session }) {
                       payrollRuns={payrollRuns}
                       positions={positions}
                       employeeAdvances={employeeAdvances}
+                      salaryBonds={salaryBonds}
                       tabs={(
                         <div className="page-tabs" role="tablist">
                           <button className="active" onClick={() => navigate("payroll")} role="tab" type="button">Payroll</button>
@@ -1653,6 +1853,15 @@ function Workspace({ session }: { session: Session }) {
                     />
                   )}
                 </>
+              )}
+              {view === "salary-bonds" && (
+                <SalaryBondsFeature
+                  employees={employees}
+                  onChange={refreshSalaryBonds}
+                  onQueueOfflineMutation={queueOfflineMutation}
+                  salaryBonds={salaryBonds}
+                  userId={session.user.id}
+                />
               )}
           </>
           )}
@@ -2409,187 +2618,6 @@ function Metric({
       <p>{label}</p>
       <strong>{value}</strong>
       {helperText ? <span className="metric-helper">{helperText}</span> : null}
-    </div>
-  );
-}
-
-function SubcontractorsView({
-  onChange,
-  subcontractors,
-  userId,
-}: {
-  onChange: () => Promise<void>;
-  subcontractors: Subcontractor[];
-  userId: string;
-}) {
-  const [formOpen, setFormOpen] = useState(false);
-  const [editing, setEditing] = useState<Subcontractor | null>(null);
-  const [name, setName] = useState("");
-  const [installRate, setInstallRate] = useState("0");
-  const [repairRate, setRepairRate] = useState("0");
-  const [payablePct, setPayablePct] = useState("70");
-  const [busy, setBusy] = useState(false);
-
-  function openAdd() {
-    setEditing(null);
-    setName("");
-    setInstallRate("0");
-    setRepairRate("0");
-    setPayablePct("70");
-    setFormOpen(true);
-  }
-
-  function openEdit(s: Subcontractor) {
-    setEditing(s);
-    setName(s.name);
-    setInstallRate(String(s.installation_rate));
-    setRepairRate(String(s.repair_rate));
-    setPayablePct(String(s.payable_pct));
-    setFormOpen(true);
-  }
-
-  async function save() {
-    if (!supabase || !name.trim()) return;
-    setBusy(true);
-    const result = await saveSubcontractor(supabase, userId, {
-      id: editing?.id,
-      name: name.trim(),
-      installation_rate: Number(installRate) || 0,
-      repair_rate: Number(repairRate) || 0,
-      payable_pct: Number(payablePct) || 70,
-      status: "active",
-    });
-    setBusy(false);
-    if (result.error) {
-      NotificationService.showError((result.error as { message?: string }).message ?? "Failed to save subcontractor.");
-      return;
-    }
-    setFormOpen(false);
-    NotificationService.showSuccess(editing ? "Subcontractor updated." : "Subcontractor added.");
-    await onChange();
-  }
-
-  async function toggleArchive(s: Subcontractor) {
-    if (!supabase) return;
-    const newStatus = s.status === "active" ? "archived" : "active";
-    await saveSubcontractor(supabase, userId, { id: s.id, name: s.name, installation_rate: s.installation_rate, repair_rate: s.repair_rate, payable_pct: s.payable_pct, status: newStatus });
-    NotificationService.showSuccess(newStatus === "archived" ? "Subcontractor archived." : "Subcontractor restored.");
-    await onChange();
-  }
-
-  const active = subcontractors.filter((s) => s.status === "active");
-  const archived = subcontractors.filter((s) => s.status === "archived");
-
-  return (
-    <div className="billing-page">
-      <header className="billing-header">
-        <div>
-          <p className="eyebrow">Manage partners</p>
-          <h2>Subcontractors</h2>
-        </div>
-        <button className="billing-btn primary" onClick={openAdd} type="button">
-          <Plus size={15} /> Add subcontractor
-        </button>
-      </header>
-
-      {subcontractors.length === 0 && !formOpen && (
-        <div className="billing-empty">
-          <Users size={32} />
-          <p>No subcontractors yet</p>
-          <span>Add your first subcontractor to start tracking their billing.</span>
-        </div>
-      )}
-
-      {active.length > 0 && (
-        <div className="billing-table-wrap">
-          <table className="billing-table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th className="num">Install Rate</th>
-                <th className="num">Repair Rate</th>
-                <th className="num">Payable %</th>
-                <th className="num">Collection %</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {active.map((s) => (
-                <tr key={s.id}>
-                  <td><strong>{s.name}</strong></td>
-                  <td className="num">{currency.format(s.installation_rate)}</td>
-                  <td className="num">{currency.format(s.repair_rate)}</td>
-                  <td className="num">{s.payable_pct}%</td>
-                  <td className="num">{100 - s.payable_pct}%</td>
-                  <td>
-                    <div className="billing-row-actions">
-                      <button onClick={() => openEdit(s)} type="button" title="Edit"><Pencil size={14} /></button>
-                      <button onClick={() => toggleArchive(s)} type="button" title="Archive"><Trash2 size={14} /></button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {archived.length > 0 && (
-        <>
-          <p className="eyebrow" style={{ marginTop: 16 }}>Archived</p>
-          <div className="billing-table-wrap">
-            <table className="billing-table">
-              <tbody>
-                {archived.map((s) => (
-                  <tr key={s.id} style={{ opacity: 0.6 }}>
-                    <td><strong>{s.name}</strong></td>
-                    <td className="num">{currency.format(s.installation_rate)}</td>
-                    <td className="num">{currency.format(s.repair_rate)}</td>
-                    <td className="num">{s.payable_pct}%</td>
-                    <td className="num">{100 - s.payable_pct}%</td>
-                    <td>
-                      <div className="billing-row-actions">
-                        <button onClick={() => toggleArchive(s)} type="button" title="Restore"><Plus size={14} /></button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
-
-      {formOpen && (
-        <div className="modal-backdrop" onClick={() => setFormOpen(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>{editing ? "Edit Subcontractor" : "Add Subcontractor"}</h3>
-              <button onClick={() => setFormOpen(false)} type="button" aria-label="Close"><X size={18} /></button>
-            </div>
-            <div className="form-grid" style={{ padding: 20 }}>
-              <label className="full">
-                Name
-                <input type="text" value={name} onChange={(e) => setName(e.target.value)} required />
-              </label>
-              <MoneyInput label="Installation rate (PHP)" value={installRate} onChange={setInstallRate} required />
-              <MoneyInput label="Repair rate (PHP)" value={repairRate} onChange={setRepairRate} required />
-              <label>
-                Payable %
-                <input type="number" min="0" max="100" value={payablePct} onChange={(e) => setPayablePct(e.target.value)} required />
-              </label>
-              <label>
-                Collection %
-                <input type="number" value={100 - (Number(payablePct) || 0)} disabled />
-              </label>
-              <div className="form-actions full">
-                <button className="secondary-button" onClick={() => setFormOpen(false)} type="button">Cancel</button>
-                <button className="primary-button" disabled={busy || !name.trim()} onClick={save} type="button">{busy ? "Saving..." : editing ? "Update" : "Add"}</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -5153,6 +5181,7 @@ export function EmployeesView({
   payrollRuns,
   positions,
   employeeAdvances,
+  salaryBonds,
   userId,
 }: {
   employees: Employee[];
@@ -5168,6 +5197,7 @@ export function EmployeesView({
   payrollRuns: PayrollRunWithItems[];
   positions: Position[];
   employeeAdvances: EmployeeAdvance[];
+  salaryBonds: SalaryBond[];
   userId: string;
 }) {
   const [query, setQuery] = useState("");
@@ -5239,6 +5269,7 @@ export function EmployeesView({
         payrollRuns={payrollRuns}
         positions={positions}
         employeeAdvances={employeeAdvances}
+        salaryBonds={salaryBonds}
         userId={userId}
       />
     );
@@ -5438,6 +5469,7 @@ export function EmployeeDetailsView({
   payrollRuns,
   positions,
   employeeAdvances,
+  salaryBonds,
   userId,
 }: {
   employee: Employee;
@@ -5449,9 +5481,10 @@ export function EmployeeDetailsView({
   payrollRuns: PayrollRunWithItems[];
   positions: Position[];
   employeeAdvances: EmployeeAdvance[];
+  salaryBonds: SalaryBond[];
   userId: string;
 }) {
-  const [activeTab, setActiveTab] = useState<"information" | "payroll" | "tickets" | "employee-advances" | "payments" | "documents" | "government-deduction" | "attendance">("information");
+  const [activeTab, setActiveTab] = useState<"information" | "payroll" | "tickets" | "employee-advances" | "salary-bond" | "payments" | "documents" | "government-deduction" | "attendance">("information");
   const [currentEmployee, setCurrentEmployee] = useState(employee);
   const [employeePayrollRuns, setEmployeePayrollRuns] = useState<PayrollRunWithItems[]>([]);
   const [editingRate, setEditingRate] = useState<"installation" | "repair" | null>(null);
@@ -5632,6 +5665,7 @@ export function EmployeeDetailsView({
     ...(isTicketBased ? [{ id: "tickets" as const, icon: <BadgeDollarSign size={16} />, label: "Ticket Earnings" }] : []),
     { id: "attendance", icon: <CalendarClock size={16} />, label: "Attendance" },
     { id: "employee-advances", icon: <CreditCard size={16} />, label: "Employee Advances" },
+    { id: "salary-bond", icon: <Wallet size={16} />, label: "Salary Bond" },
     { id: "documents", icon: <FileText size={16} />, label: "Documents" },
     { id: "government-deduction", icon: <BadgeDollarSign size={16} />, label: "Government Deduction" },
   ] as const;
@@ -5828,6 +5862,17 @@ export function EmployeeDetailsView({
             employeeAdvances={employeeAdvances}
             onChange={onChange}
             onQueueOfflineMutation={onQueueOfflineMutation}
+            userId={userId}
+          />
+        )}
+
+        {activeTab === "salary-bond" && (
+          <SalaryBondsFeature
+            employee={currentEmployee}
+            employees={[currentEmployee]}
+            onChange={onChange}
+            onQueueOfflineMutation={onQueueOfflineMutation}
+            salaryBonds={salaryBonds}
             userId={userId}
           />
         )}

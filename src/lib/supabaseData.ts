@@ -19,6 +19,7 @@ import type {
   PayrollSettings,
   PayrollRunWithItems,
   Position,
+  SalaryBond,
   SubcontractorAdvance,
   SubconDailyTicket,
   Subcontractor,
@@ -31,6 +32,7 @@ import { fetchSubconDailyTickets } from "../features/billing/subconTicketReposit
 import { fetchExpenseCategories, fetchExpenses } from "../features/expenses/expenseRepository";
 import { fetchEmployeeAdvances } from "../features/payroll/employeeAdvanceRepository";
 import { fetchPayrollHistoryRows, fetchPayrollRunItems, fetchPayrollRuns, fetchPayrollSettings } from "../features/payroll/payrollRepository";
+import { fetchSalaryBonds } from "../features/salaryBonds/salaryBondRepository";
 import { fetchSubcontractorAdvances } from "../features/subcontractors/subcontractorAdvanceRepository";
 import { todayKey } from "../shared/utils/dates";
 
@@ -162,7 +164,7 @@ export async function loadDashboardSummary(supabase: SupabaseClient) {
       "Open payment reminders",
       supabase
         .from("payment_reminders")
-        .select("id,user_id,title,type,amount,due_date,status,notes,subcontractor_id,billing_subcon_item_id,billing_month,billing_year,billing_period,created_at,updated_at,payments:payment_reminder_payments(id,user_id,payment_reminder_id,amount,payment_date,payment_method,reference_number,notes,created_at)")
+        .select("id,user_id,title,type,amount,due_date,status,notes,subcontractor_id,billing_subcon_item_id,billing_month,billing_year,billing_period,payout_leg,created_at,updated_at,payments:payment_reminder_payments(id,user_id,payment_reminder_id,amount,payment_date,payment_method,reference_number,notes,created_at)")
         .neq("status", "paid")
         .lte("due_date", today)
         .order("due_date"),
@@ -261,7 +263,7 @@ export async function loadPayments(supabase: SupabaseClient) {
     "Payments",
     supabase
       .from("payment_reminders")
-      .select("id,user_id,title,type,amount,due_date,status,notes,subcontractor_id,billing_subcon_item_id,billing_month,billing_year,billing_period,created_at,updated_at,payments:payment_reminder_payments(id,user_id,payment_reminder_id,amount,payment_date,payment_method,reference_number,notes,created_at)")
+      .select("id,user_id,title,type,amount,due_date,status,notes,subcontractor_id,billing_subcon_item_id,billing_month,billing_year,billing_period,payout_leg,created_at,updated_at,payments:payment_reminder_payments(id,user_id,payment_reminder_id,amount,payment_date,payment_method,reference_number,notes,created_at)")
       .order("due_date"),
   );
 }
@@ -337,6 +339,15 @@ export async function loadEmployeeAdvances(supabase: SupabaseClient) {
     return { data: result.data, error: result.error, label: "Employee advances" };
   } catch (error) {
     return { data: [] as EmployeeAdvance[], error: error as AppErrorLike, label: "Employee advances" };
+  }
+}
+
+export async function loadSalaryBonds(supabase: SupabaseClient) {
+  try {
+    const result = await withTimeout(fetchSalaryBonds(supabase), "Salary bonds");
+    return { data: result.data, error: result.error, label: "Salary bonds" };
+  } catch (error) {
+    return { data: [] as SalaryBond[], error: error as AppErrorLike, label: "Salary bonds" };
   }
 }
 
@@ -516,7 +527,7 @@ export async function loadBillingRecords(supabase: SupabaseClient) {
     "Billing records",
     supabase
       .from("billing_records")
-      .select("id,user_id,invoice_no,billing_month,billing_year,billing_period,install_tickets,repair_tickets,disputed_install,disputed_repair,total_tickets,disputed_tickets,billable_tickets,billing_rate,billing_amount,collections_pct,collections_amount,collectibles_amount,collection_id,collectibles_collection_id,due_date,notes,created_at,updated_at,subcon_items:billing_subcon_items(id,user_id,billing_record_id,subcontractor_id,subcon_name,install_tickets,repair_tickets,disputed_install,disputed_repair,installation_rate,repair_rate,billable_tickets,billing_amount,payable_pct,payable_amount,collection_amount,created_at)")
+      .select("id,user_id,invoice_no,billing_month,billing_year,billing_period,install_tickets,repair_tickets,disputed_install,disputed_repair,company_install_tickets,company_repair_tickets,company_disputed_install,company_disputed_repair,total_tickets,disputed_tickets,billable_tickets,billing_rate,billing_amount,collections_pct,collections_amount,collectibles_amount,collection_id,collectibles_collection_id,due_date,notes,created_at,updated_at,subcon_items:billing_subcon_items(id,user_id,billing_record_id,subcontractor_id,subcon_name,install_tickets,repair_tickets,disputed_install,disputed_repair,installation_rate,repair_rate,billable_tickets,billing_amount,payable_pct,payable_amount,collection_amount,created_at)")
       .order("billing_year", { ascending: false })
       .order("billing_month", { ascending: false }),
   );

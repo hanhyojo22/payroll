@@ -19,7 +19,7 @@ import { ActionProgress, type ActionProgressState } from "../../shared/component
 import { PageHeader } from "../../shared/components/PageLayout";
 import { NotificationService } from "../../shared/notifications/NotificationService";
 import type { QueueOfflineMutation } from "../../shared/types";
-import { currency } from "../../shared/utils/currency";
+import { currency, toNumber } from "../../shared/utils/currency";
 import { addDays, currentMonth, currentYear, monthNames, todayKey } from "../../shared/utils/dates";
 import type {
   BillingFormValues,
@@ -117,12 +117,18 @@ export function BillingFeature({
     if (found) setSubcontractorExpenseCategoryId(found.id);
   }, [expenseCategories]);
 
-  const paymentByItemId = useMemo(
-    () => new Map(
+  const paymentsByItemId = useMemo(
+    () => {
+      const map = new Map<string, PaymentReminder[]>();
       payments
         .filter((p) => p.type === "subcontractor" && p.billing_subcon_item_id !== null)
-        .map((p) => [p.billing_subcon_item_id!, p]),
-    ),
+        .forEach((p) => {
+          const list = map.get(p.billing_subcon_item_id!) ?? [];
+          list.push(p);
+          map.set(p.billing_subcon_item_id!, list);
+        });
+      return map;
+    },
     [payments],
   );
 
@@ -261,14 +267,23 @@ export function BillingFeature({
     const period = values.billing_period;
     const periodLabel = billingPeriodLabel(period);
 
-    const installTickets = Number(values.install_tickets) || 0;
-    const repairTickets = Number(values.repair_tickets) || 0;
-    const disputedInstall = Number(values.disputed_install) || 0;
-    const disputedRepair = Number(values.disputed_repair) || 0;
+    const employeeSubconInstall = Number(values.install_tickets) || 0;
+    const employeeSubconRepair = Number(values.repair_tickets) || 0;
+    // Clamped against the current ticket totals (not just at input time) so a stale
+    // disputed count left over from a since-lowered ticket count or a since-changed
+    // billing period can never be persisted higher than the tickets it's disputing.
+    const disputedInstall = Math.min(employeeSubconInstall, Number(values.disputed_install) || 0);
+    const disputedRepair = Math.min(employeeSubconRepair, Number(values.disputed_repair) || 0);
+    const companyInstall = Number(values.company_install_tickets) || 0;
+    const companyRepair = Number(values.company_repair_tickets) || 0;
+    const companyDisputedInstall = Math.min(companyInstall, Number(values.company_disputed_install) || 0);
+    const companyDisputedRepair = Math.min(companyRepair, Number(values.company_disputed_repair) || 0);
+    const installTickets = employeeSubconInstall + companyInstall;
+    const repairTickets = employeeSubconRepair + companyRepair;
     const totalTickets = installTickets + repairTickets;
-    const disputedTickets = disputedInstall + disputedRepair;
-    const billableInstall = Math.max(0, installTickets - disputedInstall);
-    const billableRepair = Math.max(0, repairTickets - disputedRepair);
+    const disputedTickets = disputedInstall + disputedRepair + companyDisputedInstall + companyDisputedRepair;
+    const billableInstall = Math.max(0, employeeSubconInstall - disputedInstall) + Math.max(0, companyInstall - companyDisputedInstall);
+    const billableRepair = Math.max(0, employeeSubconRepair - disputedRepair) + Math.max(0, companyRepair - companyDisputedRepair);
     const billableTickets = billableInstall + billableRepair;
     const billingAmount = billableInstall * settings!.installation_rate + billableRepair * settings!.repair_rate;
     const collectionsAmount = Math.round((billingAmount * settings!.collections_pct) / 100 * 100) / 100;
@@ -316,6 +331,10 @@ export function BillingFeature({
       repair_tickets: repairTickets,
       disputed_install: disputedInstall,
       disputed_repair: disputedRepair,
+      company_install_tickets: companyInstall,
+      company_repair_tickets: companyRepair,
+      company_disputed_install: companyDisputedInstall,
+      company_disputed_repair: companyDisputedRepair,
       total_tickets: totalTickets,
       disputed_tickets: disputedTickets,
       billable_tickets: billableTickets,
@@ -772,14 +791,14 @@ export function BillingFeature({
                         <td className="num">
                           <div className="billing-cell-breakdown">
                             <strong>{record.disputed_tickets}</strong>
-                            <span>I:{record.disputed_install} R:{record.disputed_repair}</span>
+                            <span>I:{record.disputed_install + record.company_disputed_install} R:{record.disputed_repair + record.company_disputed_repair}</span>
                           </div>
                         </td>
                         <td className="num">
                           <div className="billing-cell-breakdown">
                             <strong>{record.billable_tickets}</strong>
                             <span>
-                              I:{Math.max(0, record.install_tickets - record.disputed_install)} R:{Math.max(0, record.repair_tickets - record.disputed_repair)}
+                              I:{Math.max(0, record.install_tickets - record.disputed_install - record.company_disputed_install)} R:{Math.max(0, record.repair_tickets - record.disputed_repair - record.company_disputed_repair)}
                             </span>
                           </div>
                         </td>
@@ -826,7 +845,7 @@ export function BillingFeature({
                                   </tr>
                                 ) : (
                                   record.subcon_items.map((item) => {
-                                    const payment = paymentByItemId.get(item.id);
+                                    const itemPayments = paymentsByItemId.get(item.id) ?? [];
                                     return (
                                       <tr key={item.id}>
                                         <td className="subcon-detail-name">{item.subcon_name}</td>
@@ -834,16 +853,21 @@ export function BillingFeature({
                                         <td className="num">{currency.format(item.billing_amount)}</td>
                                         <td className="num"><strong>{currency.format(item.payable_amount)}</strong></td>
                                         <td>
-                                          {payment ? (
-                                            <button
-                                              className="billing-subcon-status-link"
-                                              onClick={() => onOpenSubcontractorAccount(item.subcontractor_id)}
-                                              type="button"
-                                            >
-                                              {payment.status}
-                                            </button>
-                                          ) : (
+                                          {itemPayments.length === 0 ? (
                                             <span className="subcon-missing-payment">Missing payout</span>
+                                          ) : (
+                                            <div className="billing-subcon-status-group">
+                                              {itemPayments.map((payment) => (
+                                                <button
+                                                  className={`billing-payout-status billing-subcon-status-link ${payment.status}`}
+                                                  key={payment.id}
+                                                  onClick={() => onOpenSubcontractorAccount(item.subcontractor_id)}
+                                                  type="button"
+                                                >
+                                                  {payment.payout_leg === "remainder" ? "2nd: " : "1st: "}{payment.status}
+                                                </button>
+                                              ))}
+                                            </div>
                                           )}
                                         </td>
                                         <td>
@@ -851,11 +875,11 @@ export function BillingFeature({
                                             <button onClick={() => onOpenSubcontractorAccount(item.subcontractor_id)} type="button">
                                               View account
                                             </button>
-                                            {payment?.status === "pending" && (
-                                              <button onClick={() => void markPayoutPaid(payment, userId, onChange)} type="button">
-                                                Mark paid
+                                            {itemPayments.filter((payment) => payment.status === "pending").map((payment) => (
+                                              <button key={payment.id} onClick={() => void markPayoutPaid(payment, userId, onChange)} type="button">
+                                                {payment.payout_leg === "remainder" ? "Mark 2nd paid" : "Mark paid"}
                                               </button>
-                                            )}
+                                            ))}
                                           </div>
                                         </td>
                                       </tr>
@@ -1028,12 +1052,16 @@ function BillingDetailsModal({
     }),
     { install: 0, repair: 0, disputedInstall: 0, disputedRepair: 0, billableTickets: 0, gross: 0, payable: 0 },
   );
-  const paymentByItemId = new Map(
-    payments
-      .filter((payment) => payment.type === "subcontractor" && payment.billing_subcon_item_id)
-      .map((payment) => [payment.billing_subcon_item_id!, payment]),
-  );
+  const paymentsByItemId = new Map<string, PaymentReminder[]>();
+  payments
+    .filter((payment) => payment.type === "subcontractor" && payment.billing_subcon_item_id)
+    .forEach((payment) => {
+      const list = paymentsByItemId.get(payment.billing_subcon_item_id!) ?? [];
+      list.push(payment);
+      paymentsByItemId.set(payment.billing_subcon_item_id!, list);
+    });
   const billingLevelDisputes = record.disputed_install + record.disputed_repair;
+  const companyDisputes = record.company_disputed_install + record.company_disputed_repair;
   const subcontractorDisputes = subconTotals.disputedInstall + subconTotals.disputedRepair;
 
   return (
@@ -1131,16 +1159,16 @@ function BillingDetailsModal({
                     <th className="num">Disputed</th>
                     <th className="num">Billable</th>
                     <th className="num">Gross</th>
-                    <th className="num">Payable</th>
-                    <th className="num">Collection</th>
-                    <th>Payout</th>
+                    <th className="num">1st Payout</th>
+                    <th className="num">2nd Payout</th>
+                    <th>Payout Status</th>
                   </tr>
                 </thead>
                 <tbody>
                   {record.subcon_items.length === 0 ? (
                     <tr><td colSpan={7}>No subcontractor rows for this billing.</td></tr>
                   ) : record.subcon_items.map((item) => {
-                    const payment = paymentByItemId.get(item.id);
+                    const itemPayments = paymentsByItemId.get(item.id) ?? [];
                     return (
                       <tr key={item.id}>
                         <td>{item.subcon_name}</td>
@@ -1151,13 +1179,17 @@ function BillingDetailsModal({
                         <td className="num">{currency.format(item.payable_amount)}</td>
                         <td className="num">{currency.format(item.collection_amount)}</td>
                         <td>
-                          {payment ? (
-                            <>
-                              <span className={`billing-payout-status ${payment.status}`}>{payment.status}</span>
-                              <span className="billing-payout-amount">{currency.format(payment.amount)}</span>
-                            </>
-                          ) : (
+                          {itemPayments.length === 0 ? (
                             <span className="billing-payout-status missing">Missing payout</span>
+                          ) : (
+                            itemPayments.map((payment) => (
+                              <div key={payment.id}>
+                                <span className={`billing-payout-status ${payment.status}`}>
+                                  {payment.payout_leg === "remainder" ? "2nd: " : "1st: "}{payment.status}
+                                </span>
+                                <span className="billing-payout-amount">{currency.format(payment.amount)}</span>
+                              </div>
+                            ))
                           )}
                         </td>
                       </tr>
@@ -1168,23 +1200,25 @@ function BillingDetailsModal({
             </div>
           </section>
 
-          <section className={`billing-details-section billing-details-disputes${billingLevelDisputes + subcontractorDisputes === 0 ? " clear" : ""}`}>
+          <section className={`billing-details-section billing-details-disputes${billingLevelDisputes + companyDisputes + subcontractorDisputes === 0 ? " clear" : ""}`}>
             <div className="billing-details-section-head">
               <div>
                 <h4>Dispute Details</h4>
                 <p>Billing-level disputes are stored as totals. Subcontractor disputes are stored per subcontractor row.</p>
               </div>
-              {billingLevelDisputes + subcontractorDisputes === 0 ? (
+              {billingLevelDisputes + companyDisputes + subcontractorDisputes === 0 ? (
                 <strong className="billing-details-dispute-badge clear">
                   <CheckCircle2 size={14} /> No disputes
                 </strong>
               ) : (
-                <strong className="billing-details-dispute-badge">{billingLevelDisputes + subcontractorDisputes} disputed</strong>
+                <strong className="billing-details-dispute-badge">{billingLevelDisputes + companyDisputes + subcontractorDisputes} disputed</strong>
               )}
             </div>
             <div className="billing-details-summary compact">
               <div><span>Billing-level install disputes</span><strong>{record.disputed_install}</strong></div>
               <div><span>Billing-level repair disputes</span><strong>{record.disputed_repair}</strong></div>
+              <div><span>Company install disputes</span><strong>{record.company_disputed_install}</strong></div>
+              <div><span>Company repair disputes</span><strong>{record.company_disputed_repair}</strong></div>
               <div><span>Subcon install disputes</span><strong>{subconTotals.disputedInstall}</strong></div>
               <div><span>Subcon repair disputes</span><strong>{subconTotals.disputedRepair}</strong></div>
             </div>
@@ -1336,6 +1370,9 @@ function BillingForm({
           repair_rate: item.repair_rate,
           payable_pct: item.payable_pct,
           status: "archived",
+          email: "",
+          contact_number: "",
+          address: "",
           created_at: item.created_at,
           updated_at: item.created_at,
         });
@@ -1364,14 +1401,24 @@ function BillingForm({
 
   function buildInitialValues(): BillingFormValues {
     if (initial) {
+      // initial may come from an offline cache snapshot written before the company_*
+      // columns existed, in which case they're missing entirely (undefined, not 0) --
+      // guard with toNumber() so editing a stale cached record can't corrupt the form
+      // with "NaN"/"undefined" instead of silently falling back to 0.
+      const initialCompanyInstall = toNumber(initial.company_install_tickets);
+      const initialCompanyRepair = toNumber(initial.company_repair_tickets);
       return {
         billing_month: String(initial.billing_month),
         billing_year: String(initial.billing_year),
         billing_period: initial.billing_period,
-        install_tickets: String(initial.install_tickets),
-        repair_tickets: String(initial.repair_tickets),
-        disputed_install: String(initial.disputed_install),
-        disputed_repair: String(initial.disputed_repair),
+        install_tickets: String(toNumber(initial.install_tickets) - initialCompanyInstall),
+        repair_tickets: String(toNumber(initial.repair_tickets) - initialCompanyRepair),
+        disputed_install: String(toNumber(initial.disputed_install)),
+        disputed_repair: String(toNumber(initial.disputed_repair)),
+        company_install_tickets: String(initialCompanyInstall),
+        company_repair_tickets: String(initialCompanyRepair),
+        company_disputed_install: String(toNumber(initial.company_disputed_install)),
+        company_disputed_repair: String(toNumber(initial.company_disputed_repair)),
         due_date: initial.due_date ?? "",
         subcon_items: buildSubconItems(initial.billing_month, initial.billing_year, initial.billing_period),
         notes: initial.notes,
@@ -1391,6 +1438,10 @@ function BillingForm({
       repair_tickets: String(employeeCounts.repair + subconRepair),
       disputed_install: "0",
       disputed_repair: "0",
+      company_install_tickets: "0",
+      company_repair_tickets: "0",
+      company_disputed_install: "0",
+      company_disputed_repair: "0",
       due_date: addDays(todayKey(), 15),
       subcon_items: subconItems,
       notes: "",
@@ -1445,12 +1496,18 @@ function BillingForm({
   const repairTickets = Math.max(0, Number(values.repair_tickets) || 0);
   const disputedInstall = Math.min(installTickets, Number(values.disputed_install) || 0);
   const disputedRepair = Math.min(repairTickets, Number(values.disputed_repair) || 0);
+  const companyInstallTickets = Math.max(0, Number(values.company_install_tickets) || 0);
+  const companyRepairTickets = Math.max(0, Number(values.company_repair_tickets) || 0);
+  const companyDisputedInstall = Math.min(companyInstallTickets, Number(values.company_disputed_install) || 0);
+  const companyDisputedRepair = Math.min(companyRepairTickets, Number(values.company_disputed_repair) || 0);
+  const combinedInstallTickets = installTickets + companyInstallTickets;
+  const combinedRepairTickets = repairTickets + companyRepairTickets;
   const employeeDisplayInstall = Math.max(0, employeeTotals.install - disputedInstall);
   const employeeDisplayRepair = Math.max(0, employeeTotals.repair - disputedRepair);
   const employeeDisplayTickets = employeeDisplayInstall + employeeDisplayRepair;
   const employeeDisplayGross = employeeDisplayInstall * settings.installation_rate + employeeDisplayRepair * settings.repair_rate;
-  const billableInstall = installTickets - disputedInstall;
-  const billableRepair = repairTickets - disputedRepair;
+  const billableInstall = (installTickets - disputedInstall) + (companyInstallTickets - companyDisputedInstall);
+  const billableRepair = (repairTickets - disputedRepair) + (companyRepairTickets - companyDisputedRepair);
   const billableTickets = billableInstall + billableRepair;
   const billingAmount = billableInstall * settings.installation_rate + billableRepair * settings.repair_rate;
   const collectionsAmount = Math.round((billingAmount * settings.collections_pct) / 100 * 100) / 100;
@@ -1575,12 +1632,20 @@ function BillingForm({
                       <small>Repair: {subconRepair}</small>
                     </div>
                   </div>
+                  <div className="billing-ticket-source-card">
+                    <span className="billing-ticket-source-title">Company</span>
+                    <strong className="billing-ticket-source-total">{companyInstallTickets + companyRepairTickets}</strong>
+                    <div className="billing-ticket-source-breakdown">
+                      <small>Install: {companyInstallTickets}</small>
+                      <small>Repair: {companyRepairTickets}</small>
+                    </div>
+                  </div>
                   <div className="billing-ticket-source-card emphasis">
                     <span className="billing-ticket-source-title">Combined</span>
-                    <strong className="billing-ticket-source-total">{installTickets + repairTickets}</strong>
+                    <strong className="billing-ticket-source-total">{combinedInstallTickets + combinedRepairTickets}</strong>
                     <div className="billing-ticket-source-breakdown">
-                      <small>Install: {installTickets}</small>
-                      <small>Repair: {repairTickets}</small>
+                      <small>Install: {combinedInstallTickets}</small>
+                      <small>Repair: {combinedRepairTickets}</small>
                     </div>
                   </div>
                 </div>
@@ -1629,6 +1694,79 @@ function BillingForm({
                       ))}
                     </tbody>
                   </table>
+                </div>
+              </section>
+
+              <section className="cbf-section cbf-section-card">
+                <div className="cbf-section-heading">
+                  <p className="cbf-section-label">Company Tickets <span className="cbf-section-sub">closed by the company, not an employee</span></p>
+                </div>
+                <div className="cbf-ticket-pair">
+                  <div className="cbf-ticket-card">
+                    <label className="cbf-ticket-field">
+                      <span className="cbf-ticket-type">Installation</span>
+                      <span className="cbf-ticket-input-wrap">
+                        <input
+                          className="cbf-ticket-input"
+                          min="0"
+                          type="number"
+                          value={values.company_install_tickets}
+                          onChange={(event) => setValues({ ...values, company_install_tickets: String(Math.max(0, Number(event.target.value) || 0)) })}
+                        />
+                      </span>
+                    </label>
+                  </div>
+                  <div className="cbf-ticket-card">
+                    <label className="cbf-ticket-field">
+                      <span className="cbf-ticket-type">Repair</span>
+                      <span className="cbf-ticket-input-wrap">
+                        <input
+                          className="cbf-ticket-input"
+                          min="0"
+                          type="number"
+                          value={values.company_repair_tickets}
+                          onChange={(event) => setValues({ ...values, company_repair_tickets: String(Math.max(0, Number(event.target.value) || 0)) })}
+                        />
+                      </span>
+                    </label>
+                  </div>
+                </div>
+                <div className="cbf-section-heading">
+                  <p className="cbf-section-label">Disputed <span className="cbf-section-sub">deducted from billable</span></p>
+                </div>
+                <div className="cbf-ticket-pair">
+                  <div className="cbf-ticket-card cbf-ticket-card--dispute">
+                    <label className="cbf-ticket-field">
+                      <span className="cbf-ticket-type">Installation</span>
+                      <span className="cbf-ticket-input-wrap">
+                        <input
+                          className="cbf-ticket-input cbf-ticket-input--dispute"
+                          disabled={companyInstallTickets === 0}
+                          max={companyInstallTickets}
+                          min="0"
+                          type="number"
+                          value={String(companyDisputedInstall)}
+                          onChange={(event) => setValues({ ...values, company_disputed_install: String(Math.max(0, Math.min(companyInstallTickets, Number(event.target.value) || 0))) })}
+                        />
+                      </span>
+                    </label>
+                  </div>
+                  <div className="cbf-ticket-card cbf-ticket-card--dispute">
+                    <label className="cbf-ticket-field">
+                      <span className="cbf-ticket-type">Repair</span>
+                      <span className="cbf-ticket-input-wrap">
+                        <input
+                          className="cbf-ticket-input cbf-ticket-input--dispute"
+                          disabled={companyRepairTickets === 0}
+                          max={companyRepairTickets}
+                          min="0"
+                          type="number"
+                          value={String(companyDisputedRepair)}
+                          onChange={(event) => setValues({ ...values, company_disputed_repair: String(Math.max(0, Math.min(companyRepairTickets, Number(event.target.value) || 0))) })}
+                        />
+                      </span>
+                    </label>
+                  </div>
                 </div>
               </section>
 
