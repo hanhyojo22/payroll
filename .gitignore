@@ -34,3 +34,6 @@ Thumbs.db
 .playwright-mcp/
 test-results/
 playwright-report/
+
+# Brainstorming visual companion mockups
+.superpowers/
