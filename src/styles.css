@@ -6205,6 +6205,50 @@ td {
   text-align: center;
 }
 
+.attendance-mobile-list {
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+}
+
+@media (max-width: 760px) {
+  .attendance-table-wrap {
+    display: none;
+  }
+
+  .attendance-mobile-list {
+    display: flex;
+  }
+}
+
+.attendance-mobile-list .attendance-status-control span {
+  font-size: 13px;
+  padding: 10px 16px;
+}
+
+.attendance-mobile-time-row {
+  display: flex;
+  gap: 8px;
+}
+
+.attendance-mobile-time-field {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.attendance-mobile-time-field span {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.attendance-mobile-list .attendance-time-input {
+  height: 40px;
+  width: 100%;
+}
+
 .attendance-footer {
   align-items: center;
   border-top: 1px solid #edf1f7;
