@@ -3837,6 +3837,19 @@ export function DailyTicketEntryView({
             }
             const cats = activeCategories(activePosition);
             const groupTotal = activeGroup.drafts.reduce((sum, d) => sum + grossFor(d), 0);
+            const rows = activeGroup.drafts.map((draft, index) => {
+              const dirty = isDirty(draft);
+              const busy = busyEmployeeId === draft.employee.id;
+              const saved = savedIds.has(draft.employee.id);
+              const disputes = disputeValuesFor(draft);
+              const installTotal = cats
+                .filter((cat) => (cat.ticket_type ?? "installation") === "installation")
+                .reduce((sum, cat) => sum + normalizeTicketCount(draft.counts[cat.id]), 0);
+              const repairTotal = cats
+                .filter((cat) => cat.ticket_type === "repair")
+                .reduce((sum, cat) => sum + normalizeTicketCount(draft.counts[cat.id]), 0);
+              return { draft, index, dirty, busy, saved, disputes, installTotal, repairTotal };
+            });
             return (
               <section className="ticket-position-group">
                 <div className="ticket-position-heading">
@@ -3863,17 +3876,7 @@ export function DailyTicketEntryView({
                       </tr>
                     </thead>
                     <tbody>
-                      {activeGroup.drafts.map((draft, index) => {
-                        const dirty = isDirty(draft);
-                        const busy = busyEmployeeId === draft.employee.id;
-                        const saved = savedIds.has(draft.employee.id);
-                        const disputes = disputeValuesFor(draft);
-                        const installTotal = cats
-                          .filter((cat) => (cat.ticket_type ?? "installation") === "installation")
-                          .reduce((sum, cat) => sum + normalizeTicketCount(draft.counts[cat.id]), 0);
-                        const repairTotal = cats
-                          .filter((cat) => cat.ticket_type === "repair")
-                          .reduce((sum, cat) => sum + normalizeTicketCount(draft.counts[cat.id]), 0);
+                      {rows.map(({ draft, index, dirty, busy, saved, disputes, installTotal, repairTotal }) => {
                         return (
                           <tr key={draft.employee.id} className={dirty ? "ticket-row-dirty" : saved ? "ticket-row-saved" : ""}>
                             <td className="ticket-no-col">{index + 1}</td>
