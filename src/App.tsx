@@ -4028,7 +4028,7 @@ export function DailyTicketEntryView({
             <div className="modal ticket-detail-modal" onClick={(e) => e.stopPropagation()}>
               <div className="modal-header">
                 <h2>{detailEmployee.full_name} — Ticket History</h2>
-                <button className="icon-button" type="button" onClick={() => setDetailEmployee(null)}>
+                <button aria-label="Close" type="button" onClick={() => setDetailEmployee(null)}>
                   <X size={18} />
                 </button>
               </div>
