@@ -7151,26 +7151,6 @@ td {
   width: 100%;
 }
 
-@media (max-width: 760px) {
-  .modal-backdrop {
-    align-items: flex-end;
-    padding: 10px;
-  }
-
-  .modal {
-    max-height: calc(100vh - 20px);
-    padding: 18px;
-  }
-
-  .modal header button,
-  .modal-header button,
-  .cbf-close-btn {
-    height: 44px;
-    min-height: 44px;
-    width: 44px;
-  }
-}
-
 .modal header,
 .modal-header {
   align-items: center;
@@ -10173,6 +10153,26 @@ td {
   width: 38px;
 }
 .cbf-close-btn:hover { background: var(--color-bg); color: var(--color-text); }
+
+@media (max-width: 760px) {
+  .modal-backdrop {
+    align-items: flex-end;
+    padding: 10px;
+  }
+
+  .modal {
+    max-height: calc(100vh - 20px);
+    padding: 18px;
+  }
+
+  .modal header button,
+  .modal-header button,
+  .cbf-close-btn {
+    height: 44px;
+    min-height: 44px;
+    width: 44px;
+  }
+}
 
 .cbf-form {
   display: flex;
