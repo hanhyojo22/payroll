@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { Ban, CalendarClock, CheckCircle2, Eye, Pencil, Plus, Receipt, Square, Tag, Trash2, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Ban, CalendarClock, CheckCircle2, Eye, MoreVertical, Pencil, Plus, Receipt, Square, Tag, Trash2, X } from "lucide-react";
 import { supabase } from "../../supabase";
 import { isOfflineLikeError } from "../../lib/offlineSync";
 import { MoneyField } from "../../shared/components/MoneyField";
@@ -549,7 +549,7 @@ export function ExpensesFeature({
         </div>
       ) : (
         <>
-        <div className="billing-table-wrap">
+        <div className="billing-table-wrap expense-list-table-wrap">
           <table className="billing-table">
             <thead>
               <tr>
@@ -677,6 +677,16 @@ export function ExpensesFeature({
             </tbody>
           </table>
         </div>
+        <ExpenseMobileCardList
+          categoryScope={categoryScope}
+          expenses={paginatedExpenses}
+          onCancelExpense={(expense) => void handleCancelExpense(expense)}
+          onDeleteExpense={(expense) => setDeletingExpense(expense)}
+          onEditExpense={(expense) => { setEditingExpense(expense); setFormOpen(true); }}
+          onEndRecurringExpense={(expense) => void handleEndRecurringExpense(expense)}
+          onOpenDetails={(expense) => setViewingExpense(expense)}
+          onRecordPayment={(expense) => setPayingInstallmentExpense(expense)}
+        />
         {recordCount > EXPENSES_PAGE_SIZE && (
           <div className="attendance-footer">
             <span>
@@ -747,6 +757,159 @@ export function ExpensesFeature({
           onConfirm={() => handleDeleteExpense(deletingExpense)}
         />
       )}
+    </div>
+  );
+}
+
+function ExpenseMobileCardList({
+  categoryScope,
+  expenses,
+  onCancelExpense,
+  onDeleteExpense,
+  onEditExpense,
+  onEndRecurringExpense,
+  onOpenDetails,
+  onRecordPayment,
+}: {
+  categoryScope: ExpenseCategoryType;
+  expenses: Expense[];
+  onCancelExpense: (expense: Expense) => void;
+  onDeleteExpense: (expense: Expense) => void;
+  onEditExpense: (expense: Expense) => void;
+  onEndRecurringExpense: (expense: Expense) => void;
+  onOpenDetails: (expense: Expense) => void;
+  onRecordPayment: (expense: Expense) => void;
+}) {
+  const [openMenuId, setOpenMenuId] = useState("");
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!openMenuId) return;
+    function handleClick(event: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) setOpenMenuId("");
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [openMenuId]);
+
+  const today = todayKey();
+
+  return (
+    <div className="expense-mobile-list">
+      {expenses.map((expense) => {
+        const displayStatus = expenseDisplayStatus(expense, expense.installment_payments);
+        const totalAmount = expenseTotalAmount(expense);
+        const remainingBalance = expenseRemainingBalance(expense, expense.installment_payments);
+        const isOverdue = isExpenseOverdue(expense, expense.installment_payments, today);
+        const hasPayments = expense.installment_payments.length > 0;
+        const canRecordPayment = displayStatus !== "paid" && displayStatus !== "cancelled";
+        const isSystemManaged = expense.payroll_run_id !== null || expense.subcontractor_payment_reminder_id !== null;
+        const isOpenEndedRecurring = expense.frequency !== "one_time" && !expense.duration_months;
+        const expenseDisplayName = expense.subcontractor_payment_reminder_id !== null
+          ? normalizeSubcontractorPayoutTitle(expense.employee_name)
+          : expense.employee_name;
+        const dateLabel = categoryScope === "company"
+          ? (expense.payment_date ? `Payment: ${expense.payment_date}` : `Due: ${expense.expense_date}`)
+          : (expense.due_date ? `Due: ${expense.due_date}` : `Logged ${expense.expense_date}`);
+        const installmentNote = expense.frequency !== "one_time" && expense.duration_months != null
+          ? ` · ${expense.installment_payments.length} of ${expense.duration_months} paid`
+          : "";
+        const frequencyLabel = expense.frequency === "monthly" ? "Monthly" : expense.frequency === "daily" ? "Daily" : "One-time";
+        const primaryAmount = remainingBalance != null
+          ? currency.format(remainingBalance)
+          : totalAmount == null ? "Ongoing" : currency.format(totalAmount);
+        const secondaryAmount = remainingBalance != null && totalAmount != null && remainingBalance !== totalAmount
+          ? `of ${currency.format(totalAmount)}`
+          : frequencyLabel;
+        const showKebab = !isSystemManaged;
+
+        return (
+          <div className="expense-mobile-card" key={expense.id}>
+            <div
+              className="expense-mobile-tap"
+              onClick={() => onOpenDetails(expense)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onOpenDetails(expense);
+                }
+              }}
+              role="button"
+              tabIndex={0}
+            >
+              <div className="employee-list-avatar">
+                {categoryScope === "company" ? <Receipt size={18} /> : <Tag size={18} />}
+              </div>
+              <div className="expense-mobile-main">
+                <div className="expense-mobile-title-row">
+                  <strong>{expense.category_name}</strong>
+                  <StatusBadge status={displayStatus} />
+                </div>
+                <span className="expense-mobile-subtitle">{expenseDisplayName}</span>
+                <span className={`expense-mobile-meta${isOverdue ? " expense-overdue" : ""}`}>
+                  {dateLabel}{installmentNote}
+                </span>
+              </div>
+              <div className="expense-mobile-side">
+                <strong>{primaryAmount}</strong>
+                <small>{secondaryAmount}</small>
+              </div>
+            </div>
+            {showKebab && (
+              <div className="ticket-menu-wrap expense-mobile-kebab-wrap" ref={openMenuId === expense.id ? menuRef : undefined}>
+                <button
+                  aria-label="More actions"
+                  className="expense-mobile-kebab"
+                  onClick={() => setOpenMenuId((prev) => prev === expense.id ? "" : expense.id)}
+                  type="button"
+                >
+                  <MoreVertical size={16} />
+                </button>
+                {openMenuId === expense.id && (
+                  <div className="ticket-menu-dropdown">
+                    {canRecordPayment && (
+                      <button onClick={() => { onRecordPayment(expense); setOpenMenuId(""); }} type="button">
+                        <CheckCircle2 size={14} /> Record payment
+                      </button>
+                    )}
+                    {canRecordPayment && isOpenEndedRecurring && (
+                      <button onClick={() => { onEndRecurringExpense(expense); setOpenMenuId(""); }} type="button">
+                        <Square size={14} /> End expense
+                      </button>
+                    )}
+                    <button
+                      disabled={hasPayments}
+                      onClick={() => { onEditExpense(expense); setOpenMenuId(""); }}
+                      title={hasPayments ? "Locked — payments already recorded against this expense." : undefined}
+                      type="button"
+                    >
+                      <Pencil size={14} /> Edit
+                    </button>
+                    {canRecordPayment && (
+                      <button
+                        disabled={hasPayments}
+                        onClick={() => { onCancelExpense(expense); setOpenMenuId(""); }}
+                        title={hasPayments ? "Can't cancel — payments already recorded against this expense." : undefined}
+                        type="button"
+                      >
+                        <Ban size={14} /> Cancel expense
+                      </button>
+                    )}
+                    <button
+                      disabled={hasPayments}
+                      onClick={() => { onDeleteExpense(expense); setOpenMenuId(""); }}
+                      title={hasPayments ? "Can't delete — payments already recorded against this expense." : undefined}
+                      type="button"
+                    >
+                      <Trash2 size={14} /> Delete
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
