@@ -5493,7 +5493,7 @@ function EmployeeMobileCardList({
   }
   return (
     <div className="emp-mobile-list">
-      {employees.map((employee) => (
+      {employees.map((employee, index) => (
         <div
           className="emp-mobile-card"
           key={employee.id}
@@ -5507,6 +5507,7 @@ function EmployeeMobileCardList({
           role="button"
           tabIndex={0}
         >
+          <span className="emp-mobile-card-index">{index + 1}</span>
           <div className="employee-list-avatar">
             {employee.profile_photo_url
               ? <img alt="" src={employee.profile_photo_url} />
@@ -5515,12 +5516,12 @@ function EmployeeMobileCardList({
           <div className="emp-mobile-card-main">
             <strong className="emp-mobile-card-name">{employee.full_name}</strong>
             <span className="emp-mobile-card-email">{employee.email || "No email"}</span>
-            <span className="emp-mobile-card-meta">
-              {employee.department || "Unassigned"} <span className="emp-mobile-card-dot">•</span> {employee.role || "Unassigned"}
-            </span>
+            <div className="emp-mobile-card-badges">
+              <span className="emp-mobile-card-badge">{employee.department || "Unassigned"}</span>
+              <span className="emp-mobile-card-badge">{employee.role || "Unassigned"}</span>
+            </div>
           </div>
           <div className="emp-mobile-card-side">
-            <span className="emp-mobile-card-id">{employeeCodeFor(employee)}</span>
             <span className="emp-mobile-card-date">{formatHireDate(employee)}</span>
             <span className={employee.status === "active" ? "emp-status-pill active" : "emp-status-pill inactive"}>
               {employee.status === "active" ? "Active" : "Inactive"}
