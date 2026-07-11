@@ -8130,7 +8130,8 @@ td {
 }
 
 @media (max-width: 480px) {
-  .expense-kpi-row {
+  .expense-kpi-row,
+  .payroll-metrics {
     grid-template-columns: 1fr;
   }
 }
