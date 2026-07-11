@@ -3856,7 +3856,7 @@ export function DailyTicketEntryView({
                   <span>{activePosition.name}</span>
                   <span className="ticket-position-total">{currency.format(groupTotal)}</span>
                 </div>
-                <div className="table-wrap">
+                <div className="table-wrap ticket-table-wrap">
                   <table className="ticket-table">
                     <thead>
                       <tr>
@@ -3993,6 +3993,119 @@ export function DailyTicketEntryView({
                       })}
                     </tbody>
                   </table>
+                </div>
+                <div className="ticket-mobile-list">
+                  {rows.map(({ draft, index, dirty, busy, saved, disputes, installTotal, repairTotal }) => (
+                    <div
+                      className={`ticket-mobile-card${dirty ? " ticket-mobile-card--dirty" : saved ? " ticket-mobile-card--saved" : ""}`}
+                      key={draft.employee.id}
+                    >
+                      <div className="ticket-mobile-card-header">
+                        <span className="ticket-mobile-card-index">{index + 1}</span>
+                        <div className="employee-list-identity">
+                          <div className="employee-list-avatar">
+                            {draft.employee.profile_photo_url
+                              ? <img alt="" src={draft.employee.profile_photo_url} />
+                              : <span>{draft.employee.full_name.split(" ").filter(Boolean).slice(0, 2).map((p) => p[0]).join("").toUpperCase() || "E"}</span>}
+                          </div>
+                          <RecordTitle title={draft.employee.full_name} notes={draft.employee.email || "No email"} />
+                        </div>
+                        <strong className="ticket-mobile-card-gross">{currency.format(grossFor(draft))}</strong>
+                      </div>
+                      <div className="ticket-mobile-input-grid">
+                        {cats.map((cat) => (
+                          <label className="ticket-mobile-input-tile" key={cat.id}>
+                            <span>{cat.name} <small>₱{toNumber(cat.rate).toLocaleString()}/ticket</small></span>
+                            <input
+                              aria-label={`${cat.name} tickets for ${draft.employee.full_name}`}
+                              min="0"
+                              step="1"
+                              type="number"
+                              value={draft.counts[cat.id] ?? 0}
+                              onChange={(e) => setDraftCounts((current) => ({
+                                ...current,
+                                [draft.employee.id]: {
+                                  ...(current[draft.employee.id] ?? draft.counts),
+                                  [cat.id]: normalizeTicketCount(e.target.value),
+                                },
+                              }))}
+                            />
+                          </label>
+                        ))}
+                        <label className="ticket-mobile-input-tile ticket-mobile-input-tile--dispute">
+                          <span>Disputed Install</span>
+                          <input
+                            aria-label={`Disputed installation tickets for ${draft.employee.full_name}`}
+                            disabled={installTotal === 0}
+                            max={installTotal}
+                            min="0"
+                            step="1"
+                            type="number"
+                            value={Math.min(installTotal, normalizeTicketCount(disputes.install))}
+                            onChange={(e) => setDraftDisputes((current) => ({
+                              ...current,
+                              [draft.employee.id]: {
+                                install: Math.min(installTotal, normalizeTicketCount(e.target.value)),
+                                repair: current[draft.employee.id]?.repair ?? draft.entry?.disputed_repair ?? 0,
+                              },
+                            }))}
+                          />
+                        </label>
+                        <label className="ticket-mobile-input-tile ticket-mobile-input-tile--dispute">
+                          <span>Disputed Repair</span>
+                          <input
+                            aria-label={`Disputed repair tickets for ${draft.employee.full_name}`}
+                            disabled={repairTotal === 0}
+                            max={repairTotal}
+                            min="0"
+                            step="1"
+                            type="number"
+                            value={Math.min(repairTotal, normalizeTicketCount(disputes.repair))}
+                            onChange={(e) => setDraftDisputes((current) => ({
+                              ...current,
+                              [draft.employee.id]: {
+                                install: current[draft.employee.id]?.install ?? draft.entry?.disputed_install ?? 0,
+                                repair: Math.min(repairTotal, normalizeTicketCount(e.target.value)),
+                              },
+                            }))}
+                          />
+                        </label>
+                      </div>
+                      <div className="ticket-mobile-card-footer">
+                        {busy ? (
+                          <span className="ticket-mobile-save-status"><Spinner size="small" /> Saving…</span>
+                        ) : saved ? (
+                          <span className="ticket-mobile-save-status ticket-mobile-save-status--saved"><CheckCircle2 size={16} /> Saved</span>
+                        ) : (
+                          <button
+                            className="ticket-mobile-save-button"
+                            disabled={!dirty}
+                            onClick={() => void saveDraftAndMark(draft)}
+                            type="button"
+                          >
+                            <Save size={15} /> Save
+                          </button>
+                        )}
+                        <div className="ticket-menu-wrap" ref={openMenuId === draft.employee.id ? menuRef : undefined}>
+                          <button
+                            aria-label="More actions"
+                            className="expense-mobile-kebab"
+                            onClick={() => setOpenMenuId((prev) => prev === draft.employee.id ? "" : draft.employee.id)}
+                            type="button"
+                          >
+                            <MoreVertical size={15} />
+                          </button>
+                          {openMenuId === draft.employee.id && (
+                            <div className="ticket-menu-dropdown">
+                              <button onClick={() => { setDetailEmployee(draft.employee); setOpenMenuId(""); }} type="button">
+                                <Eye size={14} /> View details
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </section>
             );
