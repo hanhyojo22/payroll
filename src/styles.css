@@ -4791,7 +4791,7 @@ input[type="radio"] {
     transform: none;
   }
 
-  .employee-list-panel .table-wrap {
+  .employee-list-panel:has(.emp-mobile-list) .table-wrap {
     display: none;
   }
 
