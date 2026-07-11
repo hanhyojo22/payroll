@@ -6212,7 +6212,7 @@ td {
 }
 
 @media (max-width: 760px) {
-  .attendance-table-wrap {
+  .attendance-table-inner {
     display: none;
   }
 

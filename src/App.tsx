@@ -5122,6 +5122,7 @@ export function AttendanceView({
           <p className="attendance-empty">No employees with daily-wage positions found.</p>
         ) : (
           <div className="attendance-table-wrap">
+            <div className="attendance-table-inner">
             <table className="attendance-table">
               <thead>
                 <tr>
@@ -5229,7 +5230,8 @@ export function AttendanceView({
             {filteredEmployees.length === 0 && (
               <p className="attendance-empty">No employees match the selected filters.</p>
             )}
-            <div className="attendance-mobile-list">
+          </div>
+          <div className="attendance-mobile-list">
               {paginatedEmployees.map((emp) => {
                 const pos = positions.find((p) => p.id === emp.position_id);
                 const current = statusFor(emp.id);
