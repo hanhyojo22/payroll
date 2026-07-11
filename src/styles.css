@@ -11648,6 +11648,166 @@ td {
   color: #12b76a;
 }
 
+.ticket-mobile-list {
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+}
+
+@media (max-width: 760px) {
+  .ticket-table-wrap {
+    display: none;
+  }
+
+  .ticket-mobile-list {
+    display: flex;
+  }
+}
+
+.ticket-mobile-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+}
+
+.ticket-mobile-card--dirty {
+  background: #fffbeb;
+  border-color: #f79009;
+  border-left-width: 3px;
+}
+
+.ticket-mobile-card--saved {
+  background: #f0fdf4;
+}
+
+.ticket-mobile-card-header {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.ticket-mobile-card-index {
+  color: var(--color-text-tertiary);
+  flex: 0 0 auto;
+  font-size: 12px;
+  text-align: center;
+  width: 18px;
+}
+
+.ticket-mobile-card-header .employee-list-identity {
+  flex: 1 1 auto;
+}
+
+.ticket-mobile-card-gross {
+  color: var(--color-text);
+  flex: 0 0 auto;
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.ticket-mobile-input-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+}
+
+.ticket-mobile-input-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ticket-mobile-input-tile span {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.ticket-mobile-input-tile span small {
+  color: var(--color-text-tertiary);
+  display: block;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.ticket-mobile-input-tile input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+  border: 1px solid #dfe5ef;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  height: 40px;
+  text-align: center;
+  width: 100%;
+}
+
+.ticket-mobile-input-tile input[type="number"]::-webkit-inner-spin-button,
+.ticket-mobile-input-tile input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+}
+
+.ticket-mobile-input-tile input[type="number"]:focus {
+  border-color: #006ffd;
+  box-shadow: 0 0 0 3px rgba(0, 111, 253, .12);
+}
+
+.ticket-mobile-input-tile--dispute input[type="number"] {
+  border-color: #fecaca;
+  color: #b42318;
+}
+
+.ticket-mobile-input-tile--dispute input[type="number"]:focus {
+  border-color: #f04438;
+  box-shadow: 0 0 0 3px rgba(240, 68, 56, .12);
+}
+
+.ticket-mobile-card-footer {
+  align-items: center;
+  border-top: 1px solid var(--color-border-light);
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  padding-top: 12px;
+}
+
+.ticket-mobile-save-button {
+  align-items: center;
+  background: var(--color-accent);
+  border: none;
+  border-radius: var(--radius-sm);
+  color: #fff;
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 700;
+  gap: 6px;
+  height: 38px;
+  padding: 0 14px;
+}
+
+.ticket-mobile-save-button:disabled {
+  background: var(--color-surface-secondary);
+  color: var(--color-text-tertiary);
+}
+
+.ticket-mobile-save-status {
+  align-items: center;
+  color: var(--color-text-secondary);
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 600;
+  gap: 6px;
+}
+
+.ticket-mobile-save-status--saved {
+  color: #12b76a;
+}
+
 .subcon-ticket-grid {
   display: grid;
   gap: 18px;
