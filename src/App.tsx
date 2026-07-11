@@ -5229,6 +5229,93 @@ export function AttendanceView({
             {filteredEmployees.length === 0 && (
               <p className="attendance-empty">No employees match the selected filters.</p>
             )}
+            <div className="attendance-mobile-list">
+              {paginatedEmployees.map((emp) => {
+                const pos = positions.find((p) => p.id === emp.position_id);
+                const current = statusFor(emp.id);
+                const saved = existingEntries.has(emp.id);
+                const dirty = drafts[emp.id] !== undefined || timeDrafts[emp.id] !== undefined;
+                const dailyRate = Number(pos?.daily_rate ?? 0);
+                const earnings = computeDailyEarnings(dailyRate, current, timeInFor(emp.id), timeOutFor(emp.id));
+                const employeeIndex = dailyEmployees.findIndex((item) => item.id === emp.id);
+                const busy = busyEmployeeId === emp.id;
+                return (
+                  <div
+                    className={`ticket-mobile-card${dirty ? " ticket-mobile-card--dirty" : saved ? " ticket-mobile-card--saved" : ""}`}
+                    key={emp.id}
+                  >
+                    <div className="ticket-mobile-card-header">
+                      <span className="ticket-mobile-card-index">{employeeIndex + 1}</span>
+                      <div className="employee-list-identity">
+                        <div className="employee-list-avatar">
+                          {emp.profile_photo_url ? <img src={emp.profile_photo_url} alt="" /> : <span>{initials(emp.full_name)}</span>}
+                        </div>
+                        <div className="record-title">
+                          <strong>{emp.full_name}</strong>
+                          {emp.email && <span>{emp.email}</span>}
+                          <span className="emp-mobile-card-badge">{emp.department || "Unassigned"}</span>
+                        </div>
+                      </div>
+                      <strong className="ticket-mobile-card-gross">{formatMoney(earnings)}</strong>
+                    </div>
+                    <div className={`attendance-status-control ${current || "unmarked"}`}>
+                      <span>{statusLabel(current)}</span>
+                      <select
+                        value={current}
+                        onChange={(e) => setStatus(emp.id, e.target.value as AttendanceStatus)}
+                        aria-label={`Attendance status for ${emp.full_name}`}
+                      >
+                        <option value="">No Entry</option>
+                        <option value="present">Present</option>
+                        <option value="absent">Absent</option>
+                        <option value="half_day">On Leave</option>
+                      </select>
+                    </div>
+                    {requiresTimeTracking(current) && (
+                      <div className="attendance-mobile-time-row">
+                        <label className="attendance-mobile-time-field">
+                          <span>Time In</span>
+                          <input
+                            type="time"
+                            className={`attendance-time-input${!timeInFor(emp.id) ? " missing" : ""}`}
+                            value={timeInFor(emp.id)}
+                            onChange={(e) => setTime(emp.id, "time_in", e.target.value)}
+                            aria-label={`Time in for ${emp.full_name}`}
+                          />
+                        </label>
+                        <label className="attendance-mobile-time-field">
+                          <span>Time Out</span>
+                          <input
+                            type="time"
+                            className={`attendance-time-input${!timeOutFor(emp.id) ? " missing" : ""}`}
+                            value={timeOutFor(emp.id)}
+                            onChange={(e) => setTime(emp.id, "time_out", e.target.value)}
+                            aria-label={`Time out for ${emp.full_name}`}
+                          />
+                        </label>
+                      </div>
+                    )}
+                    <div className="ticket-mobile-card-footer">
+                      {busy ? (
+                        <span className="ticket-mobile-save-status"><Spinner size="small" /> Saving…</span>
+                      ) : saved && !dirty ? (
+                        <span className="ticket-mobile-save-status ticket-mobile-save-status--saved"><CheckCircle2 size={16} /> Saved</span>
+                      ) : (
+                        <button
+                          className="ticket-mobile-save-button"
+                          disabled={!dirty}
+                          onClick={() => saveEntry(emp)}
+                          type="button"
+                          aria-label={`Save attendance for ${emp.full_name}`}
+                        >
+                          <Save size={15} /> Save
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
             {attendancePageCount > 1 && (
               <div className="attendance-footer">
                 <span>Showing {(attendancePage - 1) * attendancePageSize + 1} to {Math.min(attendancePage * attendancePageSize, filteredEmployees.length)} of {filteredEmployees.length} employees</span>
