@@ -1350,6 +1350,61 @@ function PayrollItemsTable({
           </div>,
         ])}
       />
+      <div className="payroll-mobile-list">
+        {paginatedItems.map((item, index) => (
+          <div className="ticket-mobile-card payroll-mobile-card" key={item.id}>
+            <div className="ticket-mobile-card-header">
+              <span className="ticket-mobile-card-index">{payrollPageStart + index + 1}</span>
+              <div className="employee-list-identity">
+                <EmpAvatar employees={employees} employeeId={item.employee_id ?? null} employeeName={item.employee_name} />
+                <div className="record-title">
+                  <strong>{item.employee_name}</strong>
+                  <span>{employees.find((e) => e.id === item.employee_id)?.email || "No email"}</span>
+                  <span className="emp-mobile-card-badge">{empCode(item.employee_id ?? null)}</span>
+                </div>
+              </div>
+              <strong className="ticket-mobile-card-gross">{currency.format(toNumber(item.net_pay))}</strong>
+            </div>
+            <div className="payroll-mobile-card-basis">
+              <span>{payBasis(item)}</span>
+              {item.notes && <small>{item.notes}</small>}
+            </div>
+            <div className="payroll-mobile-card-meta">
+              <span>Gross: {currency.format(toNumber(item.gross_pay))}</span>
+              {toNumber(item.deductions) > 0 && (
+                <span className="payroll-mobile-card-deduction">Deductions: -{currency.format(toNumber(item.deductions))}</span>
+              )}
+              {toNumber(item.allowances) > 0 && (
+                <span className="payroll-mobile-card-allowance">+{currency.format(toNumber(item.allowances))} allowance</span>
+              )}
+            </div>
+            <div className="ticket-mobile-card-footer">
+              <span className={item.status === "paid" ? "emp-status-pill active" : "emp-status-pill inactive"}>
+                {item.status === "paid" ? "Paid" : "Pending"}
+              </span>
+              {item.status !== "paid" ? (
+                <button
+                  aria-label={`Mark paid for ${item.employee_name}`}
+                  className="payroll-mobile-card-action payroll-mobile-card-action--paid"
+                  onClick={() => void handleMarkPaid(item)}
+                  type="button"
+                >
+                  <CheckCircle2 size={16} /> Mark Paid
+                </button>
+              ) : (
+                <button
+                  aria-label={`Mark pending for ${item.employee_name}`}
+                  className="payroll-mobile-card-action payroll-mobile-card-action--pending"
+                  onClick={() => void handleMarkPending(item)}
+                  type="button"
+                >
+                  <CalendarClock size={16} /> Mark Pending
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
       </section>
       {visibleItems.length > PAYROLL_ITEMS_PAGE_SIZE && (
         <div className="attendance-footer">
