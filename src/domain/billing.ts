@@ -9,6 +9,7 @@ import type {
   SubcontractorAdvance,
 } from "../types";
 import { paymentReminderDisplayStatus, paymentReminderPaymentsTotal, paymentReminderRemainingBalance } from "./paymentReminders";
+import { todayKey } from "../shared/utils/dates";
 
 function filterByPeriod(entries: DailyTicketEntry[], month: number, year: number, period?: BillingPeriod): DailyTicketEntry[] {
   return entries.filter((entry) => {
@@ -214,7 +215,7 @@ export function buildSubcontractorPayoutArtifacts(args: {
       .filter((p) => p.billing_subcon_item_id !== null)
       .map((payment) => [`${payment.billing_subcon_item_id}:${payment.payout_leg}`, payment]),
   );
-  const billingDate = args.today ?? new Date().toISOString().slice(0, 10);
+  const billingDate = args.today ?? todayKey();
   const activeAdvancesBySubcontractor = new Map<string, SubcontractorAdvance[]>();
   (args.subcontractorAdvances ?? [])
     .filter((advance) => advance.status === "active" && advance.subcontractor_id && Number(advance.balance) > 0)
