@@ -2617,6 +2617,84 @@ input[type="radio"] {
   font-size: 11px;
 }
 
+.payroll-mobile-list {
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+}
+
+@media (max-width: 760px) {
+  .employee-list-panel:has(.payroll-mobile-list) .table-wrap {
+    display: none;
+  }
+
+  .payroll-mobile-list {
+    display: flex;
+  }
+}
+
+.payroll-mobile-card .ticket-mobile-card-footer {
+  align-items: stretch;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.payroll-mobile-card-basis {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.payroll-mobile-card-basis span {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.payroll-mobile-card-basis small {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.payroll-mobile-card-meta {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  gap: 2px;
+}
+
+.payroll-mobile-card-deduction {
+  color: var(--color-text-secondary);
+}
+
+.payroll-mobile-card-allowance {
+  color: var(--color-success-text);
+}
+
+.payroll-mobile-card-action {
+  align-items: center;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 700;
+  gap: 6px;
+  height: 44px;
+  justify-content: center;
+  min-height: 44px;
+  width: 100%;
+}
+
+.payroll-mobile-card-action--paid {
+  background: var(--color-accent);
+  border: none;
+  color: #fff;
+}
+
+.payroll-mobile-card-action--pending {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  color: var(--color-accent);
+}
+
 /* ── Payroll History Groups ── */
 
 .ph-group {
