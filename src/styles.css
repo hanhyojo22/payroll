@@ -512,15 +512,13 @@ button {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .spinner,
-  .skeleton-header span,
-  .skeleton-header strong,
-  .skeleton-header p,
-  .skeleton-card span,
-  .skeleton-card strong,
-  .skeleton-band,
-  .skeleton-table span {
-    animation-duration: 1.6s;
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 
@@ -7502,7 +7500,32 @@ td {
 
   .nav-button {
     justify-content: flex-start;
-    min-height: 42px;
+    min-height: 44px;
+  }
+
+  .nav-submenu button {
+    min-height: 44px;
+  }
+
+  .topbar-icon {
+    height: 44px;
+    width: 44px;
+  }
+
+  .primary-button,
+  .secondary-button,
+  .text-button,
+  .icon-text-button,
+  .row-actions button {
+    min-height: 44px;
+  }
+
+  .modal header button,
+  .modal-header button,
+  .cbf-close-btn {
+    height: 44px;
+    min-height: 44px;
+    width: 44px;
   }
 
   .metric-grid,
@@ -7731,7 +7754,7 @@ td {
   }
 
   .topbar-search input {
-    font-size: 13px;
+    font-size: 16px;
   }
 
   .admin-chip {
@@ -10225,6 +10248,19 @@ td {
   }
 }
 
+@media (max-width: 400px) {
+  .modal-backdrop {
+    padding: 12px 0 0;
+  }
+
+  .modal {
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+    max-height: calc(100vh - 12px);
+    max-height: calc(100dvh - 12px);
+    padding: 16px;
+  }
+}
+
 .cbf-form {
   display: flex;
   flex-direction: column;
@@ -11784,7 +11820,7 @@ td {
   appearance: textfield;
   border: 1px solid #dfe5ef;
   border-radius: 6px;
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 600;
   height: 40px;
   text-align: center;
