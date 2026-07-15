@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Ban, CalendarClock, CheckCircle2, Eye, MoreVertical, Pencil, Plus, Receipt, Square, Tag, Trash2, X } from "lucide-react";
 import { supabase } from "../../supabase";
 import { isOfflineLikeError } from "../../lib/offlineSync";
@@ -781,6 +781,7 @@ function ExpenseMobileCardList({
   onRecordPayment: (expense: Expense) => void;
 }) {
   const [openMenuId, setOpenMenuId] = useState("");
+  const [menuOpensUp, setMenuOpensUp] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -790,6 +791,16 @@ function ExpenseMobileCardList({
     }
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
+  }, [openMenuId]);
+
+  useLayoutEffect(() => {
+    if (!openMenuId) {
+      setMenuOpensUp(false);
+      return;
+    }
+    const dropdown = menuRef.current?.querySelector<HTMLElement>(".ticket-menu-dropdown");
+    if (!dropdown) return;
+    setMenuOpensUp(dropdown.getBoundingClientRect().bottom > window.innerHeight);
   }, [openMenuId]);
 
   const today = todayKey();
@@ -866,7 +877,7 @@ function ExpenseMobileCardList({
                   <MoreVertical size={16} />
                 </button>
                 {openMenuId === expense.id && (
-                  <div className="ticket-menu-dropdown">
+                  <div className={`ticket-menu-dropdown${menuOpensUp ? " ticket-menu-dropdown--up" : ""}`}>
                     {canRecordPayment && (
                       <button onClick={() => { onRecordPayment(expense); setOpenMenuId(""); }} type="button">
                         <CheckCircle2 size={14} /> Record payment
