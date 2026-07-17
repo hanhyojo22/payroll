@@ -7784,7 +7784,40 @@ td {
   }
 
   .dash-modern-kpis {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  /* At 2-per-row the card is too narrow for the icon-beside-value row
+     layout - the 34px value font (sized for a 4-across desktop card)
+     overflowed past the card edge and the fixed 112px height + hidden
+     overflow clipped the helper text. Stack icon above text instead and
+     let the card size to its content. */
+  .dash-modern-kpi {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+    height: auto;
+    overflow: visible;
+    padding: 14px;
+  }
+
+  .dash-modern-kpi-icon {
+    height: 36px;
+    width: 36px;
+  }
+
+  .dash-modern-kpi-value {
+    font-size: 1.3rem;
+    margin-top: 4px;
+  }
+
+  .dash-modern-kpi-label {
+    font-size: 11px;
+  }
+
+  .dash-modern-kpi-helper {
+    margin-top: 4px;
+    max-width: none;
   }
 
   .dash-modern-hero-badges,
