@@ -7571,9 +7571,12 @@ td {
     grid-template-columns: repeat(3, minmax(110px, 1fr));
   }
 
-  .emp-panels,
-  .emp-summary-cards {
+  .emp-panels {
     grid-template-columns: 1fr;
+  }
+
+  .emp-summary-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .sidebar {
@@ -8014,9 +8017,22 @@ td {
     padding: 14px;
   }
 
+  /* At 2-per-row the icon-beside-value row layout is too narrow: the
+     fixed 80px height + overflow:hidden clipped the helper caption (and
+     sometimes the label itself) once the label wrapped to two lines.
+     Stack icon above text and let the card size to its content. */
   .attendance-stat-card {
-    height: 80px;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+    height: auto;
+    overflow: visible;
     padding: 14px;
+  }
+
+  .attendance-stat-icon {
+    height: 36px;
+    width: 36px;
   }
 
   .metric p {
@@ -11801,7 +11817,7 @@ td {
   }
 
   .attendance-top-grid {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -11927,19 +11943,40 @@ td {
 }
 
 @media (max-width: 640px) {
+  /* At 2-per-row the icon-beside-value row layout is too narrow for the
+     large value font, and the fixed height + overflow:hidden clips the
+     helper text once it wraps. Stack icon above text instead. */
   .subcon-ticket-stat {
-    height: 80px;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+    height: auto;
+    overflow: visible;
     padding: 14px;
   }
 
+  .subcon-ticket-stat-icon {
+    height: 36px;
+    width: 36px;
+  }
+
   .subcon-ticket-stat strong {
-    font-size: var(--font-size-xl);
+    font-size: 1.3rem;
+    margin-top: 4px;
+  }
+
+  .subcon-ticket-stat-text > span:first-child {
+    font-size: 11px;
+  }
+
+  .subcon-ticket-stat .subcon-ticket-stat-helper {
+    margin-top: 4px;
   }
 }
 
 @media (max-width: 640px) {
   .subcon-ticket-stats {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
