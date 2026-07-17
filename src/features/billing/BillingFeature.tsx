@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { BadgeDollarSign, CheckCircle2, ChevronDown, Eye, FileText, Pencil, Plus, Send, Trash2, X } from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { BadgeDollarSign, CheckCircle2, ChevronDown, Eye, FileText, MoreVertical, Pencil, Plus, Send, Trash2, X } from "lucide-react";
 import {
   billingPeriodLabel,
   buildSubcontractorPayoutArtifacts,
@@ -201,6 +201,11 @@ export function BillingFeature({
 
   function collectiblesStatusFor(record: BillingRecord): string {
     return collectionStatusForRecord(record, collections, record.collectibles_collection_id);
+  }
+
+  function isRecordFullyPaid(record: BillingRecord): boolean {
+    return billingPaidState(collectionStatusFor(record)) === "paid" &&
+      (!record.collectibles_collection_id || billingPaidState(collectiblesStatusFor(record)) === "paid");
   }
 
   function openQuickCollect(record: BillingRecord, which: "collection" | "collectible") {
@@ -742,7 +747,7 @@ export function BillingFeature({
         </div>
       ) : (
         <>
-          <div className="billing-table-wrap">
+          <div className="billing-table-wrap billing-desktop-table-wrap">
             <table className="billing-table">
               <thead>
                 <tr>
@@ -761,9 +766,7 @@ export function BillingFeature({
               <tbody>
                 {paginatedBillingRecords.map((record) => {
                   const expanded = expandedRecordId === record.id;
-                  const isFullyPaid =
-                    billingPaidState(collectionStatusFor(record)) === "paid" &&
-                    (!record.collectibles_collection_id || billingPaidState(collectiblesStatusFor(record)) === "paid");
+                  const isFullyPaid = isRecordFullyPaid(record);
                   return (
                     <>
                       <tr className="expandable" key={record.id}>
@@ -898,6 +901,13 @@ export function BillingFeature({
               </tbody>
             </table>
           </div>
+          <BillingMobileCardList
+            isRecordFullyPaid={isRecordFullyPaid}
+            onDelete={(record) => void removeBilling(record)}
+            onEdit={setEditingRecord}
+            onViewDetails={setDetailsRecord}
+            records={paginatedBillingRecords}
+          />
           {billingRecords.length > BILLING_PAGE_SIZE && (
             <div className="attendance-footer">
               <span>
@@ -971,6 +981,114 @@ export function BillingFeature({
           settings={settings}
         />
       )}
+    </div>
+  );
+}
+
+function BillingMobileCardList({
+  isRecordFullyPaid,
+  onDelete,
+  onEdit,
+  onViewDetails,
+  records,
+}: {
+  isRecordFullyPaid: (record: BillingRecord) => boolean;
+  onDelete: (record: BillingRecord) => void;
+  onEdit: (record: BillingRecord) => void;
+  onViewDetails: (record: BillingRecord) => void;
+  records: BillingRecord[];
+}) {
+  const [openMenuId, setOpenMenuId] = useState("");
+  const [menuOpensUp, setMenuOpensUp] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!openMenuId) return;
+    function handleClick(event: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) setOpenMenuId("");
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [openMenuId]);
+
+  useLayoutEffect(() => {
+    if (!openMenuId) {
+      setMenuOpensUp(false);
+      return;
+    }
+    const dropdown = menuRef.current?.querySelector<HTMLElement>(".ticket-menu-dropdown");
+    if (!dropdown) return;
+    setMenuOpensUp(dropdown.getBoundingClientRect().bottom > window.innerHeight);
+  }, [openMenuId]);
+
+  if (records.length === 0) return null;
+
+  return (
+    <div className="billing-mobile-list">
+      {records.map((record) => {
+        const isFullyPaid = isRecordFullyPaid(record);
+        return (
+          <div className="billing-mobile-card" key={record.id}>
+            <div
+              className="billing-mobile-tap"
+              onClick={() => onViewDetails(record)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onViewDetails(record);
+                }
+              }}
+              role="button"
+              tabIndex={0}
+            >
+              <div className="employee-list-avatar">
+                <FileText size={18} />
+              </div>
+              <div className="billing-mobile-main">
+                <div className="billing-mobile-title-row">
+                  <strong>{record.invoice_no}</strong>
+                  <span className={`collection-status ${isFullyPaid ? "collected" : "pending"}`}>
+                    {isFullyPaid ? "Paid" : "Unpaid"}
+                  </span>
+                </div>
+                <span className="billing-mobile-subtitle">
+                  {monthNames[record.billing_month - 1]} {record.billing_year} · {billingPeriodLabel(record.billing_period)}
+                </span>
+                <span className="billing-mobile-meta">
+                  {record.total_tickets} tickets · {record.disputed_tickets} disputed · {record.billable_tickets} billable
+                </span>
+              </div>
+              <div className="billing-mobile-side">
+                <strong>{currency.format(record.billing_amount)}</strong>
+                <small>Collectibles {currency.format(record.collectibles_amount)}</small>
+              </div>
+            </div>
+            <div className="ticket-menu-wrap billing-mobile-kebab-wrap" ref={openMenuId === record.id ? menuRef : undefined}>
+              <button
+                aria-label="More actions"
+                className="expense-mobile-kebab"
+                onClick={() => setOpenMenuId((prev) => prev === record.id ? "" : record.id)}
+                type="button"
+              >
+                <MoreVertical size={16} />
+              </button>
+              {openMenuId === record.id && (
+                <div className={`ticket-menu-dropdown${menuOpensUp ? " ticket-menu-dropdown--up" : ""}`}>
+                  <button onClick={() => { onViewDetails(record); setOpenMenuId(""); }} type="button">
+                    <Eye size={14} /> View details
+                  </button>
+                  <button onClick={() => { onEdit(record); setOpenMenuId(""); }} type="button">
+                    <Pencil size={14} /> Edit
+                  </button>
+                  <button onClick={() => { onDelete(record); setOpenMenuId(""); }} type="button">
+                    <Trash2 size={14} /> Delete
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

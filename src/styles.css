@@ -8967,6 +8967,109 @@ td {
   border-bottom: 1px solid var(--color-border-light);
 }
 
+.billing-mobile-list {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  display: none;
+  flex-direction: column;
+  padding: 4px 14px;
+}
+
+.billing-mobile-card {
+  align-items: center;
+  border-bottom: 1px solid var(--color-border-light);
+  display: flex;
+  gap: 4px;
+}
+
+.billing-mobile-card:last-child {
+  border-bottom: none;
+}
+
+.billing-mobile-tap {
+  align-items: flex-start;
+  cursor: pointer;
+  display: flex;
+  flex: 1 1 auto;
+  gap: 11px;
+  min-width: 0;
+  padding: 14px 0;
+}
+
+.billing-mobile-tap:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.billing-mobile-main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.billing-mobile-title-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.billing-mobile-title-row strong {
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+}
+
+.billing-mobile-subtitle {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.billing-mobile-meta {
+  color: var(--color-text-tertiary);
+  font-size: 11.5px;
+  margin-top: 6px;
+}
+
+.billing-mobile-side {
+  align-items: flex-end;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 2px;
+  text-align: right;
+}
+
+.billing-mobile-side strong {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.billing-mobile-side small {
+  color: var(--color-text-tertiary);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.billing-mobile-kebab-wrap {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 760px) {
+  .billing-desktop-table-wrap {
+    display: none;
+  }
+
+  .billing-mobile-list {
+    display: flex;
+  }
+}
+
 .personal-expense-more {
   border-top: 1px solid var(--color-border-light);
   margin-top: 4px;
