@@ -652,7 +652,7 @@ function CollectionDetailsModal({ collection, onClose }: { collection: Collectio
                 <h2>Payment ledger</h2>
               </div>
             </div>
-            <div className="collection-table-wrap">
+            <div className="collection-table-wrap collection-ledger-table-wrap">
               <table className="collection-table">
                 <thead>
                   <tr>
@@ -687,6 +687,30 @@ function CollectionDetailsModal({ collection, onClose }: { collection: Collectio
                 </tbody>
               </table>
             </div>
+            {paginatedPayments.length > 0 && (
+              <div className="collection-ledger-mobile-list">
+                {paginatedPayments.map((payment) => (
+                  <div className={`collection-ledger-mobile-row${payment.is_void ? " void-row" : ""}`} key={payment.id}>
+                    <div className="collection-ledger-mobile-main">
+                      <strong>{payment.payment_date}</strong>
+                      <span>{paymentMethodLabel(payment.payment_method)}{payment.reference_number ? ` · ${payment.reference_number}` : ""}</span>
+                      {(payment.is_void ? `Void: ${payment.void_reason}` : payment.notes) && (
+                        <small>{payment.is_void ? `Void: ${payment.void_reason}` : payment.notes}</small>
+                      )}
+                    </div>
+                    <div className="collection-ledger-mobile-side">
+                      <strong>{currency.format(payment.amount)}</strong>
+                      {payment.is_void
+                        ? <span className="collection-status archived">Void</span>
+                        : <span className="collection-status collected">Posted</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {sortedPayments.length === 0 && (
+              <p className="collection-ledger-empty">No payments recorded.</p>
+            )}
             {sortedPayments.length > PAYMENTS_PAGE_SIZE && (
               <div className="attendance-footer">
                 <span>

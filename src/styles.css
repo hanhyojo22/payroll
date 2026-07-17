@@ -11281,6 +11281,71 @@ td {
 .collection-section-heading h2 { margin: 0; }
 .void-row { opacity: .6; text-decoration: line-through; }
 
+.collection-ledger-mobile-list {
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.collection-ledger-mobile-row {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  padding: 12px;
+}
+
+.collection-ledger-mobile-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.collection-ledger-mobile-main strong {
+  font-size: 13px;
+}
+
+.collection-ledger-mobile-main span {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collection-ledger-mobile-main small {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collection-ledger-mobile-side {
+  align-items: flex-end;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 4px;
+  text-align: right;
+}
+
+.collection-ledger-mobile-side strong {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.collection-ledger-empty {
+  color: var(--color-text-tertiary);
+  display: none;
+  font-size: 13px;
+  padding: 16px;
+  text-align: center;
+}
+
 /* Expense details modal */
 .expense-details-modal { max-width: 960px; width: 96vw; }
 .expense-details-modal-body { display: grid; gap: 20px; padding: 20px; }
@@ -11388,13 +11453,62 @@ td {
 
 @media (max-width: 760px) {
   .collection-page-header, .collection-toolbar { align-items: stretch; flex-direction: column; }
-  .collection-summary-grid, .collection-detail-card { grid-template-columns: 1fr; }
+  .collection-summary-grid { grid-template-columns: 1fr; }
   .collection-aging { display: none; }
   .collection-page-header button, .collection-header-actions { width: 100%; }
   /* .collection-toolbar switches to a column, so the search field's
      "1 1 240px" flex-basis (meant as a minimum width in a row) is read
      as a minimum height instead, ballooning the field to 240px tall. */
   .collection-search-field { flex: 0 0 auto; }
+
+  /* View-details modal: the desktop version is a wide, dashboard-style
+     layout (big stat cards, a 4-col detail grid, a wide ledger table).
+     Shrink and simplify it for mobile instead of just squeezing the same
+     layout into a narrow column. */
+  .collection-details-modal-body {
+    gap: 14px;
+    padding: 14px;
+  }
+
+  .collection-summary-card {
+    gap: 12px;
+    padding: 14px;
+  }
+
+  .collection-summary-icon {
+    height: 36px;
+    width: 36px;
+  }
+
+  .collection-summary-text {
+    gap: 3px;
+  }
+
+  .collection-summary-text strong {
+    font-size: 1.05rem;
+  }
+
+  .collection-summary-text span {
+    font-size: .72rem;
+  }
+
+  .collection-detail-card {
+    gap: 12px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 14px;
+  }
+
+  .collection-ledger-table-wrap {
+    display: none;
+  }
+
+  .collection-ledger-mobile-list {
+    display: flex;
+  }
+
+  .collection-ledger-empty {
+    display: block;
+  }
 }
 
 @media (max-width: 400px) {
