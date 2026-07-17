@@ -4546,7 +4546,7 @@ function SubconDailyTicketView({
       ) : filteredSubcons.length === 0 ? (
         <div className="panel"><p className="muted">No subcontractors match your search.</p></div>
       ) : (
-        <div className="table-wrap">
+        <div className="table-wrap ticket-table-wrap">
           <table className="ticket-table">
             <thead>
               <tr>
@@ -4668,6 +4668,121 @@ function SubconDailyTicketView({
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {filteredSubcons.length > 0 && (
+        <div className="ticket-mobile-list">
+          {filteredSubcons.map((subcontractor) => {
+            const values = draftValuesFor(subcontractor.id);
+            const gross = billableGrossFor(subcontractor);
+            const dirty = isDirty(subcontractor);
+            const busy = busySubconId === subcontractor.id;
+            const saved = savedIds.has(subcontractor.id);
+            return (
+              <div
+                className={`ticket-mobile-card${dirty ? " ticket-mobile-card--dirty" : saved ? " ticket-mobile-card--saved" : ""}`}
+                key={subcontractor.id}
+              >
+                <div className="ticket-mobile-card-header">
+                  <div className="employee-list-identity">
+                    <div className="employee-list-avatar">
+                      <span>{subcontractor.name.split(" ").filter(Boolean).slice(0, 2).map((p) => p[0]).join("").toUpperCase() || "S"}</span>
+                    </div>
+                    <RecordTitle
+                      notes={`Install ₱${toNumber(subcontractor.installation_rate).toLocaleString()} · Repair ₱${toNumber(subcontractor.repair_rate).toLocaleString()}`}
+                      title={subcontractor.name}
+                    />
+                  </div>
+                  <strong className="ticket-mobile-card-gross">{currency.format(gross)}</strong>
+                </div>
+                <div className="ticket-mobile-input-grid">
+                  <label className="ticket-mobile-input-tile">
+                    <span>Repair</span>
+                    <input
+                      aria-label={`Repair tickets for ${subcontractor.name}`}
+                      min="0"
+                      step="1"
+                      type="number"
+                      value={values.repair}
+                      onChange={(e) => setDrafts((current) => ({
+                        ...current,
+                        [subcontractor.id]: { ...draftValuesFor(subcontractor.id), repair: normalizeTicketCount(e.target.value) },
+                      }))}
+                    />
+                  </label>
+                  <label className="ticket-mobile-input-tile">
+                    <span>Installation</span>
+                    <input
+                      aria-label={`Install tickets for ${subcontractor.name}`}
+                      min="0"
+                      step="1"
+                      type="number"
+                      value={values.install}
+                      onChange={(e) => setDrafts((current) => ({
+                        ...current,
+                        [subcontractor.id]: { ...draftValuesFor(subcontractor.id), install: normalizeTicketCount(e.target.value) },
+                      }))}
+                    />
+                  </label>
+                  <label className="ticket-mobile-input-tile ticket-mobile-input-tile--dispute">
+                    <span>Disputed Install</span>
+                    <input
+                      aria-label={`Disputed install tickets for ${subcontractor.name}`}
+                      disabled={normalizeTicketCount(values.install) === 0}
+                      max={normalizeTicketCount(values.install)}
+                      min="0"
+                      step="1"
+                      type="number"
+                      value={Math.min(normalizeTicketCount(values.install), normalizeTicketCount(values.disputedInstall))}
+                      onChange={(e) => setDrafts((current) => ({
+                        ...current,
+                        [subcontractor.id]: {
+                          ...draftValuesFor(subcontractor.id),
+                          disputedInstall: Math.min(normalizeTicketCount(values.install), normalizeTicketCount(e.target.value)),
+                        },
+                      }))}
+                    />
+                  </label>
+                  <label className="ticket-mobile-input-tile ticket-mobile-input-tile--dispute">
+                    <span>Disputed Repair</span>
+                    <input
+                      aria-label={`Disputed repair tickets for ${subcontractor.name}`}
+                      disabled={normalizeTicketCount(values.repair) === 0}
+                      max={normalizeTicketCount(values.repair)}
+                      min="0"
+                      step="1"
+                      type="number"
+                      value={Math.min(normalizeTicketCount(values.repair), normalizeTicketCount(values.disputedRepair))}
+                      onChange={(e) => setDrafts((current) => ({
+                        ...current,
+                        [subcontractor.id]: {
+                          ...draftValuesFor(subcontractor.id),
+                          disputedRepair: Math.min(normalizeTicketCount(values.repair), normalizeTicketCount(e.target.value)),
+                        },
+                      }))}
+                    />
+                  </label>
+                </div>
+                <div className="ticket-mobile-card-footer">
+                  {busy ? (
+                    <span className="ticket-mobile-save-status"><Spinner size="small" /> Saving…</span>
+                  ) : saved ? (
+                    <span className="ticket-mobile-save-status ticket-mobile-save-status--saved"><CheckCircle2 size={16} /> Saved</span>
+                  ) : (
+                    <button
+                      className="ticket-mobile-save-button"
+                      disabled={!dirty}
+                      onClick={() => void saveRowAndMark(subcontractor)}
+                      type="button"
+                    >
+                      <Save size={15} /> Save
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
