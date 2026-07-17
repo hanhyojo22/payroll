@@ -2362,13 +2362,34 @@ input[type="radio"] {
 }
 
 @media (max-width: 640px) {
+  /* At 2-per-row the icon-beside-value row layout is too narrow for the
+     large value font, and the fixed height + overflow:hidden clips the
+     helper text once it wraps. Stack icon above text instead. */
   .payroll-metric {
-    height: 80px;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+    height: auto;
+    overflow: visible;
     padding: 14px;
   }
 
+  .payroll-metric-icon {
+    height: 36px;
+    width: 36px;
+  }
+
   .payroll-metric strong {
-    font-size: var(--font-size-xl);
+    font-size: 1.3rem;
+    margin-top: 4px;
+  }
+
+  .payroll-metric-text > span:first-child {
+    font-size: 11px;
+  }
+
+  .payroll-metric .payroll-metric-helper {
+    margin-top: 4px;
   }
 }
 
@@ -8351,7 +8372,7 @@ td {
 @media (max-width: 480px) {
   .expense-kpi-row,
   .payroll-metrics {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -8916,13 +8937,34 @@ td {
 .billing-stat-overdue .billing-stat-icon { background: rgba(220, 38, 38, 0.1); color: #dc2626; }
 
 @media (max-width: 640px) {
+  /* At 2-per-row the icon-beside-value row layout is too narrow for the
+     large value font, and the fixed height + overflow:hidden clips the
+     helper text once it wraps. Stack icon above text instead. */
   .billing-stat {
-    height: 80px;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+    height: auto;
+    overflow: visible;
     padding: 14px;
   }
 
+  .billing-stat-icon {
+    height: 36px;
+    width: 36px;
+  }
+
   .billing-stat-value {
-    font-size: var(--font-size-xl);
+    font-size: 1.3rem;
+    margin-top: 4px;
+  }
+
+  .billing-stat-label {
+    font-size: 11px;
+  }
+
+  .billing-stat-helper {
+    margin-top: 4px;
   }
 }
 
@@ -11173,10 +11215,6 @@ td {
     grid-template-columns: 1fr;
   }
 
-  .billing-summary-split {
-    grid-template-columns: 1fr;
-  }
-
   .billing-form-fields {
     grid-template-columns: 1fr;
   }
@@ -11662,7 +11700,7 @@ td {
 }
 
 @media (max-width: 768px) {
-  .expense-summary-grid { grid-template-columns: 1fr; }
+  .expense-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .expense-detail-card { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
   .expense-ledger-table-wrap {
@@ -11694,7 +11732,7 @@ td {
 
 @media (max-width: 760px) {
   .collection-page-header, .collection-toolbar { align-items: stretch; flex-direction: column; }
-  .collection-summary-grid { grid-template-columns: 1fr; }
+  .collection-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .collection-aging { display: none; }
   .collection-page-header button, .collection-header-actions { width: 100%; }
   /* .collection-toolbar switches to a column, so the search field's
@@ -13004,6 +13042,38 @@ td {
   color: var(--color-danger-text);
 }
 
+@media (max-width: 640px) {
+  /* At 2-per-row the icon-beside-value row layout is too narrow for the
+     large value font, and the fixed height + overflow:hidden clips the
+     helper text once it wraps. Stack icon above text instead. */
+  .reports-metric-card {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+    height: auto;
+    overflow: visible;
+    padding: 14px;
+  }
+
+  .reports-metric-icon {
+    height: 36px;
+    width: 36px;
+  }
+
+  .reports-metric-card strong {
+    font-size: 1.3rem;
+    margin-top: 4px;
+  }
+
+  .reports-metric-card p {
+    font-size: 11px;
+  }
+
+  .reports-metric-card span {
+    margin-top: 4px;
+  }
+}
+
 .reports-trend-chart {
   align-items: end;
   display: grid;
@@ -13349,9 +13419,12 @@ td {
 
   .reports-tabbar,
   .reports-overview-grid,
-  .reports-kpi-grid,
   .reports-hero-meta {
     grid-template-columns: 1fr;
+  }
+
+  .reports-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .reports-trend-chart {
