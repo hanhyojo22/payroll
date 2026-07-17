@@ -1332,6 +1332,16 @@ input[type="radio"] {
   justify-content: space-between;
   min-width: 0;
   padding: 0 24px 0 18px;
+  /* .content is position:relative, which (as a grid-item sibling of
+     .topbar) paints above a static .topbar regardless of any z-index set
+     on descendants further down, since z-index only competes within the
+     stacking context it escapes to. Giving .topbar its own low z-index
+     pulls its whole subtree - including the notification/account/search
+     dropdowns - above .content instead of behind it. Stay well under the
+     mobile sidebar (z-index 40) and its backdrop (30) so the nav drawer
+     still overlays the topbar correctly. */
+  position: relative;
+  z-index: 5;
 }
 
 .topbar-left {
@@ -7696,6 +7706,19 @@ td {
 
   .sidebar.collapsed {
     transform: translateX(-100%);
+  }
+
+  /* Anchor to topbar-actions instead of the bell icon: at phone widths the
+     dropdown's right:0 + calc(100vw - 32px) width assumes it sits flush
+     with the viewport edge, but the fullscreen and account buttons sit to
+     its right, pushing the anchor inward and clipping the dropdown off the
+     left edge of the screen. */
+  .notification-menu {
+    position: static;
+  }
+
+  .topbar-actions {
+    position: relative;
   }
 
   .sidebar-brand h1 {
