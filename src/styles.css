@@ -11914,6 +11914,11 @@ td {
   color: var(--color-text-secondary);
   font-size: 11px;
   font-weight: 600;
+  line-height: 1.3;
+  /* Reserve room for a two-line label (name + rate, or a wrapped
+     "Disputed Install"/"Disputed Repair") so every tile's input lands on
+     the same row even when its own label only takes one line. */
+  min-height: 2.6em;
 }
 
 .ticket-mobile-input-tile span small {
