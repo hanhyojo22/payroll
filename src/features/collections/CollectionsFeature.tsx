@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type InputHTMLAttributes, type ReactNode } from "react";
-import { AlertTriangle, Archive, CheckCircle2, Eye, Plus, Receipt, RotateCcw, Search, Wallet, X } from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type InputHTMLAttributes, type ReactNode } from "react";
+import { AlertTriangle, Archive, CheckCircle2, Eye, MoreVertical, Plus, Receipt, RotateCcw, Search, Wallet, X } from "lucide-react";
 import { collectionAgingBucket, collectionStatus, dateCollectedFor, validateCollectionPayment, withCollectionTotals } from "../../domain/collections";
 import { isOfflineLikeError } from "../../lib/offlineSync";
 import { supabase } from "../../supabase";
@@ -341,7 +341,7 @@ function CollectionWorkspace({
       </div>
       <p className="collection-results-count">{visible.length} receivable{visible.length === 1 ? "" : "s"} found</p>
 
-      <div className="collection-table-wrap">
+      <div className="collection-table-wrap collection-desktop-table-wrap">
         <table className="collection-table">
           <thead>
             <tr>
@@ -423,6 +423,13 @@ function CollectionWorkspace({
           </tbody>
         </table>
       </div>
+      <CollectionMobileCardList
+        collections={paginatedCollections}
+        historyMode={historyMode}
+        onArchiveToggle={toggleArchive}
+        onRecordPayment={setPayingCollection}
+        onViewDetails={setViewing}
+      />
       {visible.length > COLLECTIONS_PAGE_SIZE && (
         <div className="attendance-footer">
           <span>
@@ -459,6 +466,120 @@ function CollectionWorkspace({
           onClose={() => setViewing(null)}
         />
       )}
+    </div>
+  );
+}
+
+function CollectionMobileCardList({
+  collections,
+  historyMode,
+  onArchiveToggle,
+  onRecordPayment,
+  onViewDetails,
+}: {
+  collections: CollectionReminder[];
+  historyMode: boolean;
+  onArchiveToggle: (collection: CollectionReminder) => void;
+  onRecordPayment: (collection: CollectionReminder) => void;
+  onViewDetails: (collection: CollectionReminder) => void;
+}) {
+  const [openMenuId, setOpenMenuId] = useState("");
+  const [menuOpensUp, setMenuOpensUp] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!openMenuId) return;
+    function handleClick(event: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) setOpenMenuId("");
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [openMenuId]);
+
+  useLayoutEffect(() => {
+    if (!openMenuId) {
+      setMenuOpensUp(false);
+      return;
+    }
+    const dropdown = menuRef.current?.querySelector<HTMLElement>(".ticket-menu-dropdown");
+    if (!dropdown) return;
+    setMenuOpensUp(dropdown.getBoundingClientRect().bottom > window.innerHeight);
+  }, [openMenuId]);
+
+  if (collections.length === 0) return null;
+
+  return (
+    <div className="collection-mobile-list">
+      {collections.map((collection) => {
+        const status = collectionStatus(collection);
+        const isCollected = status === "collected";
+        const isArchived = Boolean(collection.archived_at);
+        const dateCollected = dateCollectedFor(collection);
+        const canRecordPayment = !isCollected && !isArchived;
+
+        return (
+          <div className="collection-mobile-card" key={collection.id}>
+            <div
+              className="collection-mobile-tap"
+              onClick={() => onViewDetails(collection)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onViewDetails(collection);
+                }
+              }}
+              role="button"
+              tabIndex={0}
+            >
+              <div className="employee-list-avatar">
+                <Receipt size={18} />
+              </div>
+              <div className="collection-mobile-main">
+                <div className="collection-mobile-title-row">
+                  <strong>{collection.collection_no ?? "Pending sync"}</strong>
+                  <span className={`collection-status ${status}`}>{statusLabel(status)}</span>
+                </div>
+                <span className="collection-mobile-subtitle">{collection.client_name}</span>
+                <span className="collection-mobile-meta">
+                  {isCollected && dateCollected ? `Collected ${dateCollected}` : `Due ${collection.due_date}`}
+                </span>
+              </div>
+              <div className="collection-mobile-side">
+                <strong className={isCollected ? "collection-bal-zero" : ""}>{currency.format(collection.outstanding_balance)}</strong>
+                <small>of {currency.format(collection.amount)}</small>
+              </div>
+            </div>
+            <div className="ticket-menu-wrap collection-mobile-kebab-wrap" ref={openMenuId === collection.id ? menuRef : undefined}>
+              <button
+                aria-label="More actions"
+                className="expense-mobile-kebab"
+                onClick={() => setOpenMenuId((prev) => prev === collection.id ? "" : collection.id)}
+                type="button"
+              >
+                <MoreVertical size={16} />
+              </button>
+              {openMenuId === collection.id && (
+                <div className={`ticket-menu-dropdown${menuOpensUp ? " ticket-menu-dropdown--up" : ""}`}>
+                  {historyMode && (
+                    <button onClick={() => { onViewDetails(collection); setOpenMenuId(""); }} type="button">
+                      <Eye size={14} /> View details
+                    </button>
+                  )}
+                  {canRecordPayment && (
+                    <button onClick={() => { onRecordPayment(collection); setOpenMenuId(""); }} type="button">
+                      <CheckCircle2 size={14} /> Record payment
+                    </button>
+                  )}
+                  <button onClick={() => { onArchiveToggle(collection); setOpenMenuId(""); }} type="button">
+                    {isArchived ? <RotateCcw size={14} /> : <Archive size={14} />}
+                    {isArchived ? "Restore" : "Archive"}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
