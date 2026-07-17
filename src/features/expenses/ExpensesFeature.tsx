@@ -1268,13 +1268,13 @@ function ExpenseDetailsModal({
                 <p>Audit trail</p>
                 <h2>Payment history</h2>
               </div>
-              {canRecordPayment && expense.payroll_run_id === null && expense.subcontractor_payment_reminder_id === null && (
+              {categoryScope === "company" && canRecordPayment && expense.payroll_run_id === null && expense.subcontractor_payment_reminder_id === null && (
                 <button className="billing-btn primary" onClick={onRecordPayment} type="button">
                   <CheckCircle2 size={15} /> Record Payment
                 </button>
               )}
             </div>
-            <div className="billing-table-wrap">
+            <div className="billing-table-wrap expense-ledger-table-wrap">
               <table className="billing-table">
                 <thead>
                   <tr>
@@ -1307,6 +1307,27 @@ function ExpenseDetailsModal({
                 </tbody>
               </table>
             </div>
+            {payments.length > 0 && (
+              <div className="expense-ledger-mobile-list">
+                {payments.map((payment) => (
+                  <div className="expense-ledger-mobile-row" key={payment.id}>
+                    <div className="expense-ledger-mobile-main">
+                      <strong>{payment.payment_date}</strong>
+                      <span>{paymentMethodLabel(payment.payment_method)}{payment.reference_number ? ` · ${payment.reference_number}` : ""}</span>
+                    </div>
+                    <div className="expense-ledger-mobile-side">
+                      <strong>{currency.format(payment.amount)}</strong>
+                      <button aria-label="Delete payment" onClick={() => void onDeletePayment(payment)} type="button">
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {payments.length === 0 && (
+              <p className="expense-ledger-empty">No payments recorded yet.</p>
+            )}
           </section>
         </div>
       </div>

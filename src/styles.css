@@ -11500,6 +11500,80 @@ td {
 .expense-section-heading p { color: #64748b; font-size: .74rem; font-weight: 800; letter-spacing: .1em; margin: 0 0 5px; text-transform: uppercase; }
 .expense-section-heading h2 { margin: 0; }
 .expense-remaining-note { color: var(--color-text-tertiary); font-size: var(--font-size-sm); margin: -4px 0 4px; }
+
+.expense-ledger-mobile-list {
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.expense-ledger-mobile-row {
+  align-items: center;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  padding: 12px;
+}
+
+.expense-ledger-mobile-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.expense-ledger-mobile-main strong {
+  font-size: 13px;
+}
+
+.expense-ledger-mobile-main span {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.expense-ledger-mobile-side {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 10px;
+}
+
+.expense-ledger-mobile-side strong {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.expense-ledger-mobile-side button {
+  align-items: center;
+  background: var(--color-surface-secondary);
+  border: 0;
+  border-radius: var(--radius-pill);
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  display: inline-flex;
+  height: 32px;
+  justify-content: center;
+  width: 32px;
+}
+
+.expense-ledger-mobile-side button:hover {
+  background: var(--color-border-light);
+  color: var(--color-text);
+}
+
+.expense-ledger-empty {
+  color: var(--color-text-tertiary);
+  display: none;
+  font-size: 13px;
+  padding: 16px;
+  text-align: center;
+}
 .payment-history-details-modal .modal-header {
   align-items: flex-start;
 }
@@ -11555,7 +11629,20 @@ td {
 }
 
 @media (max-width: 768px) {
-  .expense-summary-grid, .expense-detail-card { grid-template-columns: 1fr; }
+  .expense-summary-grid { grid-template-columns: 1fr; }
+  .expense-detail-card { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+  .expense-ledger-table-wrap {
+    display: none;
+  }
+
+  .expense-ledger-mobile-list {
+    display: flex;
+  }
+
+  .expense-ledger-empty {
+    display: block;
+  }
 }
 .collection-balance-callout { align-items: center; background: #f4f7fb; border-radius: 10px; display: flex; justify-content: space-between; padding: 14px; }
 .collection-balance-callout span { color: #667085; }
