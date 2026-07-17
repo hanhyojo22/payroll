@@ -2254,7 +2254,7 @@ function DashboardModern({
                   <tbody>
                     {topEmployeeRows.map((row) => (
                       <tr key={row.employeeId}>
-                        <td>
+                        <td data-label="Employee">
                           <div className="dash-modern-top-employee">
                             <div className="dash-modern-top-avatar">
                               {row.profilePhotoUrl ? <img alt="" src={row.profilePhotoUrl} /> : <span>{row.employeeName.split(" ").filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "E"}</span>}
@@ -2262,10 +2262,10 @@ function DashboardModern({
                             <strong>{row.employeeName}</strong>
                           </div>
                         </td>
-                        <td className="num">{row.install}</td>
-                        <td className="num">{row.repair}</td>
-                        <td className="num">{row.totalTickets}</td>
-                        <td className="num">{currency.format(row.earnings)}</td>
+                        <td className="num" data-label="Install">{row.install}</td>
+                        <td className="num" data-label="Repair">{row.repair}</td>
+                        <td className="num" data-label="Total Tickets">{row.totalTickets}</td>
+                        <td className="num" data-label="Total Earnings">{currency.format(row.earnings)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -2313,7 +2313,7 @@ function DashboardModern({
                   <tbody>
                     {topSubcontractorRows.map((row) => (
                       <tr key={row.subcontractorId}>
-                        <td>
+                        <td data-label="Subcontractor">
                           <div className="dash-modern-top-employee">
                             <div className="dash-modern-top-avatar dash-modern-top-avatar-subcon">
                               <span>{row.subcontractorName.split(" ").filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "S"}</span>
@@ -2321,10 +2321,10 @@ function DashboardModern({
                             <strong>{row.subcontractorName}</strong>
                           </div>
                         </td>
-                        <td className="num">{row.install}</td>
-                        <td className="num">{row.repair}</td>
-                        <td className="num">{row.totalTickets}</td>
-                        <td className="num">{currency.format(row.earnings)}</td>
+                        <td className="num" data-label="Install">{row.install}</td>
+                        <td className="num" data-label="Repair">{row.repair}</td>
+                        <td className="num" data-label="Total Tickets">{row.totalTickets}</td>
+                        <td className="num" data-label="Total Earnings">{currency.format(row.earnings)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -6357,9 +6357,9 @@ export function EmployeeDetailsView({
                             : normalizeTicketCount(entry.installation_tickets) * toNumber(entry.installation_rate) + normalizeTicketCount(entry.repair_tickets) * toNumber(entry.repair_rate);
                           return (
                             <tr key={entry.id}>
-                              <td>{new Date(`${entry.entry_date}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</td>
-                              <td>{totalTickets}</td>
-                              <td><strong>{currency.format(earnings)}</strong></td>
+                              <td data-label="Date">{new Date(`${entry.entry_date}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</td>
+                              <td data-label="Tickets">{totalTickets}</td>
+                              <td data-label="Daily Earnings"><strong>{currency.format(earnings)}</strong></td>
                             </tr>
                           );
                         })}
@@ -6388,15 +6388,15 @@ export function EmployeeDetailsView({
                           const earnings = computeDailyEarnings(dailyRate, entry.status, entry.time_in ?? "08:00", entry.time_out ?? "17:00");
                           return (
                             <tr key={entry.id} className={entry.status === "absent" ? "emp-att-absent" : entry.status === "half_day" ? "emp-att-leave" : ""}>
-                              <td>{new Date(`${entry.entry_date}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</td>
-                              <td>{entry.status === "absent" ? "—" : formatTime(entry.time_in ?? "08:00")}</td>
-                              <td>{entry.status === "absent" ? "—" : formatTime(entry.time_out ?? "17:00")}</td>
-                              <td>
+                              <td data-label="Date">{new Date(`${entry.entry_date}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</td>
+                              <td data-label="Time In">{entry.status === "absent" ? "—" : formatTime(entry.time_in ?? "08:00")}</td>
+                              <td data-label="Time Out">{entry.status === "absent" ? "—" : formatTime(entry.time_out ?? "17:00")}</td>
+                              <td data-label="Status">
                                 <span className={`att-history-badge ${entry.status}`}>
                                   {entry.status === "present" ? "Present" : entry.status === "absent" ? "Absent" : "On Leave"}
                                 </span>
                               </td>
-                              <td><strong>{entry.status === "absent" ? "—" : currency.format(earnings)}</strong></td>
+                              <td data-label="Daily Earnings"><strong>{entry.status === "absent" ? "—" : currency.format(earnings)}</strong></td>
                             </tr>
                           );
                         })}

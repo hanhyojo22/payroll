@@ -1246,7 +1246,7 @@ function BillingDetailsModal({
                 </thead>
                 <tbody>
                   {employeeRows.length === 0 ? (
-                    <tr><td colSpan={5}>No employee ticket entries for this period.</td></tr>
+                    <tr><td className="collection-empty" colSpan={5}>No employee ticket entries for this period.</td></tr>
                   ) : employeeRows.map((row) => (
                     <tr key={row.employeeId}>
                       <td data-label="Employee">{row.employeeName}</td>
@@ -1285,7 +1285,7 @@ function BillingDetailsModal({
                 </thead>
                 <tbody>
                   {record.subcon_items.length === 0 ? (
-                    <tr><td colSpan={7}>No subcontractor rows for this billing.</td></tr>
+                    <tr><td className="collection-empty" colSpan={7}>No subcontractor rows for this billing.</td></tr>
                   ) : record.subcon_items.map((item) => {
                     const itemPayments = paymentsByItemId.get(item.id) ?? [];
                     return (
@@ -1801,7 +1801,7 @@ function BillingForm({
                     </thead>
                     <tbody>
                       {employeeRows.length === 0 ? (
-                        <tr><td colSpan={5}>No employee ticket entries for this period.</td></tr>
+                        <tr><td className="collection-empty" colSpan={5}>No employee ticket entries for this period.</td></tr>
                       ) : employeeRows.map((row) => (
                         <tr key={row.employeeId}>
                           <td className="billing-col-left" data-label="Employee">{row.employeeName}</td>

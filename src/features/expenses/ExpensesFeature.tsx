@@ -1288,11 +1288,11 @@ function ExpenseDetailsModal({
                 <tbody>
                   {payments.map((payment) => (
                     <tr key={payment.id}>
-                      <td>{payment.payment_date}</td>
-                      <td className="num">{currency.format(payment.amount)}</td>
-                      <td>{paymentMethodLabel(payment.payment_method)}</td>
-                      <td>{payment.reference_number || "—"}</td>
-                      <td>
+                      <td data-label="Date">{payment.payment_date}</td>
+                      <td className="num" data-label="Amount">{currency.format(payment.amount)}</td>
+                      <td data-label="Method">{paymentMethodLabel(payment.payment_method)}</td>
+                      <td data-label="Reference">{payment.reference_number || "—"}</td>
+                      <td data-label="Action">
                         <div className="billing-row-actions">
                           <button onClick={() => void onDeletePayment(payment)} title="Delete" type="button"><Trash2 size={14} /></button>
                         </div>

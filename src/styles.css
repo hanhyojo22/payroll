@@ -2634,7 +2634,8 @@ input[type="radio"] {
 }
 
 @media (max-width: 760px) {
-  .employee-list-panel:has(.payroll-mobile-list) .table-wrap {
+  .employee-list-panel:has(.payroll-mobile-list) .table-wrap,
+  .ph-table-wrap {
     display: none;
   }
 
@@ -4239,6 +4240,17 @@ input[type="radio"] {
   font-size: var(--font-size-sm);
   height: 56px;
   padding: 0 14px;
+}
+
+@media (max-width: 900px) {
+  /* The generic table->stacked-card fallback turns each <td> into its own
+     full-width row (label + value), so the fixed 56px row height meant
+     for a single table row now applies per stacked field and looks
+     oddly tall/cramped. Let it size to content instead. */
+  .dash-modern-top-table td {
+    height: auto;
+    padding: 8px 14px;
+  }
 }
 
 .dash-modern-top-employee {
@@ -8137,12 +8149,16 @@ td {
 
   td:last-child { border-bottom: 0; }
 
-  .empty-table {
+  .empty-table,
+  .collection-empty,
+  .reports-empty-cell {
     display: block;
     padding: 24px 10px;
   }
 
-  .empty-table::before { content: ""; }
+  .empty-table::before,
+  .collection-empty::before,
+  .reports-empty-cell::before { content: ""; }
 
   .record-title { min-width: 0; }
 
@@ -13070,6 +13086,18 @@ td {
   color: #0f172a;
   height: 60px;
   white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  /* The generic table->stacked-card fallback turns each <td> into its
+     own labeled row, so the fixed 60px height + nowrap meant for a
+     horizontally-scrolling desktop row now clips/crushes stacked
+     content instead. Let cells wrap and size to content once stacked. */
+  .reports-table td {
+    height: auto;
+    padding: 10px 0;
+    white-space: normal;
+  }
 }
 
 .reports-table tbody tr:hover td {

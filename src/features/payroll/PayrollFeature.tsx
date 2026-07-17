@@ -1665,7 +1665,8 @@ export function PayrollHistoryFeature({ employees, rows, tabs }: { employees: Em
       ) : filteredRows.length === 0 ? (
         <div className="panel"><p className="muted">No records match your search.</p></div>
       ) : (
-        <div className="table-wrap">
+        <>
+        <div className="table-wrap ph-table-wrap">
           <table className="ph-table">
             <thead>
               <tr>
@@ -1683,25 +1684,53 @@ export function PayrollHistoryFeature({ employees, rows, tabs }: { employees: Em
             <tbody>
               {paginatedRows.map((row) => (
                 <tr key={row.payrollNo}>
-                  <td className="ph-no">{row.payrollNo}</td>
-                  <td>{row.payPeriod}</td>
-                  <td>{empCode(row.employeeId)}</td>
-                  <td>
+                  <td className="ph-no" data-label="Payroll No.">{row.payrollNo}</td>
+                  <td data-label="Pay Period">{row.payPeriod}</td>
+                  <td data-label="Employee ID">{empCode(row.employeeId)}</td>
+                  <td data-label="Employee">
                     <div className="employee-list-identity">
                       <EmpAvatar employees={employees} employeeId={row.employeeId} employeeName={row.employeeName} />
                       <RecordTitle title={row.employeeName} notes={employees.find((e) => e.id === row.employeeId)?.email || "No email"} />
                     </div>
                   </td>
-                  <td>{row.department}</td>
-                  <td>{currency.format(row.grossPay)}</td>
-                  <td>{row.deductions > 0 ? currency.format(row.deductions) : "-"}</td>
-                  <td><strong>{currency.format(row.netPay)}</strong></td>
-                  <td>{row.processedDate}</td>
+                  <td data-label="Department">{row.department}</td>
+                  <td data-label="Gross Pay">{currency.format(row.grossPay)}</td>
+                  <td data-label="Deductions">{row.deductions > 0 ? currency.format(row.deductions) : "-"}</td>
+                  <td data-label="Net Pay"><strong>{currency.format(row.netPay)}</strong></td>
+                  <td data-label="Date Processed">{row.processedDate}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+        <div className="payroll-mobile-list">
+          {paginatedRows.map((row) => (
+            <div className="ticket-mobile-card payroll-mobile-card" key={row.payrollNo}>
+              <div className="ticket-mobile-card-header">
+                <div className="employee-list-identity">
+                  <EmpAvatar employees={employees} employeeId={row.employeeId} employeeName={row.employeeName} />
+                  <div className="record-title">
+                    <strong>{row.employeeName}</strong>
+                    <span>{row.department}</span>
+                    <span className="emp-mobile-card-badge">{empCode(row.employeeId)}</span>
+                  </div>
+                </div>
+                <strong className="ticket-mobile-card-gross">{currency.format(row.netPay)}</strong>
+              </div>
+              <div className="payroll-mobile-card-basis">
+                <span>{row.payrollNo} · {row.payPeriod}</span>
+                <small>Processed {row.processedDate}</small>
+              </div>
+              <div className="payroll-mobile-card-meta">
+                <span>Gross: {currency.format(row.grossPay)}</span>
+                {row.deductions > 0 && (
+                  <span className="payroll-mobile-card-deduction">Deductions: -{currency.format(row.deductions)}</span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+        </>
       )}
       {filteredRows.length > HISTORY_PAGE_SIZE && (
         <div className="attendance-footer">

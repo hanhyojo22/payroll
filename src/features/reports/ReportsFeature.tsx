@@ -1427,7 +1427,7 @@ function ReportTable<Row extends object>({
             rows.map((row, index) => (
               <tr key={index}>
                 {columns.map((column) => (
-                  <td className={column.align === "right" ? "num" : undefined} key={column.label}>
+                  <td className={column.align === "right" ? "num" : undefined} data-label={column.label} key={column.label}>
                     {column.render ? column.render(row) : String((row as Record<string, unknown>)[column.id] ?? "")}
                   </td>
                 ))}

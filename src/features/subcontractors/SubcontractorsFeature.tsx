@@ -1153,7 +1153,7 @@ function SubcontractorDetailsView({
                 <tbody>
                   {displaySummary.billingRows.length === 0 ? (
                     <tr>
-                      <td colSpan={8}>No payout records yet.</td>
+                      <td className="collection-empty" colSpan={8}>No payout records yet.</td>
                     </tr>
                   ) : displaySummary.billingRows.flatMap((row) => {
                     const payableReminder = paymentsByItemLeg.get(`${row.id}:payable`) ?? null;
@@ -1179,36 +1179,36 @@ function SubcontractorDetailsView({
 
                     return [
                       <tr key={`${row.id}-payable`}>
-                        <td>{periodLabel}</td>
-                        <td>1st Payout</td>
-                        <td className="num">
+                        <td data-label="Period">{periodLabel}</td>
+                        <td data-label="Payout">1st Payout</td>
+                        <td className="num" data-label="Tickets">
                           {row.install_tickets + row.repair_tickets} <span>I:{row.install_tickets} · R:{row.repair_tickets}</span>
                         </td>
-                        <td className="num">{currency.format(row.billing_amount)}</td>
-                        <td className="num">{row.payable_pct}%</td>
-                        <td className="num">{currency.format(row.payable_amount)}</td>
-                        <td>
+                        <td className="num" data-label="Gross Billed">{currency.format(row.billing_amount)}</td>
+                        <td className="num" data-label="Split">{row.payable_pct}%</td>
+                        <td className="num" data-label="Amount">{currency.format(row.payable_amount)}</td>
+                        <td data-label="Status">
                           <span className={`billing-payout-status ${payableStatus}`}>
                             {payableStatus}
                           </span>
                         </td>
-                        <td>{renderAction(payableReminder, payableStatus)}</td>
+                        <td data-label="Action">{renderAction(payableReminder, payableStatus)}</td>
                       </tr>,
                       <tr key={`${row.id}-remainder`}>
-                        <td>{periodLabel}</td>
-                        <td>2nd Payout</td>
-                        <td className="num">
+                        <td data-label="Period">{periodLabel}</td>
+                        <td data-label="Payout">2nd Payout</td>
+                        <td className="num" data-label="Tickets">
                           {row.install_tickets + row.repair_tickets} <span>I:{row.install_tickets} · R:{row.repair_tickets}</span>
                         </td>
-                        <td className="num">{currency.format(row.billing_amount)}</td>
-                        <td className="num">{100 - row.payable_pct}%</td>
-                        <td className="num">{currency.format(row.collection_amount)}</td>
-                        <td>
+                        <td className="num" data-label="Gross Billed">{currency.format(row.billing_amount)}</td>
+                        <td className="num" data-label="Split">{100 - row.payable_pct}%</td>
+                        <td className="num" data-label="Amount">{currency.format(row.collection_amount)}</td>
+                        <td data-label="Status">
                           <span className={`billing-payout-status ${remainderStatus}`}>
                             {remainderStatus}
                           </span>
                         </td>
-                        <td>{renderAction(remainderReminder, remainderStatus)}</td>
+                        <td data-label="Action">{renderAction(remainderReminder, remainderStatus)}</td>
                       </tr>,
                     ];
                   })}
@@ -1564,11 +1564,11 @@ function PayoutDetailsModal({
                 <tbody>
                   {history.map((paymentRecord) => (
                     <tr key={paymentRecord.id}>
-                      <td>{paymentRecord.payment_date}</td>
-                      <td className="num">{currency.format(paymentRecord.amount)}</td>
-                      <td>{paymentMethodLabel(paymentRecord.payment_method)}</td>
-                      <td>{paymentRecord.reference_number || "—"}</td>
-                      <td>
+                      <td data-label="Date">{paymentRecord.payment_date}</td>
+                      <td className="num" data-label="Amount">{currency.format(paymentRecord.amount)}</td>
+                      <td data-label="Method">{paymentMethodLabel(paymentRecord.payment_method)}</td>
+                      <td data-label="Reference">{paymentRecord.reference_number || "—"}</td>
+                      <td data-label="Action">
                         <div className="billing-row-actions">
                           <button onClick={() => void onDeletePayment(paymentRecord)} title="Delete" type="button"><Trash2 size={14} /></button>
                         </div>
