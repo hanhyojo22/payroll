@@ -719,22 +719,20 @@ export function BillingFeature({
             <span className="billing-stat-helper">All billing periods</span>
           </div>
         </div>
-        <div className="billing-summary-split">
-          <div className="billing-stat billing-stat-collection">
-            <div className="billing-stat-icon"><CheckCircle2 size={21} /></div>
-            <div className="billing-stat-text">
-              <span className="billing-stat-label">Collection</span>
-              <strong className="billing-stat-value">{currency.format(summary.totalCollections)}</strong>
-              <span className="billing-stat-helper">First to collect from client</span>
-            </div>
+        <div className="billing-stat billing-stat-collection">
+          <div className="billing-stat-icon"><CheckCircle2 size={21} /></div>
+          <div className="billing-stat-text">
+            <span className="billing-stat-label">Collection</span>
+            <strong className="billing-stat-value">{currency.format(summary.totalCollections)}</strong>
+            <span className="billing-stat-helper">First to collect from client</span>
           </div>
-          <div className="billing-stat billing-stat-payable">
-            <div className="billing-stat-icon"><Send size={21} /></div>
-            <div className="billing-stat-text">
-              <span className="billing-stat-label">Collectibles</span>
-              <strong className="billing-stat-value">{currency.format(summary.totalCollectibles)}</strong>
-              <span className="billing-stat-helper">Retained from client, still to collect</span>
-            </div>
+        </div>
+        <div className="billing-stat billing-stat-payable">
+          <div className="billing-stat-icon"><Send size={21} /></div>
+          <div className="billing-stat-text">
+            <span className="billing-stat-label">Collectibles</span>
+            <strong className="billing-stat-value">{currency.format(summary.totalCollectibles)}</strong>
+            <span className="billing-stat-helper">Retained from client, still to collect</span>
           </div>
         </div>
       </section>

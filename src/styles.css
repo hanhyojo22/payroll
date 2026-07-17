@@ -7967,7 +7967,7 @@ td {
   }
 
   .emp-meta-row {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .emp-header-actions {
@@ -8364,13 +8364,7 @@ td {
 .billing-summary {
   display: grid;
   gap: 12px;
-  grid-template-columns: 1fr 2fr;
-}
-
-.billing-summary-split {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
 .expense-kpi-row {
@@ -11228,7 +11222,7 @@ td {
   }
 
   .billing-summary {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .billing-form-fields {
