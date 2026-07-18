@@ -4890,7 +4890,10 @@ input[type="radio"] {
 }
 
 @media (max-width: 760px) {
-  .employee-summary-grid {
+  /* Two classes to outrank the later, equal-specificity `.metric-grid`
+     mobile rule (~640px block below), which would otherwise win by
+     source order and collapse this back to one column. */
+  .metric-grid.employee-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
