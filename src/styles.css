@@ -4891,7 +4891,36 @@ input[type="radio"] {
 
 @media (max-width: 760px) {
   .employee-summary-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  /* At 2-per-row the icon-beside-value layout is too narrow and clips,
+     same issue attendance-stat-card had. Stack icon above text instead. */
+  .employee-summary-grid .metric {
+    align-items: flex-start;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    height: auto;
+    padding: 14px;
+  }
+
+  .employee-summary-grid .metric-icon {
+    height: 36px;
+    width: 36px;
+  }
+
+  .employee-summary-grid .metric-icon svg {
+    height: 16px;
+    width: 16px;
+  }
+
+  .employee-summary-grid .metric strong {
+    font-size: var(--font-size-xl);
+  }
+
+  .employee-summary-grid .metric p {
+    font-weight: 600;
   }
 
   .employee-list-panel .toolbar {
