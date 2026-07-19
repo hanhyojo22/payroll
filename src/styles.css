@@ -10616,6 +10616,10 @@ td {
     padding: 18px;
   }
 
+  .cbf-modal {
+    padding: 5px;
+  }
+
   .modal header button,
   .modal-header button,
   .cbf-close-btn {
@@ -10635,6 +10639,10 @@ td {
     max-height: calc(100vh - 12px);
     max-height: calc(100dvh - 12px);
     padding: 16px;
+  }
+
+  .cbf-modal {
+    padding: 5px;
   }
 }
 
