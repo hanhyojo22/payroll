@@ -11149,11 +11149,15 @@ td {
 @media (max-width: 640px) {
   .cbf-cols { grid-template-columns: 1fr; }
   .cbf-header,
-  .cbf-left,
   .cbf-right,
   .cbf-actions {
     padding-left: 18px;
     padding-right: 18px;
+  }
+
+  .cbf-left {
+    padding-left: 0;
+    padding-right: 0;
   }
 
   .cbf-period-row,
