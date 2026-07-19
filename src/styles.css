@@ -10662,6 +10662,11 @@ td {
   grid-template-columns: minmax(0, 13fr) minmax(360px, 7fr);
   min-height: 0;
   overflow: hidden;
+  scrollbar-width: thin;
+}
+
+.cbf-cols::-webkit-scrollbar {
+  width: 5px;
 }
 
 /* LEFT column */
