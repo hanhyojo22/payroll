@@ -11202,6 +11202,15 @@ td {
   .billing-employee-reference-table .tbl-label-full { display: none; }
   .billing-employee-reference-table .tbl-label-abbr { display: inline; }
 
+  .cbf-section-card:has(.billing-employee-reference-table) {
+    padding-right: 0;
+  }
+
+  .billing-employee-reference-table th.billing-col-right,
+  .billing-employee-reference-table td.billing-col-right {
+    padding-right: 0;
+  }
+
   /* Subcontractor Tickets grid (New Billing): same goal as the employee
      table above — every column visible at once, no horizontal scroll. */
   .billing-subcon-form-scroll {
