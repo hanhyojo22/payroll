@@ -11087,6 +11087,8 @@ td {
   .cbf-left {
     border-right: none;
     border-bottom: 1px solid var(--color-border);
+    min-width: 0;
+    overflow: visible;
   }
 
   .cbf-right {
