@@ -8277,10 +8277,48 @@ td {
   }
 
   .collection-table,
-  .billing-details-table,
   .attendance-table {
     min-width: 0;
   }
+
+  /* Employee Ticket Reference table (New Billing): keep as a real,
+     horizontally scrollable table like the Daily Tickets table instead
+     of stacking into label/value cards — the column layout reads better
+     for this dense numeric data. */
+  .billing-details-table-wrap {
+    overflow-x: auto;
+  }
+
+  .billing-details-table {
+    min-width: 640px;
+  }
+
+  .billing-details-table thead,
+  .billing-details-table tbody,
+  .billing-details-table tr,
+  .billing-details-table td,
+  .billing-details-table th {
+    display: revert;
+    width: auto;
+  }
+
+  .billing-details-table thead { display: table-header-group; }
+  .billing-details-table tbody { display: table-row-group; }
+
+  .billing-details-table tr {
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 0;
+  }
+
+  .billing-details-table td {
+    display: table-cell;
+    white-space: nowrap;
+  }
+
+  .billing-details-table td::before { content: none; }
 
   .row-actions button {
     height: 40px;
