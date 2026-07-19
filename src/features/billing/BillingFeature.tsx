@@ -1782,11 +1782,11 @@ function BillingForm({
                 <div className="billing-details-table-wrap">
                   <table className="billing-details-table billing-employee-reference-table">
                     <colgroup>
-                      <col style={{ width: "36%" }} />
-                      <col style={{ width: "12%" }} />
-                      <col style={{ width: "12%" }} />
-                      <col style={{ width: "12%" }} />
-                      <col style={{ width: "28%" }} />
+                      <col className="col-employee" />
+                      <col className="col-ins" />
+                      <col className="col-rep" />
+                      <col className="col-tot" />
+                      <col className="col-gross" />
                     </colgroup>
                     <thead>
                       <tr>

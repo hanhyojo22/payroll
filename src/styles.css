@@ -9781,6 +9781,12 @@ td {
 
 .tbl-label-abbr { display: none; }
 
+.billing-employee-reference-table col.col-employee { width: 36%; }
+.billing-employee-reference-table col.col-ins,
+.billing-employee-reference-table col.col-rep,
+.billing-employee-reference-table col.col-tot { width: 12%; }
+.billing-employee-reference-table col.col-gross { width: 28%; }
+
 .billing-details-table td span {
   color: var(--color-text-tertiary);
   display: block;
@@ -11215,6 +11221,12 @@ td {
   .billing-employee-reference-table td.billing-col-right {
     padding-right: 0;
   }
+
+  /* Gross column was allocated more width (28%) than its content needs,
+     leaving a dead gap between the Tot and Gross columns. Shrink it and
+     give the reclaimed space to the employee name column. */
+  .billing-employee-reference-table col.col-employee { width: 44%; }
+  .billing-employee-reference-table col.col-gross { width: 20%; }
 
   /* Subcontractor Tickets grid (New Billing): same goal as the employee
      table above — every column visible at once, no horizontal scroll. */
