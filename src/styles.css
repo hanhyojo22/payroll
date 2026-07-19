@@ -9779,6 +9779,8 @@ td {
   text-align: right;
 }
 
+.tbl-label-abbr { display: none; }
+
 .billing-details-table td span {
   color: var(--color-text-tertiary);
   display: block;
@@ -11177,6 +11179,77 @@ td {
   }
 
   .cbf-modal { max-height: 95vh; max-height: 95dvh; }
+
+  /* Employee Ticket Reference table (New Billing) needs every column
+     visible without horizontal scrolling, so it gets its own compact
+     sizing instead of the wide/scrollable defaults on .billing-details-table. */
+  .billing-employee-reference-table {
+    min-width: 0;
+    table-layout: fixed;
+    font-size: 10.5px;
+  }
+
+  .billing-employee-reference-table th,
+  .billing-employee-reference-table td {
+    padding: 6px 3px;
+  }
+
+  .billing-employee-reference-table td.billing-col-left {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .billing-employee-reference-table .tbl-label-full { display: none; }
+  .billing-employee-reference-table .tbl-label-abbr { display: inline; }
+
+  /* Subcontractor Tickets grid (New Billing): same goal as the employee
+     table above — every column visible at once, no horizontal scroll. */
+  .billing-subcon-form-scroll {
+    overflow-x: visible;
+  }
+
+  .billing-subcon-form-head,
+  .billing-subcon-form-row {
+    column-gap: 3px;
+    grid-template-columns: 1.5fr 0.55fr 0.55fr 0.85fr 0.85fr 1fr 1fr;
+    padding: 8px 4px;
+  }
+
+  .billing-subcon-form-head {
+    font-size: 8px;
+  }
+
+  .billing-subcon-name-cell strong {
+    font-size: 10.5px;
+  }
+
+  .billing-subcon-name-cell span {
+    display: none;
+  }
+
+  .billing-subcon-inline-values span {
+    font-size: 10.5px;
+  }
+
+  .billing-subcon-dispute-cell input {
+    font-size: 10.5px;
+    min-height: 30px;
+    padding: 0 2px;
+    text-align: center;
+    width: 100%;
+  }
+
+  .billing-subcon-amount strong {
+    font-size: 10px;
+    overflow-wrap: anywhere;
+  }
+
+  .billing-subcon-amount span {
+    display: none;
+  }
+
+  .billing-subcon-form-head .tbl-label-full { display: none; }
+  .billing-subcon-form-head .tbl-label-abbr { display: inline; }
 }
 
 .billing-settings-body {

@@ -1782,18 +1782,18 @@ function BillingForm({
                 <div className="billing-details-table-wrap">
                   <table className="billing-details-table billing-employee-reference-table">
                     <colgroup>
-                      <col style={{ width: "40%" }} />
-                      <col style={{ width: "15%" }} />
-                      <col style={{ width: "15%" }} />
-                      <col style={{ width: "15%" }} />
-                      <col style={{ width: "15%" }} />
+                      <col style={{ width: "36%" }} />
+                      <col style={{ width: "12%" }} />
+                      <col style={{ width: "12%" }} />
+                      <col style={{ width: "12%" }} />
+                      <col style={{ width: "28%" }} />
                     </colgroup>
                     <thead>
                       <tr>
                         <th>Employee</th>
-                        <th className="billing-col-center">Install</th>
-                        <th className="billing-col-center">Repair</th>
-                        <th className="billing-col-center">Total</th>
+                        <th className="billing-col-center"><span className="tbl-label-full">Install</span><span className="tbl-label-abbr">Ins</span></th>
+                        <th className="billing-col-center"><span className="tbl-label-full">Repair</span><span className="tbl-label-abbr">Rep</span></th>
+                        <th className="billing-col-center"><span className="tbl-label-full">Total</span><span className="tbl-label-abbr">Tot</span></th>
                         <th className="billing-col-right">Gross</th>
                       </tr>
                     </thead>
@@ -1944,13 +1944,13 @@ function BillingForm({
                 <div className="billing-subcon-form-scroll">
                   <div className="billing-subcon-form-table">
                   <div className="billing-subcon-form-head">
-                    <span>Subcontractor</span>
-                    <span>Install</span>
-                    <span>Repair</span>
-                    <span>Disputed Install</span>
-                    <span>Disputed Repair</span>
-                    <span>Net Amount</span>
-                    <span>Collectibles Amount</span>
+                    <span><span className="tbl-label-full">Subcontractor</span><span className="tbl-label-abbr">Subcon</span></span>
+                    <span><span className="tbl-label-full">Install</span><span className="tbl-label-abbr">Ins</span></span>
+                    <span><span className="tbl-label-full">Repair</span><span className="tbl-label-abbr">Rep</span></span>
+                    <span><span className="tbl-label-full">Disputed Install</span><span className="tbl-label-abbr">D.Ins</span></span>
+                    <span><span className="tbl-label-full">Disputed Repair</span><span className="tbl-label-abbr">D.Rep</span></span>
+                    <span><span className="tbl-label-full">Net Amount</span><span className="tbl-label-abbr">Net</span></span>
+                    <span><span className="tbl-label-full">Collectibles Amount</span><span className="tbl-label-abbr">Collect</span></span>
                   </div>
                   {values.subcon_items.length === 0 ? (
                     <div className="billing-subcon-form-empty">No active subcontractors yet.</div>
