@@ -179,7 +179,7 @@ export async function loadDashboardSummary(supabase: SupabaseClient) {
       "Current payroll items",
       supabase
         .from("payroll_run_items")
-        .select("id,user_id,payroll_run_id,employee_id,employee_name,position_id,position_name,pay_mode,base_pay,ticket_pay,daily_rate,days_worked,total_working_days,installation_tickets,repair_tickets,installation_rate,repair_rate,gross_pay,allowances,deductions,net_pay,status,paid_date,notes,created_at,updated_at,ticket_details:payroll_run_item_ticket_details(id,user_id,payroll_run_item_id,position_ticket_category_id,category_name,ticket_count,rate,amount,created_at)")
+        .select("id,user_id,payroll_run_id,employee_id,employee_name,position_id,position_name,pay_mode,base_pay,ticket_pay,daily_rate,days_worked,total_working_days,installation_tickets,repair_tickets,installation_rate,repair_rate,nap_rehab_tickets,nap_rehab_rate,gross_pay,allowances,deductions,net_pay,status,paid_date,notes,created_at,updated_at,ticket_details:payroll_run_item_ticket_details(id,user_id,payroll_run_item_id,position_ticket_category_id,category_name,ticket_count,rate,amount,created_at)")
         .in("payroll_run_id", currentRunIds),
     )
     : { data: [] as PayrollRunItem[], error: null, label: "Current payroll items" };
@@ -365,7 +365,7 @@ export async function loadDailyTicketEntries(supabase: SupabaseClient) {
     "Daily tickets",
     supabase
       .from("daily_ticket_entries")
-      .select("id,user_id,entry_date,employee_id,employee_name,position_id,position_name,installation_tickets,repair_tickets,disputed_install,disputed_repair,installation_rate,repair_rate,created_at,updated_at,details:daily_ticket_entry_items(id,user_id,daily_ticket_entry_id,position_ticket_category_id,category_name,ticket_count,rate,ticket_type,created_at,updated_at)")
+      .select("id,user_id,entry_date,employee_id,employee_name,position_id,position_name,installation_tickets,repair_tickets,disputed_install,disputed_repair,installation_rate,repair_rate,nap_rehab_tickets,disputed_nap_rehab,nap_rehab_rate,created_at,updated_at,details:daily_ticket_entry_items(id,user_id,daily_ticket_entry_id,position_ticket_category_id,category_name,ticket_count,rate,ticket_type,created_at,updated_at)")
       .order("entry_date", { ascending: false }),
   );
 }
@@ -395,7 +395,7 @@ export async function loadEmployees(supabase: SupabaseClient) {
     "Employees",
     supabase
       .from("employees")
-      .select("id,user_id,full_name,role,position_id,department,contact_number,email,address,profile_photo_url,hire_date,date_of_birth,status,wage_category,installation_rate,repair_rate,monthly_salary,gender,civil_status,sss_number,philhealth_number,pagibig_number,sss_deduction,philhealth_deduction,pagibig_deduction,withholding_tax,tin_number,emergency_contact_name,emergency_contact_number,emergency_contact_relation,notes,created_at,updated_at")
+      .select("id,user_id,full_name,role,position_id,department,contact_number,email,address,profile_photo_url,hire_date,date_of_birth,status,wage_category,installation_rate,repair_rate,nap_rehab_rate,monthly_salary,gender,civil_status,sss_number,philhealth_number,pagibig_number,sss_deduction,philhealth_deduction,pagibig_deduction,withholding_tax,tin_number,emergency_contact_name,emergency_contact_number,emergency_contact_relation,notes,created_at,updated_at")
       .order("full_name"),
   );
 }
@@ -455,6 +455,8 @@ export async function loadEmployeePayrollRuns(supabase: SupabaseClient, employee
         repair_tickets,
         installation_rate,
         repair_rate,
+        nap_rehab_tickets,
+        nap_rehab_rate,
         gross_pay,
         allowances,
         deductions,
@@ -496,6 +498,8 @@ export async function loadEmployeePayrollRuns(supabase: SupabaseClient, employee
       repair_tickets: item.repair_tickets,
       installation_rate: item.installation_rate,
       repair_rate: item.repair_rate,
+      nap_rehab_tickets: item.nap_rehab_tickets,
+      nap_rehab_rate: item.nap_rehab_rate,
       gross_pay: item.gross_pay,
       allowances: item.allowances,
       deductions: item.deductions,

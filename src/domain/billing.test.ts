@@ -16,7 +16,7 @@ describe("countTicketsForMonth", () => {
       id: "e1", user_id: "u1", entry_date: "2026-06-05", employee_id: "emp1",
       employee_name: "Alice", position_id: "p1", position_name: "Tech",
       installation_tickets: 3, repair_tickets: 2, installation_rate: 600,
-      repair_rate: 200, created_at: "", updated_at: "",
+      repair_rate: 200, nap_rehab_tickets: 0, nap_rehab_rate: 0, created_at: "", updated_at: "",
       details: [
         { id: "d1", user_id: "u1", daily_ticket_entry_id: "e1", position_ticket_category_id: "c1", category_name: "Install", ticket_count: 4, rate: 600, ticket_type: "installation" as const, created_at: "", updated_at: "" },
         { id: "d2", user_id: "u1", daily_ticket_entry_id: "e1", position_ticket_category_id: "c2", category_name: "Repair", ticket_count: 2, rate: 200, ticket_type: "repair" as const, created_at: "", updated_at: "" },
@@ -26,14 +26,14 @@ describe("countTicketsForMonth", () => {
       id: "e2", user_id: "u1", entry_date: "2026-06-12", employee_id: "emp2",
       employee_name: "Bob", position_id: null, position_name: "",
       installation_tickets: 5, repair_tickets: 1, installation_rate: 600,
-      repair_rate: 200, created_at: "", updated_at: "",
+      repair_rate: 200, nap_rehab_tickets: 0, nap_rehab_rate: 0, created_at: "", updated_at: "",
       details: [],
     },
     {
       id: "e3", user_id: "u1", entry_date: "2026-07-03", employee_id: "emp1",
       employee_name: "Alice", position_id: "p1", position_name: "Tech",
       installation_tickets: 10, repair_tickets: 5, installation_rate: 600,
-      repair_rate: 200, created_at: "", updated_at: "",
+      repair_rate: 200, nap_rehab_tickets: 0, nap_rehab_rate: 0, created_at: "", updated_at: "",
       details: [],
     },
   ];
@@ -72,6 +72,7 @@ describe("countTicketsForMonth", () => {
     expect(countTicketsByType(disputedEntries, 6, 2026)).toEqual({
       installation: 6,
       repair: 2,
+      nap_rehab: 0,
     });
   });
 });

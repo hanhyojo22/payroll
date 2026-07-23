@@ -821,12 +821,15 @@ export function PayrollFeature({
     const repairTickets = normalizeTicketCount(patch.repair_tickets ?? item.repair_tickets);
     const installationRate = toNumber(patch.installation_rate ?? item.installation_rate);
     const repairRate = toNumber(patch.repair_rate ?? item.repair_rate);
+    const napRehabTickets = normalizeTicketCount(patch.nap_rehab_tickets ?? item.nap_rehab_tickets);
+    const napRehabRate = toNumber(patch.nap_rehab_rate ?? item.nap_rehab_rate);
     const allowances = toNumber(patch.allowances ?? item.allowances);
     const deductions = toNumber(patch.deductions ?? item.deductions);
     const ticketFieldsChanged = patch.installation_tickets !== undefined || patch.repair_tickets !== undefined ||
-      patch.installation_rate !== undefined || patch.repair_rate !== undefined;
+      patch.installation_rate !== undefined || patch.repair_rate !== undefined ||
+      patch.nap_rehab_tickets !== undefined || patch.nap_rehab_rate !== undefined;
     const ticketPay = ticketFieldsChanged
-      ? ticketGrossPay(installationTickets, repairTickets, installationRate, repairRate)
+      ? ticketGrossPay(installationTickets, repairTickets, installationRate, repairRate, napRehabTickets, napRehabRate)
       : toNumber(item.ticket_pay);
     const basePay = toNumber(item.base_pay);
     const gross = basePay + ticketPay;
@@ -836,6 +839,8 @@ export function PayrollFeature({
       repair_tickets: repairTickets,
       installation_rate: installationRate,
       repair_rate: repairRate,
+      nap_rehab_tickets: napRehabTickets,
+      nap_rehab_rate: napRehabRate,
       base_pay: basePay,
       ticket_pay: ticketPay,
       gross_pay: gross,
@@ -1295,7 +1300,7 @@ function PayrollItemsTable({
     }
     const ticketCount = item.ticket_details && item.ticket_details.length > 0
       ? item.ticket_details.reduce((sum, d) => sum + (d.ticket_count ?? 0), 0)
-      : toNumber(item.installation_tickets) + toNumber(item.repair_tickets);
+      : toNumber(item.installation_tickets) + toNumber(item.repair_tickets) + toNumber(item.nap_rehab_tickets);
     if (item.pay_mode === "ticket") return `${ticketCount} tickets`;
     if (item.pay_mode === "hybrid") return `Base ${currency.format(toNumber(item.base_pay))} + ${ticketCount} tickets`;
     return "-";

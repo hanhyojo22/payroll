@@ -229,14 +229,15 @@ export function ReportsFeature({
   const ticketRows = useMemo<TicketReportRow[]>(
     () =>
       dailyTicketEntries.map((entry) => {
-        const disputedTickets = Number(entry.disputed_install ?? 0) + Number(entry.disputed_repair ?? 0);
-        const totalTickets = entry.installation_tickets + entry.repair_tickets;
+        const disputedTickets = Number(entry.disputed_install ?? 0) + Number(entry.disputed_repair ?? 0) + Number(entry.disputed_nap_rehab ?? 0);
+        const totalTickets = entry.installation_tickets + entry.repair_tickets + entry.nap_rehab_tickets;
         return {
           ...entry,
           disputedTickets,
           grossValue:
             entry.installation_tickets * entry.installation_rate +
-            entry.repair_tickets * entry.repair_rate,
+            entry.repair_tickets * entry.repair_rate +
+            entry.nap_rehab_tickets * entry.nap_rehab_rate,
           statusLabel: disputedTickets > 0 ? "Disputed" : totalTickets >= 10 ? "High Volume" : "Clean",
           totalTickets,
         };
@@ -311,7 +312,8 @@ export function ReportsFeature({
 
     const closedTicketCount = (entry: DailyTicketEntry) =>
       Math.max(
-        entry.installation_tickets + entry.repair_tickets - Number(entry.disputed_install ?? 0) - Number(entry.disputed_repair ?? 0),
+        entry.installation_tickets + entry.repair_tickets + entry.nap_rehab_tickets
+          - Number(entry.disputed_install ?? 0) - Number(entry.disputed_repair ?? 0) - Number(entry.disputed_nap_rehab ?? 0),
         0,
       );
     const ticketDaily = dailyTicketEntries
@@ -1055,6 +1057,7 @@ function buildTicketView(
     position_name: (row) => row.position_name,
     installation_tickets: (row) => row.installation_tickets,
     repair_tickets: (row) => row.repair_tickets,
+    nap_rehab_tickets: (row) => row.nap_rehab_tickets,
     totalTickets: (row) => row.totalTickets,
     disputedTickets: (row) => row.disputedTickets,
     grossValue: (row) => row.grossValue,
@@ -1064,6 +1067,7 @@ function buildTicketView(
   const totalTickets = sorted.reduce((sum, row) => sum + row.totalTickets, 0);
   const installTickets = sorted.reduce((sum, row) => sum + row.installation_tickets, 0);
   const repairTickets = sorted.reduce((sum, row) => sum + row.repair_tickets, 0);
+  const napRehabTickets = sorted.reduce((sum, row) => sum + row.nap_rehab_tickets, 0);
   const disputedTickets = sorted.reduce((sum, row) => sum + row.disputedTickets, 0);
   const totalValue = sorted.reduce((sum, row) => sum + row.grossValue, 0);
 
@@ -1079,6 +1083,7 @@ function buildTicketView(
       { label: "Closed tickets", value: totalTickets.toLocaleString(), helper: `${sorted.length} daily rows`, tone: "neutral" as const },
       { label: "Installation", value: installTickets.toLocaleString(), helper: "Installation volume", tone: "success" as const },
       { label: "Repair", value: repairTickets.toLocaleString(), helper: "Repair volume", tone: "warning" as const },
+      { label: "Nap Rehab", value: napRehabTickets.toLocaleString(), helper: "Nap Rehab volume", tone: "neutral" as const },
       { label: "Disputed", value: disputedTickets.toLocaleString(), helper: `Equivalent value ${currency.format(totalValue)}`, tone: disputedTickets > 0 ? "danger" as const : "success" as const },
     ],
     trendTitle: "Closed ticket volume by month",
@@ -1094,6 +1099,7 @@ function buildTicketView(
       { id: "employee_name", label: "Employee", sortValue: (row: TicketReportRow) => row.employee_name, render: (row: TicketReportRow) => <StackedCell title={row.employee_name} subtitle={row.position_name} /> },
       { id: "installation_tickets", label: "Install", align: "right" as const, sortValue: (row: TicketReportRow) => row.installation_tickets, render: (row: TicketReportRow) => row.installation_tickets.toLocaleString() },
       { id: "repair_tickets", label: "Repair", align: "right" as const, sortValue: (row: TicketReportRow) => row.repair_tickets, render: (row: TicketReportRow) => row.repair_tickets.toLocaleString() },
+      { id: "nap_rehab_tickets", label: "Nap Rehab", align: "right" as const, sortValue: (row: TicketReportRow) => row.nap_rehab_tickets, render: (row: TicketReportRow) => row.nap_rehab_tickets.toLocaleString() },
       { id: "totalTickets", label: "Total", align: "right" as const, sortValue: (row: TicketReportRow) => row.totalTickets, render: (row: TicketReportRow) => <strong>{row.totalTickets.toLocaleString()}</strong> },
       { id: "disputedTickets", label: "Disputed", align: "right" as const, sortValue: (row: TicketReportRow) => row.disputedTickets, render: (row: TicketReportRow) => row.disputedTickets.toLocaleString() },
       { id: "grossValue", label: "Value", align: "right" as const, sortValue: (row: TicketReportRow) => row.grossValue, render: (row: TicketReportRow) => formatMoney(row.grossValue) },
@@ -1105,6 +1111,7 @@ function buildTicketView(
       { key: "position_name", label: "Position" },
       { key: "installation_tickets", label: "Installation Tickets" },
       { key: "repair_tickets", label: "Repair Tickets" },
+      { key: "nap_rehab_tickets", label: "Nap Rehab Tickets" },
       { key: "totalTickets", label: "Total Tickets" },
       { key: "disputedTickets", label: "Disputed Tickets" },
       { key: "grossValue", label: "Gross Value", format: (row: TicketReportRow) => row.grossValue.toFixed(2) },

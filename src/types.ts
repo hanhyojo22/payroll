@@ -49,7 +49,7 @@ export type PositionTicketCategory = {
   position_id: string;
   name: string;
   rate: number;
-  ticket_type: "installation" | "repair";
+  ticket_type: "installation" | "repair" | "nap_rehab";
   display_order: number;
   status: PositionStatus;
   created_at: string;
@@ -83,7 +83,7 @@ export type PositionFormValues = {
     id?: string;
     name: string;
     rate: string;
-    ticket_type: "installation" | "repair";
+    ticket_type: "installation" | "repair" | "nap_rehab";
     status: PositionStatus;
   }>;
 };
@@ -301,6 +301,7 @@ export type Employee = {
   wage_category: EmployeeWageCategory;
   installation_rate?: number;
   repair_rate?: number;
+  nap_rehab_rate?: number;
   monthly_salary: number;
   sss_number: string;
   philhealth_number: string;
@@ -357,6 +358,8 @@ export type PayrollRunItem = {
   repair_tickets: number;
   installation_rate: number;
   repair_rate: number;
+  nap_rehab_tickets: number;
+  nap_rehab_rate: number;
   daily_rate: number;
   days_worked: number;
   total_working_days: number;
@@ -439,6 +442,9 @@ export type DailyTicketEntry = {
   disputed_repair?: number;
   installation_rate: number;
   repair_rate: number;
+  nap_rehab_tickets: number;
+  disputed_nap_rehab?: number;
+  nap_rehab_rate: number;
   created_at: string;
   updated_at: string;
 };
@@ -451,7 +457,7 @@ export type DailyTicketEntryDetail = {
   category_name: string;
   ticket_count: number;
   rate: number;
-  ticket_type: "installation" | "repair";
+  ticket_type: "installation" | "repair" | "nap_rehab";
   created_at: string;
   updated_at: string;
 };

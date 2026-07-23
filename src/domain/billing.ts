@@ -32,10 +32,16 @@ function clampedBillableByType(entry: DailyTicketEntry) {
       .filter((detail) => detail.ticket_type === "repair")
       .reduce((sum, detail) => sum + (detail.ticket_count ?? 0), 0)
     : (entry.repair_tickets ?? 0);
+  const napRehab = details.length > 0
+    ? details
+      .filter((detail) => detail.ticket_type === "nap_rehab")
+      .reduce((sum, detail) => sum + (detail.ticket_count ?? 0), 0)
+    : (entry.nap_rehab_tickets ?? 0);
 
   return {
     installation: Math.max(0, installation - Math.min(installation, entry.disputed_install ?? 0)),
     repair: Math.max(0, repair - Math.min(repair, entry.disputed_repair ?? 0)),
+    nap_rehab: Math.max(0, napRehab - Math.min(napRehab, entry.disputed_nap_rehab ?? 0)),
   };
 }
 
@@ -48,7 +54,7 @@ export function countTicketsForMonth(
   return filterByPeriod(entries, month, year, period)
     .reduce((sum, entry) => {
       const counts = clampedBillableByType(entry);
-      return sum + counts.installation + counts.repair;
+      return sum + counts.installation + counts.repair + counts.nap_rehab;
     }, 0);
 }
 
@@ -57,16 +63,17 @@ export function countTicketsByType(
   month: number,
   year: number,
   period?: BillingPeriod,
-): { installation: number; repair: number } {
+): { installation: number; repair: number; nap_rehab: number } {
   return filterByPeriod(entries, month, year, period).reduce(
     (acc, entry) => {
       const counts = clampedBillableByType(entry);
       return {
         installation: acc.installation + counts.installation,
         repair: acc.repair + counts.repair,
+        nap_rehab: acc.nap_rehab + counts.nap_rehab,
       };
     },
-    { installation: 0, repair: 0 },
+    { installation: 0, repair: 0, nap_rehab: 0 },
   );
 }
 

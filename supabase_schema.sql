@@ -254,6 +254,9 @@
   add column if not exists repair_rate numeric(12, 2) not null default 200;
 
   alter table public.employees
+  add column if not exists nap_rehab_rate numeric(12, 2) not null default 0;
+
+  alter table public.employees
   add column if not exists sss_deduction numeric(12, 2) not null default 0;
 
   alter table public.employees
@@ -285,6 +288,13 @@
   alter table public.employees
   add constraint employees_repair_rate_check
   check (repair_rate >= 0);
+
+  alter table public.employees
+  drop constraint if exists employees_nap_rehab_rate_check;
+
+  alter table public.employees
+  add constraint employees_nap_rehab_rate_check
+  check (nap_rehab_rate >= 0);
 
   alter table public.employees
   drop constraint if exists employees_sss_deduction_check;
@@ -427,6 +437,12 @@
   add column if not exists repair_rate numeric(12, 2) not null default 200;
 
   alter table public.payroll_run_items
+  add column if not exists nap_rehab_tickets integer not null default 0;
+
+  alter table public.payroll_run_items
+  add column if not exists nap_rehab_rate numeric(12, 2) not null default 0;
+
+  alter table public.payroll_run_items
   drop constraint if exists payroll_run_items_installation_tickets_check;
 
   alter table public.payroll_run_items
@@ -454,6 +470,20 @@
   add constraint payroll_run_items_repair_rate_check
   check (repair_rate >= 0);
 
+  alter table public.payroll_run_items
+  drop constraint if exists payroll_run_items_nap_rehab_tickets_check;
+
+  alter table public.payroll_run_items
+  add constraint payroll_run_items_nap_rehab_tickets_check
+  check (nap_rehab_tickets >= 0);
+
+  alter table public.payroll_run_items
+  drop constraint if exists payroll_run_items_nap_rehab_rate_check;
+
+  alter table public.payroll_run_items
+  add constraint payroll_run_items_nap_rehab_rate_check
+  check (nap_rehab_rate >= 0);
+
   alter table public.daily_ticket_entries
   add column if not exists installation_tickets integer not null default 0;
 
@@ -471,6 +501,15 @@
 
   alter table public.daily_ticket_entries
   add column if not exists disputed_repair integer not null default 0;
+
+  alter table public.daily_ticket_entries
+  add column if not exists nap_rehab_tickets integer not null default 0;
+
+  alter table public.daily_ticket_entries
+  add column if not exists nap_rehab_rate numeric(12, 2) not null default 0;
+
+  alter table public.daily_ticket_entries
+  add column if not exists disputed_nap_rehab integer not null default 0;
 
   alter table public.daily_ticket_entries
   drop constraint if exists daily_ticket_entries_user_id_entry_date_employee_id_key;
@@ -520,6 +559,27 @@
   alter table public.daily_ticket_entries
   add constraint daily_ticket_entries_disputed_repair_check
   check (disputed_repair >= 0);
+
+  alter table public.daily_ticket_entries
+  drop constraint if exists daily_ticket_entries_nap_rehab_tickets_check;
+
+  alter table public.daily_ticket_entries
+  add constraint daily_ticket_entries_nap_rehab_tickets_check
+  check (nap_rehab_tickets >= 0);
+
+  alter table public.daily_ticket_entries
+  drop constraint if exists daily_ticket_entries_nap_rehab_rate_check;
+
+  alter table public.daily_ticket_entries
+  add constraint daily_ticket_entries_nap_rehab_rate_check
+  check (nap_rehab_rate >= 0);
+
+  alter table public.daily_ticket_entries
+  drop constraint if exists daily_ticket_entries_disputed_nap_rehab_check;
+
+  alter table public.daily_ticket_entries
+  add constraint daily_ticket_entries_disputed_nap_rehab_check
+  check (disputed_nap_rehab >= 0);
 
   create index if not exists payment_reminders_user_due_date_idx
   on public.payment_reminders (user_id, due_date);
@@ -778,6 +838,13 @@
     unique (position_id, name)
   );
 
+  alter table public.position_ticket_categories
+  drop constraint if exists position_ticket_categories_ticket_type_check;
+
+  alter table public.position_ticket_categories
+  add constraint position_ticket_categories_ticket_type_check
+  check (ticket_type in ('installation', 'repair', 'nap_rehab'));
+
   alter table public.employees
   add column if not exists position_id uuid references public.positions(id) on delete restrict;
 
@@ -800,6 +867,13 @@
     updated_at timestamptz not null default now(),
     unique (daily_ticket_entry_id, category_name)
   );
+
+  alter table public.daily_ticket_entry_items
+  drop constraint if exists daily_ticket_entry_items_ticket_type_check;
+
+  alter table public.daily_ticket_entry_items
+  add constraint daily_ticket_entry_items_ticket_type_check
+  check (ticket_type in ('installation', 'repair', 'nap_rehab'));
 
   alter table public.payroll_run_items add column if not exists position_id uuid references public.positions(id) on delete set null;
   alter table public.payroll_run_items add column if not exists position_name text not null default '';

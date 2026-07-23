@@ -138,10 +138,12 @@ export function dailyTicketTotalsForEmployee(entries: DailyTicketEntry[], employ
 
     const installationDetails = details.filter((detail) => (detail.ticket_type ?? "installation") === "installation");
     const repairDetails = details.filter((detail) => detail.ticket_type === "repair");
+    const napRehabDetails = details.filter((detail) => detail.ticket_type === "nap_rehab");
     const adjustedInstallation = distributeRemainingCounts(installationDetails, entry.disputed_install ?? 0);
     const adjustedRepair = distributeRemainingCounts(repairDetails, entry.disputed_repair ?? 0);
+    const adjustedNapRehab = distributeRemainingCounts(napRehabDetails, entry.disputed_nap_rehab ?? 0);
 
-    return [...adjustedInstallation, ...adjustedRepair]
+    return [...adjustedInstallation, ...adjustedRepair, ...adjustedNapRehab]
       .filter((detail) => detail.remainingCount > 0)
       .map((detail) => ({
         ...detail,
@@ -154,7 +156,7 @@ export function dailyTicketTotalsForEmployee(entries: DailyTicketEntry[], employ
       category_name: string;
       ticket_count: number;
       rate: number;
-      ticket_type?: "installation" | "repair";
+      ticket_type?: "installation" | "repair" | "nap_rehab";
     }>();
     normalizedDetails.forEach((detail) => {
       const key = `${detail.position_ticket_category_id ?? detail.category_name}:${toNumber(detail.rate)}`;
@@ -177,10 +179,14 @@ export function dailyTicketTotalsForEmployee(entries: DailyTicketEntry[], employ
     const repairTickets = details
       .filter((detail) => detail.ticket_type === "repair")
       .reduce((sum, detail) => sum + detail.ticket_count, 0);
+    const napRehabTickets = details
+      .filter((detail) => detail.ticket_type === "nap_rehab")
+      .reduce((sum, detail) => sum + detail.ticket_count, 0);
     return {
       gross: details.reduce((sum, detail) => sum + detail.amount, 0),
       installationTickets,
       repairTickets,
+      napRehabTickets,
       details: details.map(({ ticket_type: _ticketType, ...detail }) => detail),
     };
   }
@@ -202,11 +208,21 @@ export function dailyTicketTotalsForEmployee(entries: DailyTicketEntry[], employ
       sum + Math.max(0, normalizeTicketCount(entry.repair_tickets) - clampDisputedCount(entry.repair_tickets, entry.disputed_repair ?? 0)) * toNumber(entry.repair_rate),
     0,
   );
+  const napRehabTickets = employeeEntries.reduce(
+    (sum, entry) => sum + Math.max(0, normalizeTicketCount(entry.nap_rehab_tickets) - clampDisputedCount(entry.nap_rehab_tickets, entry.disputed_nap_rehab ?? 0)),
+    0,
+  );
+  const napRehabGross = employeeEntries.reduce(
+    (sum, entry) =>
+      sum + Math.max(0, normalizeTicketCount(entry.nap_rehab_tickets) - clampDisputedCount(entry.nap_rehab_tickets, entry.disputed_nap_rehab ?? 0)) * toNumber(entry.nap_rehab_rate),
+    0,
+  );
 
   return {
-    gross: installationGross + repairGross,
+    gross: installationGross + repairGross + napRehabGross,
     installationTickets,
     repairTickets,
+    napRehabTickets,
     details: [
       ...(installationTickets > 0 ? [{
         position_ticket_category_id: null,
@@ -221,6 +237,13 @@ export function dailyTicketTotalsForEmployee(entries: DailyTicketEntry[], employ
         ticket_count: repairTickets,
         rate: repairTickets > 0 ? repairGross / repairTickets : 0,
         amount: repairGross,
+      }] : []),
+      ...(napRehabTickets > 0 ? [{
+        position_ticket_category_id: null,
+        category_name: "Nap Rehab",
+        ticket_count: napRehabTickets,
+        rate: napRehabTickets > 0 ? napRehabGross / napRehabTickets : 0,
+        amount: napRehabGross,
       }] : []),
     ],
   };
@@ -284,6 +307,8 @@ export function payrollItemPayloadForEmployee(
     repair_tickets: dailyTotals.repairTickets,
     installation_rate: 0,
     repair_rate: 0,
+    nap_rehab_tickets: dailyTotals.napRehabTickets,
+    nap_rehab_rate: 0,
     gross_pay: gross,
     allowances: 0,
     deductions: 0,
