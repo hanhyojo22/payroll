@@ -12642,6 +12642,7 @@ td {
   font-size: 11px;
   font-weight: 600;
   line-height: 1.3;
+  text-align: center;
   /* Reserve room for a two-line label (name + rate, or a wrapped
      "Disputed Install"/"Disputed Repair") so every tile's input lands on
      the same row even when its own label only takes one line. */
