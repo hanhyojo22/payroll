@@ -12341,21 +12341,27 @@ td {
   width: 28%;
 }
 
+.daily-ticket-page .ticket-table .ticket-empid-col {
+  white-space: nowrap;
+  width: 11%;
+}
+
 .daily-ticket-page .ticket-table tbody .ticket-empid-col {
   color: inherit;
   font-size: inherit;
   font-weight: 500;
+}
+
+.daily-ticket-page .ticket-table .ticket-no-col {
+  text-align: center;
   white-space: nowrap;
-  width: 11%;
+  width: 5%;
 }
 
 .daily-ticket-page .ticket-table tbody .ticket-no-col {
   color: inherit;
   font-size: inherit;
   font-weight: 500;
-  text-align: center;
-  white-space: nowrap;
-  width: 5%;
 }
 
 
