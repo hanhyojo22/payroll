@@ -12339,10 +12339,14 @@ td {
 }
 
 .ticket-employee-name {
+  text-align: left;
+  vertical-align: middle;
   width: 28%;
 }
 
 .daily-ticket-page .ticket-table .ticket-empid-col {
+  text-align: left;
+  vertical-align: middle;
   white-space: nowrap;
   width: 11%;
 }
@@ -12367,6 +12371,7 @@ td {
 
 
 .ticket-employee-col {
+  text-align: left;
   width: 28%;
 }
 
