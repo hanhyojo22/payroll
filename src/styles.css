@@ -12317,7 +12317,8 @@ td {
   width: 100%;
 }
 
-.ticket-table th {
+.daily-ticket-page .ticket-table th {
+  padding: 0 12px;
   white-space: nowrap;
 }
 
