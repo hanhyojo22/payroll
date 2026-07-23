@@ -443,7 +443,6 @@ export type DailyTicketEntry = {
   installation_rate: number;
   repair_rate: number;
   nap_rehab_tickets: number;
-  disputed_nap_rehab?: number;
   nap_rehab_rate: number;
   created_at: string;
   updated_at: string;

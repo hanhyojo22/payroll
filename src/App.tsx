@@ -3262,7 +3262,7 @@ export function DailyTicketEntryView({
 }) {
   const [entryDate, setEntryDate] = useState(todayKey());
   const [draftCounts, setDraftCounts] = useState<Record<string, Record<string, number>>>({});
-  const [draftDisputes, setDraftDisputes] = useState<Record<string, { install: number; repair: number; nap_rehab: number }>>({});
+  const [draftDisputes, setDraftDisputes] = useState<Record<string, { install: number; repair: number }>>({});
   const [busyEmployeeId, setBusyEmployeeId] = useState("");
   const [query, setQuery] = useState("");
   const [savingAll, setSavingAll] = useState(false);
@@ -3447,7 +3447,7 @@ export function DailyTicketEntryView({
       .map((cat) => ({ category: cat, count: normalizeTicketCount(draft.counts[cat.id]) }));
     const adjustedInstall = distributeRemainingDraftCounts(installationItems, disputes.install);
     const adjustedRepair = distributeRemainingDraftCounts(repairItems, disputes.repair);
-    const adjustedNapRehab = distributeRemainingDraftCounts(napRehabItems, disputes.nap_rehab);
+    const adjustedNapRehab = napRehabItems.map((item) => item.count);
 
     const installationGross = installationItems.reduce(
       (sum, item, index) => sum + adjustedInstall[index] * toNumber(item.category.rate),
@@ -3487,7 +3487,7 @@ export function DailyTicketEntryView({
         .map((detail) => ({ detail, count: normalizeTicketCount(detail.ticket_count) }));
       const adjustedInstall = distributeRemainingDraftCounts(installationDetails, entry.disputed_install ?? 0);
       const adjustedRepair = distributeRemainingDraftCounts(repairDetails, entry.disputed_repair ?? 0);
-      const adjustedNapRehab = distributeRemainingDraftCounts(napRehabDetails, entry.disputed_nap_rehab ?? 0);
+      const adjustedNapRehab = napRehabDetails.map((item) => item.count);
       const installationTickets = adjustedInstall.reduce((sum, count) => sum + count, 0);
       const repairTickets = adjustedRepair.reduce((sum, count) => sum + count, 0);
       const napRehabTickets = adjustedNapRehab.reduce((sum, count) => sum + count, 0);
@@ -3530,10 +3530,7 @@ export function DailyTicketEntryView({
       0,
       normalizeTicketCount(entry.repair_tickets) - Math.min(normalizeTicketCount(entry.repair_tickets), normalizeTicketCount(entry.disputed_repair ?? 0)),
     );
-    const napRehabTickets = Math.max(
-      0,
-      normalizeTicketCount(entry.nap_rehab_tickets) - Math.min(normalizeTicketCount(entry.nap_rehab_tickets), normalizeTicketCount(entry.disputed_nap_rehab ?? 0)),
-    );
+    const napRehabTickets = normalizeTicketCount(entry.nap_rehab_tickets);
     const installationAmount = installationTickets * toNumber(entry.installation_rate);
     const repairAmount = repairTickets * toNumber(entry.repair_rate);
     const napRehabAmount = napRehabTickets * toNumber(entry.nap_rehab_rate);
@@ -3549,7 +3546,6 @@ export function DailyTicketEntryView({
     return {
       install: draftDisputes[draft.employee.id]?.install ?? draft.entry?.disputed_install ?? 0,
       repair: draftDisputes[draft.employee.id]?.repair ?? draft.entry?.disputed_repair ?? 0,
-      nap_rehab: draftDisputes[draft.employee.id]?.nap_rehab ?? draft.entry?.disputed_nap_rehab ?? 0,
     };
   }
 
@@ -3563,8 +3559,7 @@ export function DailyTicketEntryView({
     return (
       countDirty ||
       normalizeTicketCount(disputes.install) !== (draft.entry?.disputed_install ?? 0) ||
-      normalizeTicketCount(disputes.repair) !== (draft.entry?.disputed_repair ?? 0) ||
-      normalizeTicketCount(disputes.nap_rehab) !== (draft.entry?.disputed_nap_rehab ?? 0)
+      normalizeTicketCount(disputes.repair) !== (draft.entry?.disputed_repair ?? 0)
     );
   }
 
@@ -3581,8 +3576,7 @@ export function DailyTicketEntryView({
         isDirty(d) ||
         Object.values(d.counts).some((c) => c > 0) ||
         normalizeTicketCount(disputes.install) > 0 ||
-        normalizeTicketCount(disputes.repair) > 0 ||
-        normalizeTicketCount(disputes.nap_rehab) > 0
+        normalizeTicketCount(disputes.repair) > 0
       );
     });
     if (dirty.length === 0) return;
@@ -3623,7 +3617,6 @@ export function DailyTicketEntryView({
       installation_rate: installRate,
       repair_rate: repairRate,
       nap_rehab_tickets: computedNapRehab,
-      disputed_nap_rehab: normalizeTicketCount(disputes.nap_rehab),
       nap_rehab_rate: napRehabRate,
     };
     const buildDetailPayloads = (dailyTicketEntryId: string) => activeCategories.map((category) => {
@@ -3905,10 +3898,7 @@ export function DailyTicketEntryView({
               const repairTotal = cats
                 .filter((cat) => cat.ticket_type === "repair")
                 .reduce((sum, cat) => sum + normalizeTicketCount(draft.counts[cat.id]), 0);
-              const napRehabTotal = cats
-                .filter((cat) => cat.ticket_type === "nap_rehab")
-                .reduce((sum, cat) => sum + normalizeTicketCount(draft.counts[cat.id]), 0);
-              return { draft, index, dirty, busy, saved, disputes, installTotal, repairTotal, napRehabTotal };
+              return { draft, index, dirty, busy, saved, disputes, installTotal, repairTotal };
             });
             return (
               <section className="ticket-position-group">
@@ -3931,13 +3921,12 @@ export function DailyTicketEntryView({
                         ))}
                         <th className="ticket-dispute-col">Disputed Install</th>
                         <th className="ticket-dispute-col">Disputed Repair</th>
-                        <th className="ticket-dispute-col">Disputed Nap Rehab</th>
                         <th className="ticket-gross-col">Gross</th>
                         <th className="ticket-action-col" />
                       </tr>
                     </thead>
                     <tbody>
-                      {rows.map(({ draft, index, dirty, busy, saved, disputes, installTotal, repairTotal, napRehabTotal }) => {
+                      {rows.map(({ draft, index, dirty, busy, saved, disputes, installTotal, repairTotal }) => {
                         return (
                           <tr key={draft.employee.id} className={dirty ? "ticket-row-dirty" : saved ? "ticket-row-saved" : ""}>
                             <td className="ticket-no-col">{index + 1}</td>
@@ -3984,7 +3973,6 @@ export function DailyTicketEntryView({
                                   [draft.employee.id]: {
                                     install: Math.min(installTotal, normalizeTicketCount(e.target.value)),
                                     repair: current[draft.employee.id]?.repair ?? draft.entry?.disputed_repair ?? 0,
-                                    nap_rehab: current[draft.employee.id]?.nap_rehab ?? draft.entry?.disputed_nap_rehab ?? 0,
                                   },
                                 }))}
                               />
@@ -4003,26 +3991,6 @@ export function DailyTicketEntryView({
                                   [draft.employee.id]: {
                                     install: current[draft.employee.id]?.install ?? draft.entry?.disputed_install ?? 0,
                                     repair: Math.min(repairTotal, normalizeTicketCount(e.target.value)),
-                                    nap_rehab: current[draft.employee.id]?.nap_rehab ?? draft.entry?.disputed_nap_rehab ?? 0,
-                                  },
-                                }))}
-                              />
-                            </td>
-                            <td className="ticket-count-cell ticket-count-cell--dispute">
-                              <input
-                                aria-label={`Disputed nap rehab tickets for ${draft.employee.full_name}`}
-                                disabled={napRehabTotal === 0}
-                                max={napRehabTotal}
-                                min="0"
-                                step="1"
-                                type="number"
-                                value={Math.min(napRehabTotal, normalizeTicketCount(disputes.nap_rehab))}
-                                onChange={(e) => setDraftDisputes((current) => ({
-                                  ...current,
-                                  [draft.employee.id]: {
-                                    install: current[draft.employee.id]?.install ?? draft.entry?.disputed_install ?? 0,
-                                    repair: current[draft.employee.id]?.repair ?? draft.entry?.disputed_repair ?? 0,
-                                    nap_rehab: Math.min(napRehabTotal, normalizeTicketCount(e.target.value)),
                                   },
                                 }))}
                               />
@@ -4077,7 +4045,7 @@ export function DailyTicketEntryView({
                   </table>
                 </div>
                 <div className="ticket-mobile-list">
-                  {rows.map(({ draft, index, dirty, busy, saved, disputes, installTotal, repairTotal, napRehabTotal }) => (
+                  {rows.map(({ draft, index, dirty, busy, saved, disputes, installTotal, repairTotal }) => (
                     <div
                       className={`ticket-mobile-card${dirty ? " ticket-mobile-card--dirty" : saved ? " ticket-mobile-card--saved" : ""}`}
                       key={draft.employee.id}
@@ -4129,7 +4097,6 @@ export function DailyTicketEntryView({
                               [draft.employee.id]: {
                                 install: Math.min(installTotal, normalizeTicketCount(e.target.value)),
                                 repair: current[draft.employee.id]?.repair ?? draft.entry?.disputed_repair ?? 0,
-                                nap_rehab: current[draft.employee.id]?.nap_rehab ?? draft.entry?.disputed_nap_rehab ?? 0,
                               },
                             }))}
                           />
@@ -4149,27 +4116,6 @@ export function DailyTicketEntryView({
                               [draft.employee.id]: {
                                 install: current[draft.employee.id]?.install ?? draft.entry?.disputed_install ?? 0,
                                 repair: Math.min(repairTotal, normalizeTicketCount(e.target.value)),
-                                nap_rehab: current[draft.employee.id]?.nap_rehab ?? draft.entry?.disputed_nap_rehab ?? 0,
-                              },
-                            }))}
-                          />
-                        </label>
-                        <label className="ticket-mobile-input-tile ticket-mobile-input-tile--dispute">
-                          <span>Disputed Nap Rehab</span>
-                          <input
-                            aria-label={`Disputed nap rehab tickets for ${draft.employee.full_name}`}
-                            disabled={napRehabTotal === 0}
-                            max={napRehabTotal}
-                            min="0"
-                            step="1"
-                            type="number"
-                            value={Math.min(napRehabTotal, normalizeTicketCount(disputes.nap_rehab))}
-                            onChange={(e) => setDraftDisputes((current) => ({
-                              ...current,
-                              [draft.employee.id]: {
-                                install: current[draft.employee.id]?.install ?? draft.entry?.disputed_install ?? 0,
-                                repair: current[draft.employee.id]?.repair ?? draft.entry?.disputed_repair ?? 0,
-                                nap_rehab: Math.min(napRehabTotal, normalizeTicketCount(e.target.value)),
                               },
                             }))}
                           />
@@ -4264,7 +4210,6 @@ export function DailyTicketEntryView({
                         {cats.map((cat) => <th key={cat.id}>{cat.name}</th>)}
                         <th>Disputed Install</th>
                         <th>Disputed Repair</th>
-                        <th>Disputed Nap Rehab</th>
                         <th>Total</th>
                         <th>Gross</th>
                         <th>Payroll</th>
@@ -4283,7 +4228,6 @@ export function DailyTicketEntryView({
                             })}
                             <td>{entry.disputed_install ?? 0}</td>
                             <td>{entry.disputed_repair ?? 0}</td>
-                            <td>{entry.disputed_nap_rehab ?? 0}</td>
                             <td>{snapshot.total}</td>
                             <td><strong>{currency.format(snapshot.gross)}</strong></td>
                             <td>
@@ -6027,7 +5971,7 @@ export function EmployeeDetailsView({
     if (isTicket) {
       supabase
         .from("daily_ticket_entries")
-        .select("id,user_id,employee_id,employee_name,position_id,position_name,entry_date,installation_tickets,repair_tickets,disputed_install,disputed_repair,installation_rate,repair_rate,nap_rehab_tickets,disputed_nap_rehab,nap_rehab_rate,created_at,updated_at,details:daily_ticket_entry_items(id,user_id,daily_ticket_entry_id,position_ticket_category_id,category_name,ticket_count,rate,created_at)")
+        .select("id,user_id,employee_id,employee_name,position_id,position_name,entry_date,installation_tickets,repair_tickets,disputed_install,disputed_repair,installation_rate,repair_rate,nap_rehab_tickets,nap_rehab_rate,created_at,updated_at,details:daily_ticket_entry_items(id,user_id,daily_ticket_entry_id,position_ticket_category_id,category_name,ticket_count,rate,created_at)")
         .eq("employee_id", currentEmployee.id)
         .order("entry_date", { ascending: false })
         .limit(200)

@@ -141,7 +141,7 @@ export function dailyTicketTotalsForEmployee(entries: DailyTicketEntry[], employ
     const napRehabDetails = details.filter((detail) => detail.ticket_type === "nap_rehab");
     const adjustedInstallation = distributeRemainingCounts(installationDetails, entry.disputed_install ?? 0);
     const adjustedRepair = distributeRemainingCounts(repairDetails, entry.disputed_repair ?? 0);
-    const adjustedNapRehab = distributeRemainingCounts(napRehabDetails, entry.disputed_nap_rehab ?? 0);
+    const adjustedNapRehab = napRehabDetails.map((detail) => ({ ...detail, remainingCount: normalizeTicketCount(detail.ticket_count) }));
 
     return [...adjustedInstallation, ...adjustedRepair, ...adjustedNapRehab]
       .filter((detail) => detail.remainingCount > 0)
@@ -209,12 +209,11 @@ export function dailyTicketTotalsForEmployee(entries: DailyTicketEntry[], employ
     0,
   );
   const napRehabTickets = employeeEntries.reduce(
-    (sum, entry) => sum + Math.max(0, normalizeTicketCount(entry.nap_rehab_tickets) - clampDisputedCount(entry.nap_rehab_tickets, entry.disputed_nap_rehab ?? 0)),
+    (sum, entry) => sum + normalizeTicketCount(entry.nap_rehab_tickets),
     0,
   );
   const napRehabGross = employeeEntries.reduce(
-    (sum, entry) =>
-      sum + Math.max(0, normalizeTicketCount(entry.nap_rehab_tickets) - clampDisputedCount(entry.nap_rehab_tickets, entry.disputed_nap_rehab ?? 0)) * toNumber(entry.nap_rehab_rate),
+    (sum, entry) => sum + normalizeTicketCount(entry.nap_rehab_tickets) * toNumber(entry.nap_rehab_rate),
     0,
   );
 

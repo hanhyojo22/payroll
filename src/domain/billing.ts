@@ -41,7 +41,7 @@ function clampedBillableByType(entry: DailyTicketEntry) {
   return {
     installation: Math.max(0, installation - Math.min(installation, entry.disputed_install ?? 0)),
     repair: Math.max(0, repair - Math.min(repair, entry.disputed_repair ?? 0)),
-    nap_rehab: Math.max(0, napRehab - Math.min(napRehab, entry.disputed_nap_rehab ?? 0)),
+    nap_rehab: Math.max(0, napRehab),
   };
 }
 

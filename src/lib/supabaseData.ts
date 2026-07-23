@@ -365,7 +365,7 @@ export async function loadDailyTicketEntries(supabase: SupabaseClient) {
     "Daily tickets",
     supabase
       .from("daily_ticket_entries")
-      .select("id,user_id,entry_date,employee_id,employee_name,position_id,position_name,installation_tickets,repair_tickets,disputed_install,disputed_repair,installation_rate,repair_rate,nap_rehab_tickets,disputed_nap_rehab,nap_rehab_rate,created_at,updated_at,details:daily_ticket_entry_items(id,user_id,daily_ticket_entry_id,position_ticket_category_id,category_name,ticket_count,rate,ticket_type,created_at,updated_at)")
+      .select("id,user_id,entry_date,employee_id,employee_name,position_id,position_name,installation_tickets,repair_tickets,disputed_install,disputed_repair,installation_rate,repair_rate,nap_rehab_tickets,nap_rehab_rate,created_at,updated_at,details:daily_ticket_entry_items(id,user_id,daily_ticket_entry_id,position_ticket_category_id,category_name,ticket_count,rate,ticket_type,created_at,updated_at)")
       .order("entry_date", { ascending: false }),
   );
 }

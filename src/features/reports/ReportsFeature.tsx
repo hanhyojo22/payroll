@@ -229,7 +229,7 @@ export function ReportsFeature({
   const ticketRows = useMemo<TicketReportRow[]>(
     () =>
       dailyTicketEntries.map((entry) => {
-        const disputedTickets = Number(entry.disputed_install ?? 0) + Number(entry.disputed_repair ?? 0) + Number(entry.disputed_nap_rehab ?? 0);
+        const disputedTickets = Number(entry.disputed_install ?? 0) + Number(entry.disputed_repair ?? 0);
         const totalTickets = entry.installation_tickets + entry.repair_tickets + entry.nap_rehab_tickets;
         return {
           ...entry,
@@ -313,7 +313,7 @@ export function ReportsFeature({
     const closedTicketCount = (entry: DailyTicketEntry) =>
       Math.max(
         entry.installation_tickets + entry.repair_tickets + entry.nap_rehab_tickets
-          - Number(entry.disputed_install ?? 0) - Number(entry.disputed_repair ?? 0) - Number(entry.disputed_nap_rehab ?? 0),
+          - Number(entry.disputed_install ?? 0) - Number(entry.disputed_repair ?? 0),
         0,
       );
     const ticketDaily = dailyTicketEntries

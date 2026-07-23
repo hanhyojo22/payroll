@@ -145,12 +145,11 @@ describe("position-based payroll", () => {
     expect(item.ticket_details[0].rate).toBe(250);
   });
 
-  it("reduces detail-based payroll totals by disputed install, repair, and nap rehab tickets", () => {
+  it("reduces detail-based payroll totals by disputed install and repair tickets, counting nap rehab tickets undisputed", () => {
     const disputedEntry: DailyTicketEntry = {
       ...ticketEntry,
       disputed_install: 1,
       disputed_repair: 1,
-      disputed_nap_rehab: 1,
       details: [
         {
           id: "detail-install",
@@ -194,17 +193,17 @@ describe("position-based payroll", () => {
     const totals = dailyTicketTotalsForEmployee([disputedEntry], employee);
     expect(totals.installationTickets).toBe(1);
     expect(totals.repairTickets).toBe(2);
-    expect(totals.napRehabTickets).toBe(3);
-    expect(totals.gross).toBe(2_000);
+    expect(totals.napRehabTickets).toBe(4);
+    expect(totals.gross).toBe(2_300);
 
     const item = payrollItemPayloadForEmployee(employee, "run-1", "user-1", [disputedEntry], position("ticket"));
-    expect(item.ticket_pay).toBe(2_000);
+    expect(item.ticket_pay).toBe(2_300);
     expect(item.installation_tickets).toBe(1);
     expect(item.repair_tickets).toBe(2);
-    expect(item.nap_rehab_tickets).toBe(3);
+    expect(item.nap_rehab_tickets).toBe(4);
   });
 
-  it("reduces legacy header-based payroll totals by disputed install, repair, and nap rehab tickets", () => {
+  it("reduces legacy header-based payroll totals by disputed install and repair tickets, counting nap rehab tickets undisputed", () => {
     const legacyEntry: DailyTicketEntry = {
       ...ticketEntry,
       details: [],
@@ -215,15 +214,14 @@ describe("position-based payroll", () => {
       installation_rate: 600,
       repair_rate: 200,
       nap_rehab_tickets: 5,
-      disputed_nap_rehab: 2,
       nap_rehab_rate: 300,
     };
 
     const item = payrollItemPayloadForEmployee(employee, "run-1", "user-1", [legacyEntry], position("ticket"));
-    expect(item.ticket_pay).toBe(2_500);
+    expect(item.ticket_pay).toBe(3_100);
     expect(item.installation_tickets).toBe(2);
     expect(item.repair_tickets).toBe(2);
-    expect(item.nap_rehab_tickets).toBe(3);
+    expect(item.nap_rehab_tickets).toBe(5);
   });
 });
 

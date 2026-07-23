@@ -509,7 +509,7 @@
   add column if not exists nap_rehab_rate numeric(12, 2) not null default 0;
 
   alter table public.daily_ticket_entries
-  add column if not exists disputed_nap_rehab integer not null default 0;
+  drop column if exists disputed_nap_rehab;
 
   alter table public.daily_ticket_entries
   drop constraint if exists daily_ticket_entries_user_id_entry_date_employee_id_key;
@@ -573,13 +573,6 @@
   alter table public.daily_ticket_entries
   add constraint daily_ticket_entries_nap_rehab_rate_check
   check (nap_rehab_rate >= 0);
-
-  alter table public.daily_ticket_entries
-  drop constraint if exists daily_ticket_entries_disputed_nap_rehab_check;
-
-  alter table public.daily_ticket_entries
-  add constraint daily_ticket_entries_disputed_nap_rehab_check
-  check (disputed_nap_rehab >= 0);
 
   create index if not exists payment_reminders_user_due_date_idx
   on public.payment_reminders (user_id, due_date);
