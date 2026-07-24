@@ -2135,12 +2135,12 @@ function BillingForm({
             <button className="cbf-btn-cancel" disabled={busy} onClick={onClose} type="button">Cancel</button>
             <div className="cbf-nav-right">
               {step > 1 && (
-                <button className="cbf-btn-back" disabled={busy} onClick={() => setStep((current) => (current - 1) as 1 | 2 | 3)} type="button">Back</button>
+                <button className="cbf-btn-back" disabled={busy} key="back" onClick={() => setStep((current) => (current - 1) as 1 | 2 | 3)} type="button">Back</button>
               )}
               {step < 3 ? (
-                <button className="cbf-btn-next" disabled={busy} onClick={() => setStep((current) => (current + 1) as 1 | 2 | 3)} type="button">Next</button>
+                <button className="cbf-btn-next" disabled={busy} key="next" onClick={() => setStep((current) => (current + 1) as 1 | 2 | 3)} type="button">Next</button>
               ) : (
-                <button className="cbf-btn-submit" disabled={busy} type="submit">{busy ? "Saving..." : initial ? "Update Billing" : "Create Billing"}</button>
+                <button className="cbf-btn-submit" disabled={busy} key="submit" type="submit">{busy ? "Saving..." : initial ? "Update Billing" : "Create Billing"}</button>
               )}
             </div>
           </div>
