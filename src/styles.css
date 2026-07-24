@@ -9781,11 +9781,12 @@ td {
 
 .tbl-label-abbr { display: none; }
 
-.billing-employee-reference-table col.col-employee { width: 36%; }
+.billing-employee-reference-table col.col-employee { width: 30%; }
 .billing-employee-reference-table col.col-ins,
 .billing-employee-reference-table col.col-rep,
-.billing-employee-reference-table col.col-tot { width: 12%; }
-.billing-employee-reference-table col.col-gross { width: 28%; }
+.billing-employee-reference-table col.col-nap,
+.billing-employee-reference-table col.col-tot { width: 11%; }
+.billing-employee-reference-table col.col-gross { width: 26%; }
 
 .billing-details-table td span {
   color: var(--color-text-tertiary);
@@ -9804,8 +9805,8 @@ td {
 
 .billing-ticket-source-grid {
   display: grid;
-  gap: 14px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .billing-ticket-source-card {
@@ -9814,9 +9815,9 @@ td {
   border-radius: var(--radius-lg);
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  min-height: 46px;
-  padding: 6px 8px;
+  gap: 4px;
+  min-height: 64px;
+  padding: 10px 12px;
 }
 
 .billing-ticket-source-title {
@@ -10568,7 +10569,13 @@ td {
   max-width: 1280px;
   overflow: hidden;
   padding: 0;
+  transition: max-width 0.2s ease;
   width: 96vw;
+}
+
+.cbf-modal--compact {
+  max-height: min(85vh, 760px);
+  max-width: 680px;
 }
 
 .cbf-header {
@@ -10577,7 +10584,7 @@ td {
   display: flex;
   flex-shrink: 0;
   justify-content: space-between;
-  padding: 8px 20px 6px;
+  padding: 14px 20px;
 }
 
 .cbf-eyebrow {
@@ -10603,12 +10610,12 @@ td {
   cursor: pointer;
   display: flex;
   flex-shrink: 0;
-  height: 38px;
+  height: 40px;
   justify-content: center;
   margin-top: -2px;
   padding: 0;
   transition: background 0.15s, color 0.15s;
-  width: 38px;
+  width: 40px;
 }
 .cbf-close-btn:hover { background: var(--color-bg); color: var(--color-text); }
 
@@ -10741,10 +10748,10 @@ td {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   min-height: 0;
   overflow-y: auto;
-  padding: 10px 24px 20px;
+  padding: 12px 24px 20px;
 }
 
 .cbf-step-panel--narrow {
@@ -10783,7 +10790,7 @@ td {
   border: 1px solid var(--color-border-light);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
-  padding: 5px;
+  padding: var(--space-md);
 }
 
 .cbf-section-heading {
@@ -10791,7 +10798,7 @@ td {
   display: flex;
   gap: 10px;
   justify-content: space-between;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 
 .cbf-section-helper {
@@ -10818,8 +10825,8 @@ td {
   border-radius: var(--radius-sm);
   color: var(--color-text);
   font-size: var(--font-size-sm);
-  height: 34px;
-  padding: 0 12px;
+  height: 40px;
+  padding: 0 14px;
   transition: border-color 0.15s, box-shadow 0.15s;
   width: 100%;
 }
@@ -10858,7 +10865,7 @@ td {
   cursor: pointer;
   font-size: var(--font-size-xs);
   font-weight: 600;
-  min-height: 34px;
+  min-height: 40px;
   padding: 0 16px;
   text-align: center;
   transition: all 0.15s;
@@ -10872,17 +10879,18 @@ td {
   font-weight: 700;
 }
 
-/* Ticket cards */
+/* Ticket cards -- always Installation / Repair / Nap Rehab, so a fixed 3-column grid
+   keeps every group (company tickets, company disputes, disputed totals) evenly spaced. */
 .cbf-ticket-pair {
   display: grid;
   gap: 14px;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
 }
 
 .cbf-dispute-summary {
   display: grid;
   gap: 10px;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   margin-bottom: 12px;
 }
 
@@ -10906,7 +10914,7 @@ td {
 
 .cbf-dispute-summary-item strong {
   color: #b45309;
-  font-size: 15px;
+  font-size: 1.15rem;
   font-weight: 700;
 }
 
@@ -10992,7 +11000,7 @@ td {
   display: block;
   font-size: var(--font-size-sm);
   margin-top: 8px;
-  padding: 8px 10px;
+  padding: 10px 14px;
   resize: vertical;
   transition: border-color 0.15s;
   width: 100%;
@@ -11013,8 +11021,8 @@ td {
   cursor: pointer;
   font-size: var(--font-size-xs);
   font-weight: 600;
-  min-height: 38px;
-  padding: 0 16px;
+  min-height: 40px;
+  padding: 0 18px;
   transition: all 0.15s;
 }
 .cbf-btn-back:hover:not(:disabled) { border-color: var(--color-text-secondary); color: var(--color-text); }
@@ -11029,8 +11037,8 @@ td {
   cursor: pointer;
   font-size: var(--font-size-xs);
   font-weight: 600;
-  min-height: 38px;
-  padding: 0 16px;
+  min-height: 40px;
+  padding: 0 18px;
   transition: opacity 0.15s;
 }
 .cbf-btn-next:hover:not(:disabled) { opacity: 0.88; }
@@ -11111,7 +11119,7 @@ td {
   color: var(--color-text-secondary);
   font-size: 11px;
   font-weight: 700;
-  padding: 8px 10px;
+  padding: 10px;
   text-align: left;
   text-transform: uppercase;
 }
@@ -11120,7 +11128,7 @@ td {
 
 .cbf-invoice-table td {
   border-bottom: 1px solid var(--color-border-light);
-  padding: 9px 10px;
+  padding: 10px;
 }
 
 .cbf-invoice-table td.cbf-invoice-num { text-align: right; }
@@ -11167,7 +11175,7 @@ td {
   flex-shrink: 0;
   gap: 10px;
   justify-content: space-between;
-  padding: 6px 20px;
+  padding: 12px 20px;
   position: sticky;
   bottom: 0;
   z-index: 2;
@@ -11181,8 +11189,8 @@ td {
   cursor: pointer;
   font-size: var(--font-size-xs);
   font-weight: 600;
-  min-height: 38px;
-  padding: 0 16px;
+  min-height: 40px;
+  padding: 0 18px;
   transition: all 0.15s;
 }
 .cbf-btn-cancel:hover { border-color: var(--color-text-secondary); color: var(--color-text); }
@@ -11196,8 +11204,8 @@ td {
   cursor: pointer;
   font-size: var(--font-size-xs);
   font-weight: 600;
-  min-height: 38px;
-  padding: 0 16px;
+  min-height: 40px;
+  padding: 0 18px;
   transition: opacity 0.15s;
 }
 .cbf-btn-submit:hover:not(:disabled) { opacity: 0.88; }
@@ -11298,11 +11306,16 @@ td {
     padding-right: 0;
   }
 
-  /* Gross column was allocated more width (28%) than its content needs,
-     leaving a dead gap between the Tot and Gross columns. Shrink it and
-     give the reclaimed space to the employee name column. */
-  .billing-employee-reference-table col.col-employee { width: 44%; }
-  .billing-employee-reference-table col.col-gross { width: 20%; }
+  /* Gross column was allocated more width than its content needs, leaving a dead gap.
+     Shrink it and give the reclaimed space to the employee name column. With Nap Rehab
+     added as a 6th column, ins/rep/nap/tot are also trimmed to fit six columns on
+     mobile without the name column getting squeezed back down. */
+  .billing-employee-reference-table col.col-employee { width: 36%; }
+  .billing-employee-reference-table col.col-ins,
+  .billing-employee-reference-table col.col-rep,
+  .billing-employee-reference-table col.col-nap,
+  .billing-employee-reference-table col.col-tot { width: 10%; }
+  .billing-employee-reference-table col.col-gross { width: 24%; }
 
   /* Subcontractor Tickets grid (New Billing): same goal as the employee
      table above — every column visible at once, no horizontal scroll. */

@@ -531,7 +531,7 @@ export async function loadBillingRecords(supabase: SupabaseClient) {
     "Billing records",
     supabase
       .from("billing_records")
-      .select("id,user_id,invoice_no,billing_month,billing_year,billing_period,install_tickets,repair_tickets,disputed_install,disputed_repair,company_install_tickets,company_repair_tickets,company_disputed_install,company_disputed_repair,total_tickets,disputed_tickets,billable_tickets,billing_rate,billing_amount,collections_pct,collections_amount,collectibles_amount,collection_id,collectibles_collection_id,due_date,notes,created_at,updated_at,subcon_items:billing_subcon_items(id,user_id,billing_record_id,subcontractor_id,subcon_name,install_tickets,repair_tickets,disputed_install,disputed_repair,installation_rate,repair_rate,billable_tickets,billing_amount,payable_pct,payable_amount,collection_amount,created_at)")
+      .select("id,user_id,invoice_no,billing_month,billing_year,billing_period,install_tickets,repair_tickets,disputed_install,disputed_repair,nap_rehab_tickets,disputed_nap_rehab,company_install_tickets,company_repair_tickets,company_disputed_install,company_disputed_repair,company_nap_rehab_tickets,company_disputed_nap_rehab,total_tickets,disputed_tickets,billable_tickets,billing_rate,billing_amount,collections_pct,collections_amount,collectibles_amount,collection_id,collectibles_collection_id,due_date,notes,created_at,updated_at,subcon_items:billing_subcon_items(id,user_id,billing_record_id,subcontractor_id,subcon_name,install_tickets,repair_tickets,disputed_install,disputed_repair,installation_rate,repair_rate,billable_tickets,billing_amount,payable_pct,payable_amount,collection_amount,created_at)")
       .order("billing_year", { ascending: false })
       .order("billing_month", { ascending: false }),
   );
@@ -542,7 +542,7 @@ export async function loadBillingSettings(supabase: SupabaseClient) {
     "Billing settings",
     supabase
       .from("billing_settings")
-      .select("id,user_id,installation_rate,repair_rate,collections_pct,client_name,created_at,updated_at")
+      .select("id,user_id,installation_rate,repair_rate,nap_rehab_rate,collections_pct,client_name,created_at,updated_at")
       .limit(1),
   );
   return {

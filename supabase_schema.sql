@@ -2337,3 +2337,19 @@ foreign key (billing_subcon_item_id) references public.billing_subcon_items(id) 
 alter table public.subcontractors add column if not exists email text not null default '';
 alter table public.subcontractors add column if not exists contact_number text not null default '';
 alter table public.subcontractors add column if not exists address text not null default '';
+
+-- Nap Rehab tickets were already tracked end-to-end in payroll (employees get paid a
+-- nap_rehab_rate per ticket) and in reports, but billing never had a client-facing rate
+-- or ticket columns for them -- the company was paying employees for this work without
+-- ever invoicing the client for it. Add a rate to billing_settings and ticket/dispute
+-- columns to billing_records so Nap Rehab flows through billing the same way
+-- Installation/Repair already do. Subcontractors don't perform Nap Rehab tickets, so no
+-- equivalent column is added to subcontractors/billing_subcon_items.
+alter table public.billing_settings
+add column if not exists nap_rehab_rate numeric(12, 2) not null default 0 check (nap_rehab_rate >= 0);
+
+alter table public.billing_records
+add column if not exists nap_rehab_tickets integer not null default 0 check (nap_rehab_tickets >= 0),
+add column if not exists disputed_nap_rehab integer not null default 0 check (disputed_nap_rehab >= 0),
+add column if not exists company_nap_rehab_tickets integer not null default 0 check (company_nap_rehab_tickets >= 0),
+add column if not exists company_disputed_nap_rehab integer not null default 0 check (company_disputed_nap_rehab >= 0);

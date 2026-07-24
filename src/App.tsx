@@ -2093,12 +2093,12 @@ function DashboardModern({
       };
       existing.install += entry.installation_tickets;
       existing.repair += entry.repair_tickets;
-      existing.napRehab += entry.nap_rehab_tickets;
-      existing.totalTickets += entry.installation_tickets + entry.repair_tickets + entry.nap_rehab_tickets;
+      existing.napRehab += toNumber(entry.nap_rehab_tickets);
+      existing.totalTickets += entry.installation_tickets + entry.repair_tickets + toNumber(entry.nap_rehab_tickets);
       existing.earnings +=
         entry.installation_tickets * entry.installation_rate +
         entry.repair_tickets * entry.repair_rate +
-        entry.nap_rehab_tickets * entry.nap_rehab_rate;
+        toNumber(entry.nap_rehab_tickets) * toNumber(entry.nap_rehab_rate);
       totals.set(entry.employee_id, existing);
     }
 

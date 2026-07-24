@@ -493,6 +493,7 @@ export type BillingSettings = {
   user_id: string;
   installation_rate: number;
   repair_rate: number;
+  nap_rehab_rate: number;
   collections_pct: number;
   client_name: string;
   created_at: string;
@@ -583,10 +584,14 @@ export type BillingRecord = {
   repair_tickets: number;
   disputed_install: number;
   disputed_repair: number;
+  nap_rehab_tickets: number;
+  disputed_nap_rehab: number;
   company_install_tickets: number;
   company_repair_tickets: number;
   company_disputed_install: number;
   company_disputed_repair: number;
+  company_nap_rehab_tickets: number;
+  company_disputed_nap_rehab: number;
   total_tickets: number;
   disputed_tickets: number;
   billable_tickets: number;
@@ -613,10 +618,14 @@ export type BillingFormValues = {
   repair_tickets: string;
   disputed_install: string;
   disputed_repair: string;
+  nap_rehab_tickets: string;
+  disputed_nap_rehab: string;
   company_install_tickets: string;
   company_repair_tickets: string;
   company_disputed_install: string;
   company_disputed_repair: string;
+  company_nap_rehab_tickets: string;
+  company_disputed_nap_rehab: string;
   subcon_items: Array<{
     id?: string;
     subcontractor_id: string;

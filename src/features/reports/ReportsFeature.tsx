@@ -230,14 +230,21 @@ export function ReportsFeature({
     () =>
       dailyTicketEntries.map((entry) => {
         const disputedTickets = Number(entry.disputed_install ?? 0) + Number(entry.disputed_repair ?? 0);
-        const totalTickets = entry.installation_tickets + entry.repair_tickets + entry.nap_rehab_tickets;
+        // nap_rehab_tickets/nap_rehab_rate may be absent on entries cached (IndexedDB) or
+        // fetched before those columns existed -- coerce so downstream .toLocaleString()
+        // calls and sum reduces on the row can't crash or go NaN.
+        const napRehabTickets = Number(entry.nap_rehab_tickets) || 0;
+        const napRehabRate = Number(entry.nap_rehab_rate) || 0;
+        const totalTickets = entry.installation_tickets + entry.repair_tickets + napRehabTickets;
         return {
           ...entry,
           disputedTickets,
           grossValue:
             entry.installation_tickets * entry.installation_rate +
             entry.repair_tickets * entry.repair_rate +
-            entry.nap_rehab_tickets * entry.nap_rehab_rate,
+            napRehabTickets * napRehabRate,
+          nap_rehab_tickets: napRehabTickets,
+          nap_rehab_rate: napRehabRate,
           statusLabel: disputedTickets > 0 ? "Disputed" : totalTickets >= 10 ? "High Volume" : "Clean",
           totalTickets,
         };
@@ -312,7 +319,7 @@ export function ReportsFeature({
 
     const closedTicketCount = (entry: DailyTicketEntry) =>
       Math.max(
-        entry.installation_tickets + entry.repair_tickets + entry.nap_rehab_tickets
+        entry.installation_tickets + entry.repair_tickets + (Number(entry.nap_rehab_tickets) || 0)
           - Number(entry.disputed_install ?? 0) - Number(entry.disputed_repair ?? 0),
         0,
       );
