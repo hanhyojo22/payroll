@@ -1450,6 +1450,12 @@ function BillingQuickCollectModal({
   );
 }
 
+const WIZARD_STEPS: Array<{ id: 1 | 2 | 3; label: string }> = [
+  { id: 1, label: "Billing Details" },
+  { id: 2, label: "Review Tickets" },
+  { id: 3, label: "Billable Summary" },
+];
+
 function BillingForm({
   initial,
   dailyTicketEntries,
@@ -1568,6 +1574,13 @@ function BillingForm({
   const [values, setValues] = useState<BillingFormValues>(buildInitialValues);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<ActionProgressState | null>(null);
+  const [step, setStep] = useState<1 | 2 | 3>(1);
+
+  function formatStatementDate(dateKey: string) {
+    const [year, month, day] = dateKey.slice(0, 10).split("-").map(Number);
+    if (!year || !month || !day) return "—";
+    return `${monthNames[month - 1]} ${day}, ${year}`;
+  }
 
   useEffect(() => {
     if (initial) return;
@@ -1649,6 +1662,9 @@ function BillingForm({
     }));
   }
 
+  const statementDate = formatStatementDate(initial ? initial.created_at : todayKey());
+  const statementPeriodLabel = `${billingPeriodLabel(values.billing_period)}, ${monthNames[Number(values.billing_month) - 1]} ${values.billing_year}`;
+
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
@@ -1680,54 +1696,83 @@ function BillingForm({
               title={progress?.title ?? (initial ? "Saving billing" : "Creating billing")}
             />
           )}
-          <div className="cbf-cols">
-            <div className="cbf-left">
-              <section className="cbf-section cbf-section-card">
-                <div className="cbf-section-heading">
-                  <p className="cbf-section-label">Billing Period</p>
-                </div>
-                <div className="cbf-period-row">
-                  <select className="cbf-select" value={values.billing_month} onChange={(event) => setValues({ ...values, billing_month: event.target.value })}>
-                    {monthNames.map((name, index) => <option key={name} value={String(index + 1)}>{name}</option>)}
-                  </select>
-                  <input
-                    className="cbf-input cbf-year-input"
-                    max="2200"
-                    min="2020"
-                    onChange={(event) => setValues({ ...values, billing_year: event.target.value })}
-                    required
-                    type="number"
-                    value={values.billing_year}
-                  />
-                </div>
-                <div className="cbf-half-toggle">
-                  <button
-                    className={values.billing_period === "first_half" ? "cbf-half-btn cbf-half-btn--active" : "cbf-half-btn"}
-                    onClick={() => setValues({ ...values, billing_period: "first_half" })}
-                    type="button"
-                  >
-                    1st - 15th
-                  </button>
-                  <button
-                    className={values.billing_period === "second_half" ? "cbf-half-btn cbf-half-btn--active" : "cbf-half-btn"}
-                    onClick={() => setValues({ ...values, billing_period: "second_half" })}
-                    type="button"
-                  >
-                    16th - End
-                  </button>
-                </div>
-                <div className="cbf-due-date-row">
-                  <label className="cbf-field-label" htmlFor="billing-due-date">Due date</label>
-                  <input
-                    className="cbf-input"
-                    id="billing-due-date"
-                    onChange={(event) => setValues({ ...values, due_date: event.target.value })}
-                    type="date"
-                    value={values.due_date}
-                  />
-                </div>
-              </section>
+          <div className="cbf-stepper">
+            {WIZARD_STEPS.map((wizardStep) => (
+              <button
+                className={`cbf-step${step === wizardStep.id ? " cbf-step--active" : ""}${step > wizardStep.id ? " cbf-step--done" : ""}`}
+                disabled={busy}
+                key={wizardStep.id}
+                onClick={() => setStep(wizardStep.id)}
+                type="button"
+              >
+                <span className="cbf-step-line" />
+                <span className="cbf-step-circle">{step > wizardStep.id ? <CheckCircle2 size={16} /> : wizardStep.id}</span>
+                <span className="cbf-step-label">{wizardStep.label}</span>
+              </button>
+            ))}
+          </div>
 
+          {step === 1 && (
+            <div className="cbf-step-panel">
+              <div className="cbf-step-panel--narrow">
+                <section className="cbf-section cbf-section-card">
+                  <div className="cbf-section-heading">
+                    <p className="cbf-section-label">Billing Period</p>
+                  </div>
+                  <div className="cbf-period-row">
+                    <select className="cbf-select" value={values.billing_month} onChange={(event) => setValues({ ...values, billing_month: event.target.value })}>
+                      {monthNames.map((name, index) => <option key={name} value={String(index + 1)}>{name}</option>)}
+                    </select>
+                    <input
+                      className="cbf-input cbf-year-input"
+                      max="2200"
+                      min="2020"
+                      onChange={(event) => setValues({ ...values, billing_year: event.target.value })}
+                      required
+                      type="number"
+                      value={values.billing_year}
+                    />
+                  </div>
+                  <div className="cbf-half-toggle">
+                    <button
+                      className={values.billing_period === "first_half" ? "cbf-half-btn cbf-half-btn--active" : "cbf-half-btn"}
+                      onClick={() => setValues({ ...values, billing_period: "first_half" })}
+                      type="button"
+                    >
+                      1st - 15th
+                    </button>
+                    <button
+                      className={values.billing_period === "second_half" ? "cbf-half-btn cbf-half-btn--active" : "cbf-half-btn"}
+                      onClick={() => setValues({ ...values, billing_period: "second_half" })}
+                      type="button"
+                    >
+                      16th - End
+                    </button>
+                  </div>
+                  <div className="cbf-due-date-row">
+                    <label className="cbf-field-label" htmlFor="billing-due-date">Due date</label>
+                    <input
+                      className="cbf-input"
+                      id="billing-due-date"
+                      onChange={(event) => setValues({ ...values, due_date: event.target.value })}
+                      type="date"
+                      value={values.due_date}
+                    />
+                  </div>
+                </section>
+
+                <section className="cbf-section cbf-section-card">
+                  <label className="cbf-section-label">
+                    Notes <span className="cbf-section-sub">optional</span>
+                    <textarea className="cbf-textarea" rows={2} value={values.notes} onChange={(event) => setValues({ ...values, notes: event.target.value })} />
+                  </label>
+                </section>
+              </div>
+            </div>
+          )}
+
+          {step === 2 && (
+            <div className="cbf-step-panel">
               <section className="cbf-section cbf-section-card">
                 <div className="cbf-section-heading">
                   <p className="cbf-section-label">Ticket Sources</p>
@@ -2013,65 +2058,92 @@ function BillingForm({
                 </div>
                 </div>
               </section>
-
-              <section className="cbf-section cbf-section-card">
-                <label className="cbf-section-label">
-                  Notes <span className="cbf-section-sub">optional</span>
-                  <textarea className="cbf-textarea" rows={2} value={values.notes} onChange={(event) => setValues({ ...values, notes: event.target.value })} />
-                </label>
-              </section>
             </div>
+          )}
 
-            <div className="cbf-right">
-              <div className="cbf-statement">
-                <div className="cbf-stmt-head">
-                  <div>
-                    <p className="cbf-stmt-period">{monthNames[Number(values.billing_month) - 1]} {values.billing_year}</p>
-                    <p className="cbf-stmt-half">{billingPeriodLabel(values.billing_period)}</p>
-                  </div>
-                  <span className="cbf-draft-badge">Draft</span>
+          {step === 3 && (
+            <div className="cbf-step-panel">
+              <div className="cbf-invoice">
+                <h3 className="cbf-invoice-title">Billing Statement</h3>
+
+                <p className="cbf-invoice-section-label">Client Information</p>
+                <p className="cbf-invoice-line"><b>Billed To:</b></p>
+                <p className="cbf-invoice-line"><b>Name:</b> {settings.client_name || "—"}</p>
+
+                <hr className="cbf-invoice-hr" />
+
+                <p className="cbf-invoice-section-label">Billing Information</p>
+                <div className="cbf-invoice-meta">
+                  <span className="cbf-invoice-meta-label">Date of Issue:</span>
+                  <span className="cbf-invoice-meta-val">{statementDate}</span>
+                  <span className="cbf-invoice-meta-label">Billing Statement No.:</span>
+                  <span className="cbf-invoice-meta-val">
+                    {initial ? initial.invoice_no : <span className="cbf-invoice-draft">DRAFT — assigned on save</span>}
+                  </span>
+                  <span className="cbf-invoice-meta-label">Due Date:</span>
+                  <span className="cbf-invoice-meta-val">{values.due_date ? formatStatementDate(values.due_date) : "—"}</span>
+                  <span className="cbf-invoice-meta-label">Period:</span>
+                  <span className="cbf-invoice-meta-val">{statementPeriodLabel}</span>
                 </div>
-                <div className="cbf-stmt-body">
-                  <div className="cbf-stmt-hero">
-                    <span className="cbf-stmt-hero-label">Total Billable</span>
-                    <strong className="cbf-stmt-hero-amount">{currency.format(billingAmount)}</strong>
-                  </div>
-                  <div className="cbf-stmt-group">
-                    <p className="cbf-stmt-group-label">Billable Breakdown</p>
-                    <div className="cbf-stmt-row"><span>Install: {billableInstall} tickets</span><span>{currency.format(billableInstall * settings.installation_rate)}</span></div>
-                    <div className="cbf-stmt-row"><span>Repair: {billableRepair} tickets</span><span>{currency.format(billableRepair * settings.repair_rate)}</span></div>
-                    <div className="cbf-stmt-row cbf-stmt-row--total"><span>Total tickets</span><span>{billableTickets}</span></div>
-                  </div>
-                  <div className="cbf-stmt-group">
-                    <p className="cbf-stmt-group-label">Subcontractor payout</p>
-                    <div className="cbf-stmt-row"><span>Rows</span><span>{values.subcon_items.length}</span></div>
-                    <div className="cbf-stmt-row"><span>Pending payable total</span><span>{currency.format(totalSubconNet)}</span></div>
-                  </div>
-                  <div className="cbf-stmt-group">
-                    <p className="cbf-stmt-group-label">Split</p>
-                    <div className="cbf-split-labels">
-                      <div className="cbf-split-item cbf-split-item--collection">
-                      <div>
-                        <p className="cbf-split-label">Collection</p>
-                        <strong className="cbf-split-amount">{currency.format(collectionsAmount)}</strong>
-                      </div>
-                      </div>
-                      <div className="cbf-split-item cbf-split-item--payable">
-                      <div>
-                        <p className="cbf-split-label">Collectibles</p>
-                        <strong className="cbf-split-amount">{currency.format(collectiblesAmount)}</strong>
-                      </div>
-                      </div>
-                    </div>
-                  </div>
+
+                <hr className="cbf-invoice-hr" />
+
+                <p className="cbf-invoice-section-label">Itemized Charges</p>
+                <table className="cbf-invoice-table">
+                  <thead>
+                    <tr>
+                      <th>Description</th>
+                      <th className="cbf-invoice-num">Quantity</th>
+                      <th className="cbf-invoice-num">Unit Price</th>
+                      <th className="cbf-invoice-num">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td className="cbf-invoice-desc">Installation Tickets</td>
+                      <td className="cbf-invoice-num">{billableInstall}</td>
+                      <td className="cbf-invoice-num">{currency.format(settings.installation_rate)}</td>
+                      <td className="cbf-invoice-num">{currency.format(billableInstall * settings.installation_rate)}</td>
+                    </tr>
+                    <tr>
+                      <td className="cbf-invoice-desc">Repair Tickets</td>
+                      <td className="cbf-invoice-num">{billableRepair}</td>
+                      <td className="cbf-invoice-num">{currency.format(settings.repair_rate)}</td>
+                      <td className="cbf-invoice-num">{currency.format(billableRepair * settings.repair_rate)}</td>
+                    </tr>
+                    <tr className="cbf-invoice-subtotal-row">
+                      <td colSpan={3}>Subtotal</td>
+                      <td className="cbf-invoice-num">{currency.format(billingAmount)}</td>
+                    </tr>
+                    <tr className="cbf-invoice-grand-row">
+                      <td colSpan={3}>Total Amount Due</td>
+                      <td className="cbf-invoice-num">{currency.format(billingAmount)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <div className="cbf-invoice-note">
+                  <span className="cbf-invoice-note-label">Payment split (internal tracking)</span>
+                  <div className="cbf-invoice-note-row"><span>Collection</span><span>{currency.format(collectionsAmount)}</span></div>
+                  <div className="cbf-invoice-note-row"><span>Collectibles</span><span>{currency.format(collectiblesAmount)}</span></div>
+                  <div className="cbf-invoice-note-row"><span>Subcontractor payout (not billed to client)</span><span>{currency.format(totalSubconNet)}</span></div>
                 </div>
               </div>
             </div>
-          </div>
+          )}
 
           <div className="cbf-actions">
             <button className="cbf-btn-cancel" disabled={busy} onClick={onClose} type="button">Cancel</button>
-            <button className="cbf-btn-submit" disabled={busy} type="submit">{busy ? "Saving..." : initial ? "Update Billing" : "Create Billing"}</button>
+            <div className="cbf-nav-right">
+              {step > 1 && (
+                <button className="cbf-btn-back" disabled={busy} key="back" onClick={() => setStep((current) => (current - 1) as 1 | 2 | 3)} type="button">Back</button>
+              )}
+              {step < 3 ? (
+                <button className="cbf-btn-next" disabled={busy} key="next" onClick={() => setStep((current) => (current + 1) as 1 | 2 | 3)} type="button">Next</button>
+              ) : (
+                <button className="cbf-btn-submit" disabled={busy} key="submit" type="submit">{busy ? "Saving..." : initial ? "Update Billing" : "Create Billing"}</button>
+              )}
+            </div>
           </div>
         </form>
       </div>
