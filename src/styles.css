@@ -10694,6 +10694,7 @@ td {
 }
 
 .cbf-step:last-child .cbf-step-line { display: none; }
+.cbf-step:disabled { cursor: not-allowed; opacity: 0.6; }
 
 .cbf-step-circle {
   align-items: center;
@@ -11223,6 +11224,29 @@ td {
 
   .cbf-invoice {
     padding: 20px;
+  }
+
+  .cbf-stepper {
+    padding: 14px 12px 4px;
+  }
+
+  .cbf-step {
+    gap: 4px;
+    max-width: 96px;
+    padding: 4px 2px;
+  }
+
+  .cbf-step-circle {
+    height: 26px;
+    width: 26px;
+  }
+
+  .cbf-step-line {
+    top: 12px;
+  }
+
+  .cbf-step-label {
+    font-size: 10px;
   }
 
   .cbf-period-row,

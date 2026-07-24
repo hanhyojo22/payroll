@@ -1700,6 +1700,7 @@ function BillingForm({
             {WIZARD_STEPS.map((wizardStep) => (
               <button
                 className={`cbf-step${step === wizardStep.id ? " cbf-step--active" : ""}${step > wizardStep.id ? " cbf-step--done" : ""}`}
+                disabled={busy}
                 key={wizardStep.id}
                 onClick={() => setStep(wizardStep.id)}
                 type="button"
