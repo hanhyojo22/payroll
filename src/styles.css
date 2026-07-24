@@ -10836,6 +10836,11 @@ td {
   box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.12);
   outline: none;
 }
+.cbf-select:disabled,
+.cbf-input:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
 
 .cbf-year-input { width: 108px; }
 
@@ -10870,7 +10875,8 @@ td {
   text-align: center;
   transition: all 0.15s;
 }
-.cbf-half-btn:hover { border-color: var(--color-accent, #0071e3); color: var(--color-accent, #0071e3); }
+.cbf-half-btn:hover:not(:disabled) { border-color: var(--color-accent, #0071e3); color: var(--color-accent, #0071e3); }
+.cbf-half-btn:disabled { cursor: not-allowed; opacity: 0.6; }
 .cbf-half-btn--active {
   background: rgba(0, 113, 227, 0.1);
   border-color: rgba(0, 113, 227, 0.42);

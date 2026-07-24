@@ -596,6 +596,9 @@ export type BillingRecord = {
   disputed_tickets: number;
   billable_tickets: number;
   billing_rate: number;
+  installation_rate: number;
+  repair_rate: number;
+  nap_rehab_rate: number;
   billing_amount: number;
   collections_pct: number;
   collections_amount: number;
@@ -626,6 +629,10 @@ export type BillingFormValues = {
   company_disputed_repair: string;
   company_nap_rehab_tickets: string;
   company_disputed_nap_rehab: string;
+  installation_rate: string;
+  repair_rate: string;
+  nap_rehab_rate: string;
+  collections_pct: string;
   subcon_items: Array<{
     id?: string;
     subcontractor_id: string;

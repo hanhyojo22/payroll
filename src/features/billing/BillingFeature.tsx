@@ -298,8 +298,17 @@ export function BillingFeature({
     const billableRepair = Math.max(0, employeeSubconRepair - disputedRepair) + Math.max(0, companyRepair - companyDisputedRepair);
     const billableNapRehab = Math.max(0, employeeNapRehab - disputedNapRehab) + Math.max(0, companyNapRehab - companyDisputedNapRehab);
     const billableTickets = billableInstall + billableRepair + billableNapRehab;
-    const billingAmount = billableInstall * settings!.installation_rate + billableRepair * settings!.repair_rate + billableNapRehab * (Number(settings!.nap_rehab_rate) || 0);
-    const collectionsAmount = Math.round((billingAmount * settings!.collections_pct) / 100 * 100) / 100;
+    // Rates and the collections split come from `values`, not live `settings`, so
+    // editing an existing record recomputes against the rate/pct that was actually
+    // snapshotted onto it at creation -- not whatever billing_settings has been changed
+    // to since. `buildInitialValues` seeds these from `initial` on edit, or from live
+    // settings when creating a brand-new record.
+    const effectiveInstallationRate = Number(values.installation_rate) || 0;
+    const effectiveRepairRate = Number(values.repair_rate) || 0;
+    const effectiveNapRehabRate = Number(values.nap_rehab_rate) || 0;
+    const effectiveCollectionsPct = Number(values.collections_pct) || 0;
+    const billingAmount = billableInstall * effectiveInstallationRate + billableRepair * effectiveRepairRate + billableNapRehab * effectiveNapRehabRate;
+    const collectionsAmount = Math.round((billingAmount * effectiveCollectionsPct) / 100 * 100) / 100;
     const collectiblesAmount = Math.round((billingAmount - collectionsAmount) * 100) / 100;
     const dueDate = values.due_date || addDays(todayKey(), 15);
 
@@ -356,8 +365,11 @@ export function BillingFeature({
       disputed_tickets: disputedTickets,
       billable_tickets: billableTickets,
       billing_rate: 0,
+      installation_rate: effectiveInstallationRate,
+      repair_rate: effectiveRepairRate,
+      nap_rehab_rate: effectiveNapRehabRate,
       billing_amount: billingAmount,
-      collections_pct: settings!.collections_pct,
+      collections_pct: effectiveCollectionsPct,
       collections_amount: collectionsAmount,
       collectibles_amount: collectiblesAmount,
       collection_id: ids.collectionId,
@@ -370,7 +382,7 @@ export function BillingFeature({
     const collectionPayload = {
       id: ids.collectionId,
       user_id: userId,
-      title: `Billing ${monthNames[month - 1]} ${year} (${periodLabel}) - ${settings!.collections_pct}%`,
+      title: `Billing ${monthNames[month - 1]} ${year} (${periodLabel}) - ${effectiveCollectionsPct}%`,
       client_name: settings!.client_name || "Client",
       external_reference: "",
       issue_date: todayKey(),
@@ -383,14 +395,14 @@ export function BillingFeature({
     const collectiblesCollectionPayload = {
       id: ids.collectiblesCollectionId,
       user_id: userId,
-      title: `Billing ${monthNames[month - 1]} ${year} (${periodLabel}) - ${100 - settings!.collections_pct}%`,
+      title: `Billing ${monthNames[month - 1]} ${year} (${periodLabel}) - ${100 - effectiveCollectionsPct}%`,
       client_name: settings!.client_name || "Client",
       external_reference: "",
       issue_date: todayKey(),
       amount: collectiblesAmount,
       due_date: dueDate,
       status: "pending" as const,
-      notes: `Auto-created from billing ${monthNames[month - 1]} ${year} (${periodLabel}) - ${100 - settings!.collections_pct}% collectible.`,
+      notes: `Auto-created from billing ${monthNames[month - 1]} ${year} (${periodLabel}) - ${100 - effectiveCollectionsPct}% collectible.`,
     };
 
     const subconItemIds = new Set(subconItems.map((item) => item.id));
@@ -767,7 +779,7 @@ export function BillingFeature({
                   <th className="num">Disputed</th>
                   <th className="num">Billable</th>
                   <th className="num">Amount</th>
-                  <th className="num">Payable</th>
+                  <th className="num">Collectibles</th>
                   <th className="num">Collection</th>
                   <th>Status</th>
                   <th>Action</th>
@@ -823,7 +835,7 @@ export function BillingFeature({
                           </div>
                         </td>
                         <td className="num" data-label="Amount">{currency.format(record.billing_amount)}</td>
-                        <td className="num" data-label="Payable">{currency.format(record.collectibles_amount)}</td>
+                        <td className="num" data-label="Collectibles">{currency.format(record.collectibles_amount)}</td>
                         <td className="num" data-label="Collection">{currency.format(record.collections_amount)}</td>
                         <td data-label="Status">
                           <span className={`collection-status ${isFullyPaid ? "collected" : "pending"}`}>
@@ -1159,9 +1171,18 @@ function BillingDetailsModal({
   record: BillingRecord;
   settings: BillingSettings;
 }) {
+  // Use the rate actually snapshotted onto this record, not live settings -- otherwise
+  // viewing an old record's details after rates have changed would show a gross total
+  // that doesn't match what was actually billed. Records saved before the snapshot
+  // existed fall back to live settings (best available approximation). Checked with
+  // `!= null` (not `||`) so a legitimately-saved 0 rate isn't mistaken for "unset".
   const employeeRows = employeeTicketRowsForPeriod(
     dailyTicketEntries,
-    settings,
+    {
+      installation: record.installation_rate != null ? record.installation_rate : settings.installation_rate,
+      repair: record.repair_rate != null ? record.repair_rate : settings.repair_rate,
+      napRehab: record.nap_rehab_rate != null ? record.nap_rehab_rate : settings.nap_rehab_rate,
+    },
     record.billing_month,
     record.billing_year,
     record.billing_period,
@@ -1376,7 +1397,7 @@ function BillingDetailsModal({
 
 function employeeTicketRowsForPeriod(
   dailyTicketEntries: DailyTicketEntry[],
-  settings: BillingSettings,
+  rates: { installation: number; repair: number; napRehab: number },
   month: number,
   year: number,
   period: BillingRecord["billing_period"],
@@ -1416,7 +1437,7 @@ function employeeTicketRowsForPeriod(
     current.install += install;
     current.repair += repair;
     current.napRehab += napRehab;
-    current.gross += install * settings.installation_rate + repair * settings.repair_rate + napRehab * (Number(settings.nap_rehab_rate) || 0);
+    current.gross += install * rates.installation + repair * rates.repair + napRehab * rates.napRehab;
     rows.set(entry.employee_id, current);
   });
 
@@ -1584,6 +1605,18 @@ function BillingForm({
         company_disputed_repair: String(toNumber(initial.company_disputed_repair)),
         company_nap_rehab_tickets: String(initialCompanyNapRehab),
         company_disputed_nap_rehab: String(toNumber(initial.company_disputed_nap_rehab)),
+        // Reuse the rate/pct actually snapshotted onto this record at save time, not
+        // live settings -- otherwise editing an old record (even for an unrelated
+        // ticket-count fix) would silently reprice it at today's rate. Records saved
+        // before this snapshot existed fall back to live settings, the best available
+        // approximation for those (there's no way to recover their true original rate).
+        // Must check `!= null` BEFORE coercing -- a `|| settings.X` fallback on the
+        // already-coerced number would also swallow a legitimately-saved 0 (e.g. a
+        // business that doesn't charge for Nap Rehab), silently repricing it too.
+        installation_rate: String(initial.installation_rate != null ? initial.installation_rate : settings.installation_rate),
+        repair_rate: String(initial.repair_rate != null ? initial.repair_rate : settings.repair_rate),
+        nap_rehab_rate: String(initial.nap_rehab_rate != null ? initial.nap_rehab_rate : settings.nap_rehab_rate),
+        collections_pct: String(initial.collections_pct != null ? initial.collections_pct : settings.collections_pct),
         due_date: initial.due_date ?? "",
         subcon_items: buildSubconItems(initial.billing_month, initial.billing_year, initial.billing_period),
         notes: initial.notes,
@@ -1611,6 +1644,10 @@ function BillingForm({
       company_disputed_repair: "0",
       company_nap_rehab_tickets: "0",
       company_disputed_nap_rehab: "0",
+      installation_rate: String(settings.installation_rate),
+      repair_rate: String(settings.repair_rate),
+      nap_rehab_rate: String(settings.nap_rehab_rate),
+      collections_pct: String(settings.collections_pct),
       due_date: addDays(todayKey(), 15),
       subcon_items: subconItems,
       notes: "",
@@ -1645,6 +1682,13 @@ function BillingForm({
     }));
   }, [dailyTicketEntries, initial, subconDailyTickets, subcontractors, values.billing_month, values.billing_period, values.billing_year]);
 
+  // Reuse the rate/pct snapshotted onto `values` (by buildInitialValues, from `initial`
+  // on edit or live settings on create) rather than reading live `settings` directly, so
+  // the preview always matches exactly what buildArtifacts will save.
+  const effectiveInstallationRate = Number(values.installation_rate) || 0;
+  const effectiveRepairRate = Number(values.repair_rate) || 0;
+  const effectiveNapRehabRate = Number(values.nap_rehab_rate) || 0;
+  const effectiveCollectionsPct = Number(values.collections_pct) || 0;
   const employeeCounts = countTicketsByType(
     dailyTicketEntries,
     Number(values.billing_month),
@@ -1653,7 +1697,7 @@ function BillingForm({
   );
   const employeeRows = employeeTicketRowsForPeriod(
     dailyTicketEntries,
-    settings,
+    { installation: effectiveInstallationRate, repair: effectiveRepairRate, napRehab: effectiveNapRehabRate },
     Number(values.billing_month),
     Number(values.billing_year),
     values.billing_period,
@@ -1689,13 +1733,13 @@ function BillingForm({
   const employeeDisplayRepair = Math.max(0, employeeTotals.repair - disputedRepair);
   const employeeDisplayNapRehab = Math.max(0, employeeTotals.napRehab - disputedNapRehab);
   const employeeDisplayTickets = employeeDisplayInstall + employeeDisplayRepair + employeeDisplayNapRehab;
-  const employeeDisplayGross = employeeDisplayInstall * settings.installation_rate + employeeDisplayRepair * settings.repair_rate + employeeDisplayNapRehab * (Number(settings.nap_rehab_rate) || 0);
+  const employeeDisplayGross = employeeDisplayInstall * effectiveInstallationRate + employeeDisplayRepair * effectiveRepairRate + employeeDisplayNapRehab * effectiveNapRehabRate;
   const billableInstall = (installTickets - disputedInstall) + (companyInstallTickets - companyDisputedInstall);
   const billableRepair = (repairTickets - disputedRepair) + (companyRepairTickets - companyDisputedRepair);
   const billableNapRehab = (napRehabTickets - disputedNapRehab) + (companyNapRehabTickets - companyDisputedNapRehab);
   const billableTickets = billableInstall + billableRepair + billableNapRehab;
-  const billingAmount = billableInstall * settings.installation_rate + billableRepair * settings.repair_rate + billableNapRehab * (Number(settings.nap_rehab_rate) || 0);
-  const collectionsAmount = Math.round((billingAmount * settings.collections_pct) / 100 * 100) / 100;
+  const billingAmount = billableInstall * effectiveInstallationRate + billableRepair * effectiveRepairRate + billableNapRehab * effectiveNapRehabRate;
+  const collectionsAmount = Math.round((billingAmount * effectiveCollectionsPct) / 100 * 100) / 100;
   const collectiblesAmount = Math.round((billingAmount - collectionsAmount) * 100) / 100;
   const totalSubconNet = values.subcon_items.reduce((sum, item) => {
     const computed = computeSubconItem(
@@ -1772,14 +1816,23 @@ function BillingForm({
               <div className="cbf-step-panel--narrow">
                 <section className="cbf-section cbf-section-card">
                   <div className="cbf-section-heading">
-                    <p className="cbf-section-label">Billing Period</p>
+                    <p className="cbf-section-label">
+                      Billing Period
+                      {initial && <span className="cbf-section-sub">locked — delete and recreate to change</span>}
+                    </p>
                   </div>
                   <div className="cbf-period-row">
-                    <select className="cbf-select" value={values.billing_month} onChange={(event) => setValues({ ...values, billing_month: event.target.value })}>
+                    <select
+                      className="cbf-select"
+                      disabled={Boolean(initial)}
+                      value={values.billing_month}
+                      onChange={(event) => setValues({ ...values, billing_month: event.target.value })}
+                    >
                       {monthNames.map((name, index) => <option key={name} value={String(index + 1)}>{name}</option>)}
                     </select>
                     <input
                       className="cbf-input cbf-year-input"
+                      disabled={Boolean(initial)}
                       max="2200"
                       min="2020"
                       onChange={(event) => setValues({ ...values, billing_year: event.target.value })}
@@ -1791,6 +1844,7 @@ function BillingForm({
                   <div className="cbf-half-toggle">
                     <button
                       className={values.billing_period === "first_half" ? "cbf-half-btn cbf-half-btn--active" : "cbf-half-btn"}
+                      disabled={Boolean(initial)}
                       onClick={() => setValues({ ...values, billing_period: "first_half" })}
                       type="button"
                     >
@@ -1798,6 +1852,7 @@ function BillingForm({
                     </button>
                     <button
                       className={values.billing_period === "second_half" ? "cbf-half-btn cbf-half-btn--active" : "cbf-half-btn"}
+                      disabled={Boolean(initial)}
                       onClick={() => setValues({ ...values, billing_period: "second_half" })}
                       type="button"
                     >
@@ -2213,20 +2268,20 @@ function BillingForm({
                     <tr>
                       <td className="cbf-invoice-desc">Installation Tickets</td>
                       <td className="cbf-invoice-num">{billableInstall}</td>
-                      <td className="cbf-invoice-num">{currency.format(settings.installation_rate)}</td>
-                      <td className="cbf-invoice-num">{currency.format(billableInstall * settings.installation_rate)}</td>
+                      <td className="cbf-invoice-num">{currency.format(effectiveInstallationRate)}</td>
+                      <td className="cbf-invoice-num">{currency.format(billableInstall * effectiveInstallationRate)}</td>
                     </tr>
                     <tr>
                       <td className="cbf-invoice-desc">Repair Tickets</td>
                       <td className="cbf-invoice-num">{billableRepair}</td>
-                      <td className="cbf-invoice-num">{currency.format(settings.repair_rate)}</td>
-                      <td className="cbf-invoice-num">{currency.format(billableRepair * settings.repair_rate)}</td>
+                      <td className="cbf-invoice-num">{currency.format(effectiveRepairRate)}</td>
+                      <td className="cbf-invoice-num">{currency.format(billableRepair * effectiveRepairRate)}</td>
                     </tr>
                     <tr>
                       <td className="cbf-invoice-desc">Nap Rehab Tickets</td>
                       <td className="cbf-invoice-num">{billableNapRehab}</td>
-                      <td className="cbf-invoice-num">{currency.format(Number(settings.nap_rehab_rate) || 0)}</td>
-                      <td className="cbf-invoice-num">{currency.format(billableNapRehab * (Number(settings.nap_rehab_rate) || 0))}</td>
+                      <td className="cbf-invoice-num">{currency.format(effectiveNapRehabRate)}</td>
+                      <td className="cbf-invoice-num">{currency.format(billableNapRehab * effectiveNapRehabRate)}</td>
                     </tr>
                     <tr className="cbf-invoice-subtotal-row">
                       <td colSpan={3}>Subtotal</td>

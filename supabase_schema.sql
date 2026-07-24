@@ -2353,3 +2353,28 @@ add column if not exists nap_rehab_tickets integer not null default 0 check (nap
 add column if not exists disputed_nap_rehab integer not null default 0 check (disputed_nap_rehab >= 0),
 add column if not exists company_nap_rehab_tickets integer not null default 0 check (company_nap_rehab_tickets >= 0),
 add column if not exists company_disputed_nap_rehab integer not null default 0 check (company_disputed_nap_rehab >= 0);
+
+-- Billing amounts were always recomputed from the LIVE billing_settings rate, even when
+-- editing an old, already-invoiced record -- raising installation_rate today would
+-- silently reprice a 3-month-old record the next time it's opened and re-saved for an
+-- unrelated fix. Snapshot the rates actually used onto the record itself, the same way
+-- billing_subcon_items already snapshots each subcontractor's rate. Existing rows get a
+-- one-time best-effort backfill from the current billing_settings row below (there's no
+-- way to recover the true historical rate for older records, since this column didn't
+-- exist yet); new/edited records are correctly snapshotted going forward.
+alter table public.billing_records
+add column if not exists installation_rate numeric(12, 2) not null default 0 check (installation_rate >= 0),
+add column if not exists repair_rate numeric(12, 2) not null default 0 check (repair_rate >= 0),
+add column if not exists nap_rehab_rate numeric(12, 2) not null default 0 check (nap_rehab_rate >= 0);
+
+-- Guarded so this is idempotent across repeated runs of this file: only rows that still
+-- have the all-zero default (i.e. never snapshotted) get backfilled. A genuine record
+-- billed at 0/0/0 across all three rates is practically impossible (installation_rate
+-- alone defaults to 600 company-wide), so this WHERE clause naturally stops matching
+-- after the first run and won't re-stomp a correctly-snapshotted record on a later
+-- migration replay.
+update public.billing_records
+set installation_rate = coalesce((select bs.installation_rate from public.billing_settings bs where bs.user_id = billing_records.user_id), 0),
+    repair_rate = coalesce((select bs.repair_rate from public.billing_settings bs where bs.user_id = billing_records.user_id), 0),
+    nap_rehab_rate = coalesce((select bs.nap_rehab_rate from public.billing_settings bs where bs.user_id = billing_records.user_id), 0)
+where installation_rate = 0 and repair_rate = 0 and nap_rehab_rate = 0;
