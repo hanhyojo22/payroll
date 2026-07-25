@@ -9311,7 +9311,7 @@ td {
 
 .billing-invoice-no {
   color: var(--color-text-secondary);
-  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-family: var(--font-primary);
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
