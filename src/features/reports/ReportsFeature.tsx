@@ -1637,8 +1637,14 @@ function openPrintPreview<Row extends object>({
     <html>
       <head>
         <title>${escapeHtml(title)}</title>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+          href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap"
+          rel="stylesheet"
+        />
         <style>
-          body { font-family: Arial, sans-serif; color: #0f172a; margin: 32px; }
+          body { font-family: "Poppins", "Helvetica Neue", Helvetica, Arial, sans-serif; color: #0f172a; margin: 32px; }
           h1 { margin: 0 0 8px; }
           p { color: #475569; margin: 0 0 24px; }
           p.meta-line { margin: 0 0 6px; }
