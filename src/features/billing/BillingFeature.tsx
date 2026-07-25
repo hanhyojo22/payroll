@@ -1508,10 +1508,11 @@ function BillingQuickCollectModal({
   );
 }
 
-const WIZARD_STEPS: Array<{ id: 1 | 2 | 3; label: string }> = [
+const WIZARD_STEPS: Array<{ id: 1 | 2 | 3 | 4; label: string }> = [
   { id: 1, label: "Billing Details" },
-  { id: 2, label: "Review Tickets" },
-  { id: 3, label: "Billable Summary" },
+  { id: 2, label: "Employee Tickets" },
+  { id: 3, label: "Review Tickets" },
+  { id: 4, label: "Billable Summary" },
 ];
 
 function BillingForm({
@@ -1657,7 +1658,7 @@ function BillingForm({
   const [values, setValues] = useState<BillingFormValues>(buildInitialValues);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<ActionProgressState | null>(null);
-  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
 
   function formatStatementDate(dateKey: string) {
     const [year, month, day] = dateKey.slice(0, 10).split("-").map(Number);
@@ -1885,49 +1886,6 @@ function BillingForm({
             <div className="cbf-step-panel">
               <section className="cbf-section cbf-section-card">
                 <div className="cbf-section-heading">
-                  <p className="cbf-section-label">Ticket Sources</p>
-                </div>
-                <div className="billing-ticket-source-grid">
-                  <div className="billing-ticket-source-card">
-                    <span className="billing-ticket-source-title">Employees</span>
-                    <strong className="billing-ticket-source-total">{employeeCounts.installation + employeeCounts.repair + employeeCounts.nap_rehab}</strong>
-                    <div className="billing-ticket-source-breakdown">
-                      <small>Install: {employeeCounts.installation}</small>
-                      <small>Repair: {employeeCounts.repair}</small>
-                      <small>Nap Rehab: {employeeCounts.nap_rehab}</small>
-                    </div>
-                  </div>
-                  <div className="billing-ticket-source-card">
-                    <span className="billing-ticket-source-title">Subcontractors</span>
-                    <strong className="billing-ticket-source-total">{subconInstall + subconRepair}</strong>
-                    <div className="billing-ticket-source-breakdown">
-                      <small>Install: {subconInstall}</small>
-                      <small>Repair: {subconRepair}</small>
-                    </div>
-                  </div>
-                  <div className="billing-ticket-source-card">
-                    <span className="billing-ticket-source-title">Company</span>
-                    <strong className="billing-ticket-source-total">{companyInstallTickets + companyRepairTickets + companyNapRehabTickets}</strong>
-                    <div className="billing-ticket-source-breakdown">
-                      <small>Install: {companyInstallTickets}</small>
-                      <small>Repair: {companyRepairTickets}</small>
-                      <small>Nap Rehab: {companyNapRehabTickets}</small>
-                    </div>
-                  </div>
-                  <div className="billing-ticket-source-card emphasis">
-                    <span className="billing-ticket-source-title">Combined</span>
-                    <strong className="billing-ticket-source-total">{combinedInstallTickets + combinedRepairTickets + combinedNapRehabTickets}</strong>
-                    <div className="billing-ticket-source-breakdown">
-                      <small>Install: {combinedInstallTickets}</small>
-                      <small>Repair: {combinedRepairTickets}</small>
-                      <small>Nap Rehab: {combinedNapRehabTickets}</small>
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              <section className="cbf-section cbf-section-card">
-                <div className="cbf-section-heading">
                   <p className="cbf-section-label">Employee Tickets</p>
                 </div>
                 <div className="billing-details-section-head">
@@ -1972,6 +1930,53 @@ function BillingForm({
                       ))}
                     </tbody>
                   </table>
+                </div>
+              </section>
+            </div>
+          )}
+
+          {step === 3 && (
+            <div className="cbf-step-panel">
+              <section className="cbf-section cbf-section-card">
+                <div className="cbf-section-heading">
+                  <p className="cbf-section-label">Ticket Sources</p>
+                </div>
+                <div className="billing-ticket-source-grid">
+                  <div className="billing-ticket-source-card">
+                    <span className="billing-ticket-source-title">Employees</span>
+                    <strong className="billing-ticket-source-total">{employeeCounts.installation + employeeCounts.repair + employeeCounts.nap_rehab}</strong>
+                    <div className="billing-ticket-source-breakdown">
+                      <small>Install: {employeeCounts.installation}</small>
+                      <small>Repair: {employeeCounts.repair}</small>
+                      <small>Nap Rehab: {employeeCounts.nap_rehab}</small>
+                    </div>
+                  </div>
+                  <div className="billing-ticket-source-card">
+                    <span className="billing-ticket-source-title">Subcontractors</span>
+                    <strong className="billing-ticket-source-total">{subconInstall + subconRepair}</strong>
+                    <div className="billing-ticket-source-breakdown">
+                      <small>Install: {subconInstall}</small>
+                      <small>Repair: {subconRepair}</small>
+                    </div>
+                  </div>
+                  <div className="billing-ticket-source-card">
+                    <span className="billing-ticket-source-title">Company</span>
+                    <strong className="billing-ticket-source-total">{companyInstallTickets + companyRepairTickets + companyNapRehabTickets}</strong>
+                    <div className="billing-ticket-source-breakdown">
+                      <small>Install: {companyInstallTickets}</small>
+                      <small>Repair: {companyRepairTickets}</small>
+                      <small>Nap Rehab: {companyNapRehabTickets}</small>
+                    </div>
+                  </div>
+                  <div className="billing-ticket-source-card emphasis">
+                    <span className="billing-ticket-source-title">Combined</span>
+                    <strong className="billing-ticket-source-total">{combinedInstallTickets + combinedRepairTickets + combinedNapRehabTickets}</strong>
+                    <div className="billing-ticket-source-breakdown">
+                      <small>Install: {combinedInstallTickets}</small>
+                      <small>Repair: {combinedRepairTickets}</small>
+                      <small>Nap Rehab: {combinedNapRehabTickets}</small>
+                    </div>
+                  </div>
                 </div>
               </section>
 
@@ -2227,7 +2232,7 @@ function BillingForm({
             </div>
           )}
 
-          {step === 3 && (
+          {step === 4 && (
             <div className="cbf-step-panel">
               <div className="cbf-invoice">
                 <h3 className="cbf-invoice-title">Billing Statement</h3>
@@ -2308,10 +2313,10 @@ function BillingForm({
             <button className="cbf-btn-cancel" disabled={busy} onClick={onClose} type="button">Cancel</button>
             <div className="cbf-nav-right">
               {step > 1 && (
-                <button className="cbf-btn-back" disabled={busy} key="back" onClick={() => setStep((current) => (current - 1) as 1 | 2 | 3)} type="button">Back</button>
+                <button className="cbf-btn-back" disabled={busy} key="back" onClick={() => setStep((current) => (current - 1) as 1 | 2 | 3 | 4)} type="button">Back</button>
               )}
-              {step < 3 ? (
-                <button className="cbf-btn-next" disabled={busy} key="next" onClick={() => setStep((current) => (current + 1) as 1 | 2 | 3)} type="button">Next</button>
+              {step < 4 ? (
+                <button className="cbf-btn-next" disabled={busy} key="next" onClick={() => setStep((current) => (current + 1) as 1 | 2 | 3 | 4)} type="button">Next</button>
               ) : (
                 <button className="cbf-btn-submit" disabled={busy} key="submit" type="submit">{busy ? "Saving..." : initial ? "Update Billing" : "Create Billing"}</button>
               )}
