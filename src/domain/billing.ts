@@ -128,9 +128,13 @@ export function computeSubconItem(
   installationRate: number,
   repairRate: number,
   payablePct: number,
+  napRehabTickets = 0,
+  disputedNapRehab = 0,
+  napRehabRate = 0,
 ): {
   billableInstall: number;
   billableRepair: number;
+  billableNapRehab: number;
   billableTickets: number;
   billingAmount: number;
   payableAmount: number;
@@ -138,11 +142,79 @@ export function computeSubconItem(
 } {
   const billableInstall = Math.max(0, installTickets - disputedInstall);
   const billableRepair = Math.max(0, repairTickets - disputedRepair);
-  const billableTickets = billableInstall + billableRepair;
-  const billingAmount = billableInstall * installationRate + billableRepair * repairRate;
+  const billableNapRehab = Math.max(0, napRehabTickets - disputedNapRehab);
+  const billableTickets = billableInstall + billableRepair + billableNapRehab;
+  const billingAmount = billableInstall * installationRate + billableRepair * repairRate + billableNapRehab * napRehabRate;
   const payableAmount = Math.round(billingAmount * payablePct / 100 * 100) / 100;
   const collectionAmount = Math.round((billingAmount - payableAmount) * 100) / 100;
-  return { billableInstall, billableRepair, billableTickets, billingAmount, payableAmount, collectionAmount };
+  return { billableInstall, billableRepair, billableNapRehab, billableTickets, billingAmount, payableAmount, collectionAmount };
+}
+
+export type BillingTicketSource = {
+  install: number;
+  repair: number;
+  napRehab: number;
+  disputedInstall?: number;
+  disputedRepair?: number;
+  disputedNapRehab?: number;
+};
+
+export function computeClientBillingTotals(
+  sources: BillingTicketSource[],
+  rates: { installation: number; repair: number; napRehab: number },
+  collectionsPct: number,
+) {
+  const totals = sources.reduce<{
+    install: number;
+    repair: number;
+    napRehab: number;
+    disputedInstall: number;
+    disputedRepair: number;
+    disputedNapRehab: number;
+  }>(
+    (sum, source) => {
+      const install = Math.max(0, source.install);
+      const repair = Math.max(0, source.repair);
+      const napRehab = Math.max(0, source.napRehab);
+      const disputedInstall = Math.max(0, Math.min(install, source.disputedInstall ?? 0));
+      const disputedRepair = Math.max(0, Math.min(repair, source.disputedRepair ?? 0));
+      const disputedNapRehab = Math.max(0, Math.min(napRehab, source.disputedNapRehab ?? 0));
+      return {
+        install: sum.install + install,
+        repair: sum.repair + repair,
+        napRehab: sum.napRehab + napRehab,
+        disputedInstall: sum.disputedInstall + disputedInstall,
+        disputedRepair: sum.disputedRepair + disputedRepair,
+        disputedNapRehab: sum.disputedNapRehab + disputedNapRehab,
+      };
+    },
+    { install: 0, repair: 0, napRehab: 0, disputedInstall: 0, disputedRepair: 0, disputedNapRehab: 0 },
+  );
+  const billableInstall = totals.install - totals.disputedInstall;
+  const billableRepair = totals.repair - totals.disputedRepair;
+  const billableNapRehab = totals.napRehab - totals.disputedNapRehab;
+  const totalTickets = totals.install + totals.repair + totals.napRehab;
+  const disputedTickets = totals.disputedInstall + totals.disputedRepair + totals.disputedNapRehab;
+  const billableTickets = billableInstall + billableRepair + billableNapRehab;
+  const billingAmount =
+    billableInstall * Math.max(0, rates.installation)
+    + billableRepair * Math.max(0, rates.repair)
+    + billableNapRehab * Math.max(0, rates.napRehab);
+  const safeCollectionsPct = Math.max(0, Math.min(100, collectionsPct));
+  const collectionsAmount = Math.round(billingAmount * safeCollectionsPct) / 100;
+  const collectiblesAmount = Math.round((billingAmount - collectionsAmount) * 100) / 100;
+  return {
+    ...totals,
+    totalTickets,
+    disputedTickets,
+    billableInstall,
+    billableRepair,
+    billableNapRehab,
+    billableTickets,
+    billingAmount,
+    collectionsAmount,
+    collectiblesAmount,
+  };
 }
 
 export function countSubconTickets(
@@ -151,7 +223,7 @@ export function countSubconTickets(
   month: number,
   year: number,
   period?: BillingPeriod,
-): { install: number; repair: number } {
+): { install: number; repair: number; napRehab: number } {
   return entries
     .filter((entry) => {
       if (entry.subcontractor_id !== subcontractorId) return false;
@@ -164,8 +236,9 @@ export function countSubconTickets(
       (acc, entry) => ({
         install: acc.install + (entry.install_tickets ?? 0),
         repair: acc.repair + (entry.repair_tickets ?? 0),
+        napRehab: acc.napRehab + (entry.nap_rehab_tickets ?? 0),
       }),
-      { install: 0, repair: 0 },
+      { install: 0, repair: 0, napRehab: 0 },
     );
 }
 
@@ -382,7 +455,7 @@ export function buildSubcontractorAccountSummary(args: {
   const period = referenceDate.getDate() <= 15 ? "first_half" : "second_half";
   const ticketsThisPeriod = latestDailyTicket
     ? countSubconTickets(args.dailyTickets, args.subcontractor.id, month, year, period)
-    : (latestBillingRow?.install_tickets ?? 0) + (latestBillingRow?.repair_tickets ?? 0);
+    : (latestBillingRow?.install_tickets ?? 0) + (latestBillingRow?.repair_tickets ?? 0) + (latestBillingRow?.nap_rehab_tickets ?? 0);
   const billingItemIdsWithAnyPayment = new Set(
     payments
       .filter((p) => p.billing_subcon_item_id !== null)
@@ -409,7 +482,7 @@ export function buildSubcontractorAccountSummary(args: {
     lastPayoutStatus: latestPayment ? paymentReminderDisplayStatus(latestPayment, latestPayment.payments) : "none",
     netPending: pending,
     paidThisMonth,
-    ticketsThisPeriod: typeof ticketsThisPeriod === "number" ? ticketsThisPeriod : ticketsThisPeriod.install + ticketsThisPeriod.repair,
+    ticketsThisPeriod: typeof ticketsThisPeriod === "number" ? ticketsThisPeriod : ticketsThisPeriod.install + ticketsThisPeriod.repair + ticketsThisPeriod.napRehab,
   };
 }
 

@@ -15,7 +15,7 @@ import {
   SUBCONTRACTOR_PAYOUT_EXPENSE_CATEGORY_NAME,
   validatePaymentReminderPayment,
 } from "../../domain/paymentReminders";
-import { deletePaymentReminderPayment, recordPaymentReminderPayment, saveSubcontractor, updatePaymentReminderCompletion } from "../billing/billingRepository";
+import { deletePaymentReminderPayment, saveSubcontractor, updatePaymentReminderCompletion } from "../billing/billingRepository";
 import { supabase } from "../../supabase";
 import { DataTable } from "../../shared/components/DataTable";
 import { TextField } from "../../shared/components/FormLayout";
@@ -167,6 +167,7 @@ export function SubcontractorsFeature({
       name: subcontractor.name,
       installation_rate: subcontractor.installation_rate,
       repair_rate: subcontractor.repair_rate,
+      nap_rehab_rate: subcontractor.nap_rehab_rate ?? 0,
       payable_pct: subcontractor.payable_pct,
       status: nextStatus,
       email: subcontractor.email,
@@ -246,7 +247,8 @@ export function SubcontractorsFeature({
               <div className="subcon-drawer-grid">
                 <div><span>Install</span><strong>{drawerRow.install_tickets}</strong></div>
                 <div><span>Repair</span><strong>{drawerRow.repair_tickets}</strong></div>
-                <div><span>Disputed</span><strong>{drawerRow.disputed_install + drawerRow.disputed_repair}</strong></div>
+                <div><span>Nap Rehab</span><strong>{drawerRow.nap_rehab_tickets ?? 0}</strong></div>
+                <div><span>Disputed</span><strong>{drawerRow.disputed_install + drawerRow.disputed_repair + (drawerRow.disputed_nap_rehab ?? 0)}</strong></div>
                 <div><span>Billable</span><strong>{drawerRow.billable_tickets}</strong></div>
               </div>
               <div className="billing-preview">
@@ -312,7 +314,7 @@ function SubcontractorsListView({
               <div className="employee-list-avatar"><span>{subconInitials(row.subcontractor.name)}</span></div>
               <RecordTitle
                 title={row.subcontractor.name}
-                notes={`Install ${currency.format(row.subcontractor.installation_rate)} · Repair ${currency.format(row.subcontractor.repair_rate)}`}
+                notes={`Install ${currency.format(row.subcontractor.installation_rate)} · Repair ${currency.format(row.subcontractor.repair_rate)} · Nap Rehab ${currency.format(row.subcontractor.nap_rehab_rate ?? 0)}`}
               />
             </div>,
             row.tickets,
@@ -594,7 +596,11 @@ function SubcontractorDetailsView({
       return;
     }
 
-    const paymentResult = await recordPaymentReminderPayment(supabase, userId, payment.id, paymentPayload);
+    const paymentResult = await supabase.rpc("record_reminder_payment_bundle", {
+      payment_payload: { ...paymentPayload, id: paymentId, user_id: userId, payment_reminder_id: payment.id },
+      reminder_record_id: payment.id,
+      reminder_patch: complete ? { status: "paid" } : {},
+    });
     if (paymentResult.error) {
       NotificationService.showError((paymentResult.error as { message?: string }).message ?? "Failed to record the payment.");
       return;
@@ -610,14 +616,6 @@ function SubcontractorDetailsView({
       const expenseCompletionResult = await updateExpenseCompletion(supabase, payment.id, expenseCompletionPayload);
       if (expenseCompletionResult.error) {
         NotificationService.showError((expenseCompletionResult.error as { message?: string }).message ?? "Payment recorded, but couldn't update the linked expense.");
-        await onChange();
-        return;
-      }
-    }
-    if (complete) {
-      const completionResult = await updatePaymentReminderCompletion(supabase, payment.id, "paid");
-      if (completionResult.error) {
-        NotificationService.showError((completionResult.error as { message?: string }).message ?? "Payment recorded, but failed to mark the payout complete.");
         await onChange();
         return;
       }
@@ -897,6 +895,10 @@ function SubcontractorDetailsView({
                   <strong>{currency.format(selected.repair_rate)}</strong>
                 </div>
                 <div className="subcon-meta-item">
+                  <span>Nap Rehab rate</span>
+                  <strong>{currency.format(selected.nap_rehab_rate ?? 0)}</strong>
+                </div>
+                <div className="subcon-meta-item">
                   <span>Payable %</span>
                   <strong>{selected.payable_pct}%</strong>
                 </div>
@@ -1056,17 +1058,19 @@ function SubcontractorDetailsView({
               </div>
               <DataTable
                 empty="No daily tickets for this subcontractor yet."
-                headers={["Date", "Install", "Repair", "Total", "Total net"]}
+                headers={["Date", "Install", "Repair", "Nap Rehab", "Total", "Total net"]}
                 rows={paginatedTickets.map((entry) => [
                   entry.entry_date,
                   entry.install_tickets,
                   entry.repair_tickets,
-                  entry.install_tickets + entry.repair_tickets,
+                  entry.nap_rehab_tickets ?? 0,
+                  entry.install_tickets + entry.repair_tickets + (entry.nap_rehab_tickets ?? 0),
                   currency.format(
                     Math.round(
                       (
                         (entry.install_tickets * entry.installation_rate +
-                          entry.repair_tickets * entry.repair_rate) *
+                          entry.repair_tickets * entry.repair_rate +
+                          (entry.nap_rehab_tickets ?? 0) * (entry.nap_rehab_rate ?? 0)) *
                         (selected.payable_pct / 100)
                       ) * 100,
                     ) / 100,
@@ -1119,8 +1123,8 @@ function SubcontractorDetailsView({
                         : "pending";
                 return [
                   `${monthNames[row.billing_month - 1]} ${row.billing_year} · ${billingPeriodLabel(row.billing_period)}`,
-                  `${row.install_tickets + row.repair_tickets} (I:${row.install_tickets} R:${row.repair_tickets})`,
-                  row.disputed_install + row.disputed_repair,
+                  `${row.install_tickets + row.repair_tickets + (row.nap_rehab_tickets ?? 0)} (I:${row.install_tickets} R:${row.repair_tickets} N:${row.nap_rehab_tickets ?? 0})`,
+                  row.disputed_install + row.disputed_repair + (row.disputed_nap_rehab ?? 0),
                   row.billable_tickets,
                   currency.format(row.billing_amount),
                   <strong className="subcon-net-value" key={`${row.id}-collection`}>{currency.format(row.collection_amount)}</strong>,
@@ -1182,7 +1186,7 @@ function SubcontractorDetailsView({
                         <td data-label="Period">{periodLabel}</td>
                         <td data-label="Payout">1st Payout</td>
                         <td className="num" data-label="Tickets">
-                          {row.install_tickets + row.repair_tickets} <span>I:{row.install_tickets} · R:{row.repair_tickets}</span>
+                          {row.install_tickets + row.repair_tickets + (row.nap_rehab_tickets ?? 0)} <span>I:{row.install_tickets} · R:{row.repair_tickets} · N:{row.nap_rehab_tickets ?? 0}</span>
                         </td>
                         <td className="num" data-label="Gross Billed">{currency.format(row.billing_amount)}</td>
                         <td className="num" data-label="Split">{row.payable_pct}%</td>
@@ -1198,7 +1202,7 @@ function SubcontractorDetailsView({
                         <td data-label="Period">{periodLabel}</td>
                         <td data-label="Payout">2nd Payout</td>
                         <td className="num" data-label="Tickets">
-                          {row.install_tickets + row.repair_tickets} <span>I:{row.install_tickets} · R:{row.repair_tickets}</span>
+                          {row.install_tickets + row.repair_tickets + (row.nap_rehab_tickets ?? 0)} <span>I:{row.install_tickets} · R:{row.repair_tickets} · N:{row.nap_rehab_tickets ?? 0}</span>
                         </td>
                         <td className="num" data-label="Gross Billed">{currency.format(row.billing_amount)}</td>
                         <td className="num" data-label="Split">{100 - row.payable_pct}%</td>
@@ -1326,6 +1330,7 @@ function SubcontractorProfileModal({
     name: initial?.name ?? "",
     installation_rate: String(initial?.installation_rate ?? 0),
     repair_rate: String(initial?.repair_rate ?? 0),
+    nap_rehab_rate: String(initial?.nap_rehab_rate ?? 0),
     payable_pct: String(initial?.payable_pct ?? 30),
     email: initial?.email ?? "",
     contact_number: initial?.contact_number ?? "",
@@ -1342,6 +1347,7 @@ function SubcontractorProfileModal({
       name: values.name.trim(),
       installation_rate: Number(values.installation_rate) || 0,
       repair_rate: Number(values.repair_rate) || 0,
+      nap_rehab_rate: Number(values.nap_rehab_rate) || 0,
       payable_pct: Number(values.payable_pct) || 30,
       status: initial?.status ?? "active",
       email: values.email.trim(),
@@ -1375,6 +1381,7 @@ function SubcontractorProfileModal({
             </label>
             <MoneyField label="Installation rate (PHP)" value={values.installation_rate} onChange={(value) => setValues((current) => ({ ...current, installation_rate: value }))} required />
             <MoneyField label="Repair rate (PHP)" value={values.repair_rate} onChange={(value) => setValues((current) => ({ ...current, repair_rate: value }))} required />
+            <MoneyField label="Nap Rehab rate (PHP)" value={values.nap_rehab_rate} onChange={(value) => setValues((current) => ({ ...current, nap_rehab_rate: value }))} required />
             <label>
               1st payout % (default 30)
               <input max="100" min="0" type="number" value={values.payable_pct} onChange={(event) => setValues((current) => ({ ...current, payable_pct: event.target.value }))} required />

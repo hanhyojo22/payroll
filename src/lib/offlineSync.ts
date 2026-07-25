@@ -48,28 +48,13 @@ async function applyMutation(supabase: SupabaseClient, mutation: PendingMutation
         employeeAdvanceUpdates: Array<{ id: string; payload: Record<string, unknown> }>;
         salaryBondTransactionPayloads?: Record<string, unknown>[];
       };
-      const runResult = await supabase.from("payroll_runs").insert(payload.runPayload);
-      if (runResult.error) return runResult;
-
-      const itemResult = await supabase.from("payroll_run_items").insert(payload.itemPayloads);
-      if (itemResult.error) return itemResult;
-
-      if ((payload.detailPayloads?.length ?? 0) > 0) {
-        const detailResult = await supabase.from("payroll_run_item_ticket_details").insert(payload.detailPayloads!);
-        if (detailResult.error) return detailResult;
-      }
-
-      for (const update of payload.employeeAdvanceUpdates) {
-        const advanceResult = await supabase.from("employee_advances").update(update.payload).eq("id", update.id);
-        if (advanceResult.error) return advanceResult;
-      }
-
-      if ((payload.salaryBondTransactionPayloads?.length ?? 0) > 0) {
-        const bondResult = await supabase.from("employee_salary_bond_transactions").insert(payload.salaryBondTransactionPayloads!);
-        if (bondResult.error) return bondResult;
-      }
-
-      return { error: null };
+      return supabase.rpc("save_payroll_bundle", {
+        run_payload: payload.runPayload,
+        item_payloads: payload.itemPayloads,
+        detail_payloads: payload.detailPayloads ?? [],
+        advance_updates: payload.employeeAdvanceUpdates,
+        bond_payloads: payload.salaryBondTransactionPayloads ?? [],
+      });
     }
     case "payroll_items_group": {
       const payload = mutation.payload as {
@@ -78,21 +63,12 @@ async function applyMutation(supabase: SupabaseClient, mutation: PendingMutation
         employeeAdvanceUpdates?: Array<{ id: string; payload: Record<string, unknown> }>;
         salaryBondTransactionPayloads?: Record<string, unknown>[];
       };
-      const itemResult = await supabase.from("payroll_run_items").insert(payload.itemPayloads);
-      if (itemResult.error) return itemResult;
-      if (payload.detailPayloads.length > 0) {
-        const detailResult = await supabase.from("payroll_run_item_ticket_details").insert(payload.detailPayloads);
-        if (detailResult.error) return detailResult;
-      }
-      for (const update of payload.employeeAdvanceUpdates ?? []) {
-        const advanceResult = await supabase.from("employee_advances").update(update.payload).eq("id", update.id);
-        if (advanceResult.error) return advanceResult;
-      }
-      if ((payload.salaryBondTransactionPayloads?.length ?? 0) > 0) {
-        const bondResult = await supabase.from("employee_salary_bond_transactions").insert(payload.salaryBondTransactionPayloads!);
-        if (bondResult.error) return bondResult;
-      }
-      return { error: null };
+      return supabase.rpc("save_payroll_items_bundle", {
+        item_payloads: payload.itemPayloads,
+        detail_payloads: payload.detailPayloads,
+        advance_updates: payload.employeeAdvanceUpdates ?? [],
+        bond_payloads: payload.salaryBondTransactionPayloads ?? [],
+      });
     }
     case "billing_group": {
       const payload = mutation.payload as {
@@ -103,53 +79,38 @@ async function applyMutation(supabase: SupabaseClient, mutation: PendingMutation
         subcontractorPaymentPayloads?: Record<string, unknown>[];
         subcontractorAdvanceUpdates?: Array<{ id: string; payload: Record<string, unknown> }>;
       };
-      const collectionResult = await supabase.from("collection_reminders").insert(payload.collectionPayload);
-      if (collectionResult.error) return collectionResult;
-      if (payload.collectiblesCollectionPayload) {
-        const c2Result = await supabase.from("collection_reminders").insert(payload.collectiblesCollectionPayload);
-        if (c2Result.error) return c2Result;
-      }
-      const billingResult = await supabase.from("billing_records").insert(payload.billingPayload);
-      if (billingResult.error) return billingResult;
-      if ((payload.subconItemPayloads?.length ?? 0) > 0) {
-        const subconResult = await supabase.from("billing_subcon_items").insert(payload.subconItemPayloads!);
-        if (subconResult.error) return subconResult;
-      }
-      if ((payload.subcontractorPaymentPayloads?.length ?? 0) > 0) {
-        const paymentResult = await supabase
-          .from("payment_reminders")
-          .upsert(payload.subcontractorPaymentPayloads!, { onConflict: "billing_subcon_item_id,payout_leg" });
-        if (paymentResult.error) return paymentResult;
-      }
-      for (const update of payload.subcontractorAdvanceUpdates ?? []) {
-        const advanceResult = await supabase.from("subcontractor_advances").update(update.payload).eq("id", update.id);
-        if (advanceResult.error) return advanceResult;
-      }
-      return { error: null };
+      return supabase.rpc("save_billing_bundle", {
+        billing_payload: payload.billingPayload,
+        collection_payloads: [
+          payload.collectionPayload,
+          ...(payload.collectiblesCollectionPayload ? [payload.collectiblesCollectionPayload] : []),
+        ],
+        subcon_item_payloads: payload.subconItemPayloads ?? [],
+        reminder_payloads: payload.subcontractorPaymentPayloads ?? [],
+        advance_updates: payload.subcontractorAdvanceUpdates ?? [],
+      });
     }
     case "expense_payment_group": {
       const payload = mutation.payload as {
         paymentPayload: Record<string, unknown>;
         expenseUpdate: { id: string; payload: Record<string, unknown> };
       };
-      const paymentResult = await supabase.from("expense_installment_payments").insert(payload.paymentPayload);
-      if (paymentResult.error) return paymentResult;
-      const expenseResult = await supabase.from("expenses").update(payload.expenseUpdate.payload).eq("id", payload.expenseUpdate.id);
-      if (expenseResult.error) return expenseResult;
-      return { error: null };
+      return supabase.rpc("record_expense_payment_bundle", {
+        payment_payload: payload.paymentPayload,
+        expense_record_id: payload.expenseUpdate.id,
+        expense_patch: payload.expenseUpdate.payload,
+      });
     }
     case "payment_reminder_payment_group": {
       const payload = mutation.payload as {
         paymentPayload: Record<string, unknown>;
         reminderUpdate: { id: string; payload: Record<string, unknown> } | null;
       };
-      const paymentResult = await supabase.from("payment_reminder_payments").insert(payload.paymentPayload);
-      if (paymentResult.error) return paymentResult;
-      if (payload.reminderUpdate) {
-        const reminderResult = await supabase.from("payment_reminders").update(payload.reminderUpdate.payload).eq("id", payload.reminderUpdate.id);
-        if (reminderResult.error) return reminderResult;
-      }
-      return { error: null };
+      return supabase.rpc("record_reminder_payment_bundle", {
+        payment_payload: payload.paymentPayload,
+        reminder_record_id: payload.reminderUpdate?.id ?? payload.paymentPayload.payment_reminder_id,
+        reminder_patch: payload.reminderUpdate?.payload ?? {},
+      });
     }
     case "collection_payment":
       return supabase.rpc("record_collection_payment", mutation.payload as {

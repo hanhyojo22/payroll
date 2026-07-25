@@ -4,11 +4,46 @@ import {
   buildSubcontractorPaymentPayloads,
   buildSubcontractorPayoutArtifacts,
   computeBilling,
+  computeClientBillingTotals,
+  computeSubconItem,
+  countSubconTickets,
   countTicketsByType,
   countTicketsForMonth,
   lastDayOfMonth,
 } from "./billing";
 import type { BillingSubconItem, DailyTicketEntry, PaymentReminder, PaymentReminderPayment, SubconDailyTicket, Subcontractor, SubcontractorAdvance } from "../types";
+
+describe("computeClientBillingTotals", () => {
+  it("deducts employee, subcontractor, and company disputes from the client invoice", () => {
+    const result = computeClientBillingTotals(
+      [
+        { install: 5, repair: 3, napRehab: 2, disputedInstall: 1 },
+        { install: 4, repair: 2, napRehab: 1, disputedRepair: 1, disputedNapRehab: 1 },
+        { install: 2, repair: 1, napRehab: 0, disputedInstall: 1 },
+      ],
+      { installation: 600, repair: 200, napRehab: 300 },
+      70,
+    );
+
+    expect(result.totalTickets).toBe(20);
+    expect(result.disputedTickets).toBe(4);
+    expect(result.billableTickets).toBe(16);
+    expect(result.billingAmount).toBe(7_000);
+    expect(result.collectionsAmount).toBe(4_900);
+    expect(result.collectiblesAmount).toBe(2_100);
+  });
+
+  it("clamps disputes to their own source and ticket type", () => {
+    const result = computeClientBillingTotals(
+      [{ install: 1, repair: 2, napRehab: 0, disputedInstall: 10, disputedRepair: -2 }],
+      { installation: 600, repair: 200, napRehab: 300 },
+      150,
+    );
+    expect(result.disputedTickets).toBe(1);
+    expect(result.billingAmount).toBe(400);
+    expect(result.collectionsAmount).toBe(400);
+  });
+});
 
 describe("countTicketsForMonth", () => {
   const entries: DailyTicketEntry[] = [
@@ -110,6 +145,73 @@ describe("computeBilling", () => {
     const result = computeBilling(10, 0, 1000, 0);
     expect(result.collectionsAmount).toBe(0);
     expect(result.collectiblesAmount).toBe(10_000);
+  });
+});
+
+describe("subcontractor Nap Rehab billing", () => {
+  it("updates gross for the daily-entry case when a Nap Rehab rate is configured", () => {
+    const result = computeSubconItem(
+      0,
+      0,
+      0,
+      0,
+      1000,
+      500,
+      100,
+      44,
+      0,
+      250,
+    );
+
+    expect(result.billableNapRehab).toBe(44);
+    expect(result.billingAmount).toBe(11_000);
+  });
+
+  it("keeps gross unchanged when Nap Rehab rate is zero", () => {
+    const result = computeSubconItem(0, 0, 0, 0, 1000, 500, 100, 44, 0, 0);
+
+    expect(result.billableNapRehab).toBe(44);
+    expect(result.billingAmount).toBe(0);
+  });
+
+  it("includes Nap Rehab tickets, disputes, and rate in the payout calculation", () => {
+    const result = computeSubconItem(2, 1, 0, 0, 1000, 500, 30, 4, 1, 250);
+
+    expect(result).toMatchObject({
+      billableInstall: 2,
+      billableRepair: 1,
+      billableNapRehab: 3,
+      billableTickets: 6,
+      billingAmount: 3250,
+      payableAmount: 975,
+      collectionAmount: 2275,
+    });
+  });
+
+  it("counts Nap Rehab daily tickets for the selected billing period", () => {
+    const entries: SubconDailyTicket[] = [
+      {
+        id: "daily-1",
+        user_id: "u1",
+        entry_date: "2026-07-10",
+        subcontractor_id: "sub-1",
+        subcon_name: "Alpha",
+        install_tickets: 1,
+        repair_tickets: 2,
+        nap_rehab_tickets: 3,
+        installation_rate: 1000,
+        repair_rate: 500,
+        nap_rehab_rate: 250,
+        created_at: "",
+        updated_at: "",
+      },
+    ];
+
+    expect(countSubconTickets(entries, "sub-1", 7, 2026, "first_half")).toEqual({
+      install: 1,
+      repair: 2,
+      napRehab: 3,
+    });
   });
 });
 

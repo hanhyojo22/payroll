@@ -25,7 +25,10 @@ export const currentYear = (): string => String(new Date().getFullYear());
 export const isBeforeToday = (date: string): boolean => date < todayKey();
 export const isToday = (date: string): boolean => date === todayKey();
 export const addDays = (date: string, days: number): string => {
-  const result = new Date(`${date}T00:00:00`);
-  result.setDate(result.getDate() + days);
-  return result.toISOString().slice(0, 10);
+  const [year, month, day] = date.split("-").map(Number);
+  if (!year || !month || !day) return date;
+  const result = new Date(Date.UTC(year, month - 1, day + days));
+  const resultMonth = String(result.getUTCMonth() + 1).padStart(2, "0");
+  const resultDay = String(result.getUTCDate()).padStart(2, "0");
+  return `${result.getUTCFullYear()}-${resultMonth}-${resultDay}`;
 };

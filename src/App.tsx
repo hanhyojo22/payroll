@@ -58,7 +58,7 @@ import {
   normalizeTicketCount,
   ticketGrossPay,
 } from "./domain/tickets";
-import { countSubconTickets, countTicketsByType } from "./domain/billing";
+import { computeSubconItem, countSubconTickets, countTicketsByType } from "./domain/billing";
 import { expenseCyclesElapsedSince, expenseOverdueReferenceDate, expensePeriodDueDates } from "./domain/expenses";
 import {
   loadAttendanceEntries,
@@ -83,7 +83,7 @@ import {
   loadEmployeeAdvances,
   loadSalaryBonds,
 } from "./lib/supabaseData";
-import { queueMutation, readCachedResource, writeCachedResource } from "./lib/offlineDb";
+import { discardFailedMutations, queueMutation, readCachedResource, retryFailedMutations, writeCachedResource } from "./lib/offlineDb";
 import { flushPendingMutations, isOfflineLikeError } from "./lib/offlineSync";
 import { BillingFeature, BillingSettingsManager } from "./features/billing/BillingFeature";
 import { saveSubcontractor } from "./features/billing/billingRepository";
@@ -108,7 +108,7 @@ import { PageHeader, RecordTitle, Toolbar } from "./shared/components/PageLayout
 import { FormActions, Modal, PasswordField, RowActions, TextField } from "./shared/components/FormLayout";
 import type { QueueOfflineMutation } from "./shared/types";
 import { currency, formatMoney, toNumber } from "./shared/utils/currency";
-import { currentMonth, currentYear, isBeforeToday, isToday, monthNames, todayKey } from "./shared/utils/dates";
+import { addDays, currentMonth, currentYear, isBeforeToday, isToday, monthNames, todayKey } from "./shared/utils/dates";
 import { friendlyError } from "./shared/utils/errors";
 import { formatPhoneNumber, normalizePhoneDigits } from "./shared/utils/phone";
 import type {
@@ -776,6 +776,8 @@ function Workspace({ session }: { session: Session }) {
   const [notificationMenuOpen, setNotificationMenuOpen] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
   const notificationMenuRef = useRef<HTMLDivElement | null>(null);
+  const syncInFlightRef = useRef<Promise<void> | null>(null);
+  const resourceErrorNotifiedRef = useRef(new Set<ResourceKey>());
   const [globalSearchQuery, setGlobalSearchQuery] = useState("");
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
   const globalSearchRef = useRef<HTMLDivElement | null>(null);
@@ -836,18 +838,29 @@ function Workspace({ session }: { session: Session }) {
     NotificationService.showSuccess("Saved locally. It will sync when online.");
   };
 
-  async function syncQueuedMutations(showToast = false) {
-    if (!supabase || !navigator.onLine) return;
-    const result = await flushPendingMutations(supabase, session.user.id);
-    if (result.failed.length > 0) {
-      NotificationService.showError(`${result.failed.length} offline change could not sync. Check the record and try again.`);
-    } else if (showToast && result.synced.length > 0) {
-      NotificationService.showSuccess(`${result.synced.length} offline change${result.synced.length === 1 ? "" : "s"} synced.`);
-    }
-    if (result.synced.length > 0) {
-      const affected = Array.from(new Set(result.synced.flatMap((mutation) => mutation.affectedResources)));
-      await Promise.all(affected.map((resource) => loadResource(resource, true)));
-    }
+  function syncQueuedMutations(showToast = false): Promise<void> {
+    if (syncInFlightRef.current) return syncInFlightRef.current;
+    if (!supabase || !navigator.onLine) return Promise.resolve();
+
+    const syncTask = (async () => {
+      const result = await flushPendingMutations(supabase, session.user.id);
+      if (result.failed.length > 0) {
+        NotificationService.showError(`${result.failed.length} offline change could not sync. Use “Retry offline changes” from the account menu after correcting the record.`);
+      } else if (showToast && result.synced.length > 0) {
+        NotificationService.showSuccess(`${result.synced.length} offline change${result.synced.length === 1 ? "" : "s"} synced.`);
+      }
+      if (result.synced.length > 0) {
+        const affected = Array.from(new Set(result.synced.flatMap((mutation) => mutation.affectedResources)));
+        await Promise.all(affected.map((resource) => loadResource(resource, true)));
+      }
+    })();
+
+    syncInFlightRef.current = syncTask;
+    const clearSyncTask = () => {
+      if (syncInFlightRef.current === syncTask) syncInFlightRef.current = null;
+    };
+    void syncTask.then(clearSyncTask, clearSyncTask);
+    return syncTask;
   }
 
   function toggleSidebarNav() {
@@ -889,15 +902,24 @@ function Workspace({ session }: { session: Session }) {
 
       if (result.error) {
         setResourceStatuses((current) => ({ ...current, [resource]: previousStatus === "ready" ? "ready" : "idle" }));
+        if (!resourceErrorNotifiedRef.current.has(resource)) {
+          resourceErrorNotifiedRef.current.add(resource);
+          NotificationService.showError(`Could not refresh ${resource.replace(/([A-Z])/g, " $1").toLowerCase()}. ${cached ? "Showing saved data." : "Try again when the connection is stable."}`);
+        }
         return;
       }
 
       setResourceData(result.data);
+      resourceErrorNotifiedRef.current.delete(resource);
       await writeCachedResource(resource, session.user.id, result.data);
       setResourceHydration((current) => ({ ...current, [resource]: true }));
       setResourceStatuses((current) => ({ ...current, [resource]: "ready" }));
     } catch {
       setResourceStatuses((current) => ({ ...current, [resource]: previousStatus === "ready" ? "ready" : "idle" }));
+      if (!resourceErrorNotifiedRef.current.has(resource)) {
+        resourceErrorNotifiedRef.current.add(resource);
+        NotificationService.showError(`Could not refresh ${resource.replace(/([A-Z])/g, " $1").toLowerCase()}. ${cached ? "Showing saved data." : "Try again when the connection is stable."}`);
+      }
     }
   }
 
@@ -1191,9 +1213,7 @@ function Workspace({ session }: { session: Session }) {
 
   const headerNotifications = useMemo<HeaderNotificationItem[]>(() => {
     const today = todayKey();
-    const upcomingWindowEnd = new Date(`${today}T00:00:00`);
-    upcomingWindowEnd.setDate(upcomingWindowEnd.getDate() + 7);
-    const upcomingEndKey = upcomingWindowEnd.toISOString().slice(0, 10);
+    const upcomingEndKey = addDays(today, 7);
 
     const items: HeaderNotificationItem[] = [];
     const addedExpenseIds = new Set<string>();
@@ -1540,6 +1560,46 @@ function Workspace({ session }: { session: Session }) {
                     <strong>{accountName}</strong>
                     <span>{session.user.email ?? "Administrator"}</span>
                   </div>
+                  <button
+                    className="account-dropdown-item"
+                    onClick={() => {
+                      setAccountMenuOpen(false);
+                      void retryFailedMutations(session.user.id).then((count) => {
+                        if (count === 0) {
+                          NotificationService.showSuccess("There are no failed offline changes to retry.");
+                          return;
+                        }
+                        return syncQueuedMutations(true);
+                      });
+                    }}
+                    role="menuitem"
+                    type="button"
+                  >
+                    <RotateCw size={16} />
+                    Retry offline changes
+                  </button>
+                  <button
+                    className="account-dropdown-item danger"
+                    onClick={() => {
+                      setAccountMenuOpen(false);
+                      void NotificationService.showConfirm({
+                        title: "Discard failed offline changes",
+                        message: "Discard changes that could not sync? This cannot be undone.",
+                        danger: true,
+                      }).then(async (confirmed) => {
+                        if (!confirmed) return;
+                        const count = await discardFailedMutations(session.user.id);
+                        NotificationService.showSuccess(
+                          count === 0 ? "There are no failed offline changes." : `${count} failed offline change${count === 1 ? "" : "s"} discarded.`,
+                        );
+                      });
+                    }}
+                    role="menuitem"
+                    type="button"
+                  >
+                    <Trash2 size={16} />
+                    Discard failed offline changes
+                  </button>
                   <button
                     className="account-dropdown-item"
                     onClick={() => {
@@ -3766,6 +3826,14 @@ export function DailyTicketEntryView({
             <span className="subcon-ticket-stat-helper">Nap Rehab count for current billing period</span>
           </div>
         </div>
+        <div className="subcon-ticket-stat">
+          <div className="subcon-ticket-stat-icon"><Wrench size={20} /></div>
+          <div className="subcon-ticket-stat-text">
+            <span>Closed Nap Rehab Tickets</span>
+            <strong>{totalNapRehabForBillingPeriod}</strong>
+            <span className="subcon-ticket-stat-helper">Nap Rehab count for current billing period</span>
+          </div>
+        </div>
       </section>
       <div className="ticket-toolbar">
         <div className="att-cal-wrap" ref={calendarRef}>
@@ -4264,7 +4332,7 @@ function SubconDailyTicketView({
   userId: string;
 }) {
   const [entryDate, setEntryDate] = useState(todayKey());
-  const [drafts, setDrafts] = useState<Record<string, { install: number; repair: number; disputedInstall: number; disputedRepair: number }>>({});
+  const [drafts, setDrafts] = useState<Record<string, { install: number; repair: number; napRehab: number; disputedInstall: number; disputedRepair: number; disputedNapRehab: number }>>({});
   const [busySubconId, setBusySubconId] = useState("");
   const [query, setQuery] = useState("");
   const [savingAll, setSavingAll] = useState(false);
@@ -4340,9 +4408,32 @@ function SubconDailyTicketView({
     return {
       install: drafts[subcontractorId]?.install ?? saved?.install_tickets ?? 0,
       repair: drafts[subcontractorId]?.repair ?? saved?.repair_tickets ?? 0,
+      napRehab: drafts[subcontractorId]?.napRehab ?? saved?.nap_rehab_tickets ?? 0,
       disputedInstall: drafts[subcontractorId]?.disputedInstall ?? saved?.disputed_install ?? 0,
       disputedRepair: drafts[subcontractorId]?.disputedRepair ?? saved?.disputed_repair ?? 0,
+      disputedNapRehab: drafts[subcontractorId]?.disputedNapRehab ?? saved?.disputed_nap_rehab ?? 0,
     };
+  }
+
+  function updateDraft(
+    subcontractorId: string,
+    patch: Partial<{ install: number; repair: number; napRehab: number; disputedInstall: number; disputedRepair: number; disputedNapRehab: number }>,
+  ) {
+    setDrafts((current) => {
+      const saved = existingEntryFor(subcontractorId);
+      const currentValues = current[subcontractorId] ?? {
+        install: saved?.install_tickets ?? 0,
+        repair: saved?.repair_tickets ?? 0,
+        napRehab: saved?.nap_rehab_tickets ?? 0,
+        disputedInstall: saved?.disputed_install ?? 0,
+        disputedRepair: saved?.disputed_repair ?? 0,
+        disputedNapRehab: saved?.disputed_nap_rehab ?? 0,
+      };
+      return {
+        ...current,
+        [subcontractorId]: { ...currentValues, ...patch },
+      };
+    });
   }
 
   function isDirty(subcontractor: Subcontractor) {
@@ -4351,8 +4442,10 @@ function SubconDailyTicketView({
     return (
       normalizeTicketCount(values.install) !== (saved?.install_tickets ?? 0) ||
       normalizeTicketCount(values.repair) !== (saved?.repair_tickets ?? 0) ||
+      normalizeTicketCount(values.napRehab) !== (saved?.nap_rehab_tickets ?? 0) ||
       normalizeTicketCount(values.disputedInstall) !== (saved?.disputed_install ?? 0) ||
-      normalizeTicketCount(values.disputedRepair) !== (saved?.disputed_repair ?? 0)
+      normalizeTicketCount(values.disputedRepair) !== (saved?.disputed_repair ?? 0) ||
+      normalizeTicketCount(values.disputedNapRehab) !== (saved?.disputed_nap_rehab ?? 0)
     );
   }
 
@@ -4368,10 +4461,13 @@ function SubconDailyTicketView({
       subcon_name: subcontractor.name,
       install_tickets: normalizeTicketCount(currentDraft.install),
       repair_tickets: normalizeTicketCount(currentDraft.repair),
+      nap_rehab_tickets: normalizeTicketCount(currentDraft.napRehab),
       disputed_install: normalizeTicketCount(currentDraft.disputedInstall),
       disputed_repair: normalizeTicketCount(currentDraft.disputedRepair),
+      disputed_nap_rehab: normalizeTicketCount(currentDraft.disputedNapRehab),
       installation_rate: toNumber(subcontractor.installation_rate),
       repair_rate: toNumber(subcontractor.repair_rate),
+      nap_rehab_rate: toNumber(subcontractor.nap_rehab_rate),
     };
 
     if (!navigator.onLine) {
@@ -4422,7 +4518,7 @@ function SubconDailyTicketView({
   }
 
   async function saveAll() {
-    const dirty = activeSubcons.filter((s) => isDirty(s) || draftValuesFor(s.id).install > 0 || draftValuesFor(s.id).repair > 0);
+    const dirty = activeSubcons.filter((s) => isDirty(s) || draftValuesFor(s.id).install > 0 || draftValuesFor(s.id).repair > 0 || draftValuesFor(s.id).napRehab > 0);
     if (dirty.length === 0) return;
     setSavingAll(true);
     for (const subcon of dirty) await saveRow(subcon);
@@ -4435,6 +4531,7 @@ function SubconDailyTicketView({
   const entryBillingPeriod = entryDay <= 15 ? "first_half" : "second_half";
   const totalInstallationForDate = activeSubcons.reduce((sum, s) => sum + normalizeTicketCount(draftValuesFor(s.id).install), 0);
   const totalRepairForDate = activeSubcons.reduce((sum, s) => sum + normalizeTicketCount(draftValuesFor(s.id).repair), 0);
+  const totalNapRehabForDate = activeSubcons.reduce((sum, s) => sum + normalizeTicketCount(draftValuesFor(s.id).napRehab), 0);
   const totalInstallationForBillingPeriod =
     activeSubcons.reduce(
       (sum, subcontractor) =>
@@ -4459,6 +4556,18 @@ function SubconDailyTicketView({
         ).repair,
       0,
     ) + totalRepairForDate;
+  const totalNapRehabForBillingPeriod =
+    activeSubcons.reduce(
+      (sum, subcontractor) =>
+        sum + countSubconTickets(
+          subconDailyTickets.filter((entry) => entry.entry_date !== entryDate),
+          subcontractor.id,
+          entryMonth,
+          entryYear,
+          entryBillingPeriod,
+        ).napRehab,
+      0,
+    ) + totalNapRehabForDate;
 
   function subconEntryBillableSnapshot(entry: SubconDailyTicket) {
     const installationTickets = Math.max(
@@ -4469,22 +4578,47 @@ function SubconDailyTicketView({
       0,
       normalizeTicketCount(entry.repair_tickets) - Math.min(normalizeTicketCount(entry.repair_tickets), normalizeTicketCount(entry.disputed_repair ?? 0)),
     );
+    const napRehabTickets = Math.max(
+      0,
+      normalizeTicketCount(entry.nap_rehab_tickets ?? 0) - Math.min(normalizeTicketCount(entry.nap_rehab_tickets ?? 0), normalizeTicketCount(entry.disputed_nap_rehab ?? 0)),
+    );
     const installationAmount = installationTickets * toNumber(entry.installation_rate);
     const repairAmount = repairTickets * toNumber(entry.repair_rate);
-    return { installationTickets, repairTickets, installationAmount, repairAmount, gross: installationAmount + repairAmount };
+    const napRehabAmount = napRehabTickets * toNumber(entry.nap_rehab_rate);
+    return { installationTickets, repairTickets, napRehabTickets, installationAmount, repairAmount, napRehabAmount, gross: installationAmount + repairAmount + napRehabAmount };
   }
 
   function billableSnapshotFor(subcontractor: Subcontractor) {
     const values = draftValuesFor(subcontractor.id);
     const billableInstall = Math.max(0, normalizeTicketCount(values.install) - normalizeTicketCount(values.disputedInstall));
     const billableRepair = Math.max(0, normalizeTicketCount(values.repair) - normalizeTicketCount(values.disputedRepair));
-    const installationAmount = billableInstall * toNumber(subcontractor.installation_rate);
-    const repairAmount = billableRepair * toNumber(subcontractor.repair_rate);
-    return { installationTickets: billableInstall, repairTickets: billableRepair, installationAmount, repairAmount, gross: installationAmount + repairAmount };
-  }
-
-  function billableGrossFor(subcontractor: Subcontractor) {
-    return billableSnapshotFor(subcontractor).gross;
+    const billableNapRehab = Math.max(0, normalizeTicketCount(values.napRehab) - normalizeTicketCount(values.disputedNapRehab));
+    const savedEntry = existingEntryFor(subcontractor.id);
+    const napRehabRate = subcontractor.nap_rehab_rate == null
+      ? toNumber(savedEntry?.nap_rehab_rate)
+      : toNumber(subcontractor.nap_rehab_rate);
+    const computed = computeSubconItem(
+      normalizeTicketCount(values.install),
+      normalizeTicketCount(values.repair),
+      normalizeTicketCount(values.disputedInstall),
+      normalizeTicketCount(values.disputedRepair),
+      toNumber(subcontractor.installation_rate),
+      toNumber(subcontractor.repair_rate),
+      100,
+      normalizeTicketCount(values.napRehab),
+      normalizeTicketCount(values.disputedNapRehab),
+      napRehabRate,
+    );
+    return {
+      installationTickets: billableInstall,
+      repairTickets: billableRepair,
+      napRehabTickets: billableNapRehab,
+      installationAmount: billableInstall * toNumber(subcontractor.installation_rate),
+      repairAmount: billableRepair * toNumber(subcontractor.repair_rate),
+      napRehabAmount: billableNapRehab * napRehabRate,
+      napRehabRate,
+      gross: computed.billingAmount,
+    };
   }
 
   return (
@@ -4609,8 +4743,13 @@ function SubconDailyTicketView({
                   Installation
                   <span className="ticket-rate-label">rate varies</span>
                 </th>
+                <th className="ticket-rate-col">
+                  Nap Rehab
+                  <span className="ticket-rate-label">rate varies</span>
+                </th>
                 <th className="ticket-dispute-col">Disputed Install</th>
                 <th className="ticket-dispute-col">Disputed Repair</th>
+                <th className="ticket-dispute-col">Disputed Nap Rehab</th>
                 <th className="ticket-gross-col">Gross</th>
                 <th className="ticket-action-col" />
               </tr>
@@ -4618,7 +4757,8 @@ function SubconDailyTicketView({
             <tbody>
               {filteredSubcons.map((subcontractor) => {
                 const values = draftValuesFor(subcontractor.id);
-                const gross = billableGrossFor(subcontractor);
+                const snapshot = billableSnapshotFor(subcontractor);
+                const gross = snapshot.gross;
                 const dirty = isDirty(subcontractor);
                 const busy = busySubconId === subcontractor.id;
                 const saved = savedIds.has(subcontractor.id);
@@ -4627,7 +4767,7 @@ function SubconDailyTicketView({
                     <td className="ticket-employee-name">
                       {subcontractor.name}
                       <span className="ticket-rate-label">
-                        Install ₱{toNumber(subcontractor.installation_rate).toLocaleString()} · Repair ₱{toNumber(subcontractor.repair_rate).toLocaleString()}
+                        Install ₱{toNumber(subcontractor.installation_rate).toLocaleString()} · Repair ₱{toNumber(subcontractor.repair_rate).toLocaleString()} · Nap ₱{snapshot.napRehabRate.toLocaleString()}
                       </span>
                     </td>
                     <td className="ticket-count-cell">
@@ -4654,6 +4794,16 @@ function SubconDailyTicketView({
                           ...current,
                           [subcontractor.id]: { ...draftValuesFor(subcontractor.id), install: normalizeTicketCount(e.target.value) },
                         }))}
+                      />
+                    </td>
+                    <td className="ticket-count-cell">
+                      <input
+                        aria-label={`Nap Rehab tickets for ${subcontractor.name}`}
+                        min="0"
+                        step="1"
+                        type="number"
+                        value={values.napRehab}
+                        onChange={(e) => updateDraft(subcontractor.id, { napRehab: normalizeTicketCount(e.target.value) })}
                       />
                     </td>
                     <td className="ticket-count-cell ticket-count-cell--dispute">
@@ -4692,8 +4842,29 @@ function SubconDailyTicketView({
                         }))}
                       />
                     </td>
+                    <td className="ticket-count-cell ticket-count-cell--dispute">
+                      <input
+                        aria-label={`Disputed Nap Rehab tickets for ${subcontractor.name}`}
+                        disabled={normalizeTicketCount(values.napRehab) === 0}
+                        max={normalizeTicketCount(values.napRehab)}
+                        min="0"
+                        step="1"
+                        type="number"
+                        value={Math.min(normalizeTicketCount(values.napRehab), normalizeTicketCount(values.disputedNapRehab))}
+                        onChange={(e) => setDrafts((current) => ({
+                          ...current,
+                          [subcontractor.id]: {
+                            ...draftValuesFor(subcontractor.id),
+                            disputedNapRehab: Math.min(normalizeTicketCount(values.napRehab), normalizeTicketCount(e.target.value)),
+                          },
+                        }))}
+                      />
+                    </td>
                     <td className="ticket-gross-cell">
                       <strong>{currency.format(gross)}</strong>
+                      {normalizeTicketCount(values.napRehab) > 0 && snapshot.napRehabRate === 0 && (
+                        <span className="ticket-rate-warning">Set Nap rate</span>
+                      )}
                     </td>
                     <td className="ticket-action-cell">
                       {busy ? (
@@ -4725,7 +4896,8 @@ function SubconDailyTicketView({
         <div className="ticket-mobile-list">
           {filteredSubcons.map((subcontractor) => {
             const values = draftValuesFor(subcontractor.id);
-            const gross = billableGrossFor(subcontractor);
+            const snapshot = billableSnapshotFor(subcontractor);
+            const gross = snapshot.gross;
             const dirty = isDirty(subcontractor);
             const busy = busySubconId === subcontractor.id;
             const saved = savedIds.has(subcontractor.id);
@@ -4740,11 +4912,16 @@ function SubconDailyTicketView({
                       <span>{subcontractor.name.split(" ").filter(Boolean).slice(0, 2).map((p) => p[0]).join("").toUpperCase() || "S"}</span>
                     </div>
                     <RecordTitle
-                      notes={`Install ₱${toNumber(subcontractor.installation_rate).toLocaleString()} · Repair ₱${toNumber(subcontractor.repair_rate).toLocaleString()}`}
+                      notes={`Install ₱${toNumber(subcontractor.installation_rate).toLocaleString()} · Repair ₱${toNumber(subcontractor.repair_rate).toLocaleString()} · Nap ₱${snapshot.napRehabRate.toLocaleString()}`}
                       title={subcontractor.name}
                     />
                   </div>
-                  <strong className="ticket-mobile-card-gross">{currency.format(gross)}</strong>
+                  <div>
+                    <strong className="ticket-mobile-card-gross">{currency.format(gross)}</strong>
+                    {normalizeTicketCount(values.napRehab) > 0 && snapshot.napRehabRate === 0 && (
+                      <span className="ticket-rate-warning">Set Nap rate</span>
+                    )}
+                  </div>
                 </div>
                 <div className="ticket-mobile-input-grid">
                   <label className="ticket-mobile-input-tile">
@@ -4773,6 +4950,17 @@ function SubconDailyTicketView({
                         ...current,
                         [subcontractor.id]: { ...draftValuesFor(subcontractor.id), install: normalizeTicketCount(e.target.value) },
                       }))}
+                    />
+                  </label>
+                  <label className="ticket-mobile-input-tile">
+                    <span>Nap Rehab</span>
+                    <input
+                      aria-label={`Nap Rehab tickets for ${subcontractor.name}`}
+                      min="0"
+                      step="1"
+                      type="number"
+                      value={values.napRehab}
+                      onChange={(e) => updateDraft(subcontractor.id, { napRehab: normalizeTicketCount(e.target.value) })}
                     />
                   </label>
                   <label className="ticket-mobile-input-tile ticket-mobile-input-tile--dispute">
@@ -4809,6 +4997,25 @@ function SubconDailyTicketView({
                         [subcontractor.id]: {
                           ...draftValuesFor(subcontractor.id),
                           disputedRepair: Math.min(normalizeTicketCount(values.repair), normalizeTicketCount(e.target.value)),
+                        },
+                      }))}
+                    />
+                  </label>
+                  <label className="ticket-mobile-input-tile ticket-mobile-input-tile--dispute">
+                    <span>Disputed Nap Rehab</span>
+                    <input
+                      aria-label={`Disputed Nap Rehab tickets for ${subcontractor.name}`}
+                      disabled={normalizeTicketCount(values.napRehab) === 0}
+                      max={normalizeTicketCount(values.napRehab)}
+                      min="0"
+                      step="1"
+                      type="number"
+                      value={Math.min(normalizeTicketCount(values.napRehab), normalizeTicketCount(values.disputedNapRehab))}
+                      onChange={(e) => setDrafts((current) => ({
+                        ...current,
+                        [subcontractor.id]: {
+                          ...draftValuesFor(subcontractor.id),
+                          disputedNapRehab: Math.min(normalizeTicketCount(values.napRehab), normalizeTicketCount(e.target.value)),
                         },
                       }))}
                     />

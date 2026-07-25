@@ -1,8 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { BadgeDollarSign, CheckCircle2, ChevronDown, Eye, FileText, MoreVertical, Pencil, Plus, Send, Trash2, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, BadgeDollarSign, CalendarDays, CheckCircle2, ChevronDown, Eye, FileText, MoreVertical, Pencil, Plus, ReceiptText, Send, Trash2, X } from "lucide-react";
 import {
   billingPeriodLabel,
   buildSubcontractorPayoutArtifacts,
+  computeClientBillingTotals,
   computeSubconItem,
   countSubconTickets,
   countTicketsByType,
@@ -40,10 +41,7 @@ import {
   deleteBillingRecord,
   ensureBillingSettings,
   recordPaymentReminderPayment,
-  saveBillingRecord,
   saveBillingSettings,
-  saveBillingSubconItems,
-  saveSubconPaymentReminders,
   updatePaymentReminderCompletion,
 } from "./billingRepository";
 import { recordReceivablePayment } from "../collections/collectionRepository";
@@ -274,15 +272,34 @@ export function BillingFeature({
 
     const employeeSubconInstall = Number(values.install_tickets) || 0;
     const employeeSubconRepair = Number(values.repair_tickets) || 0;
+    const employeeSubconNapRehab = Number(values.nap_rehab_tickets) || 0;
+    const subconInstall = values.subcon_items.reduce((sum, item) => sum + (Number(item.install_tickets) || 0), 0);
+    const subconRepair = values.subcon_items.reduce((sum, item) => sum + (Number(item.repair_tickets) || 0), 0);
+    const subconNapRehab = values.subcon_items.reduce((sum, item) => sum + (Number(item.nap_rehab_tickets) || 0), 0);
+    const subconDisputedInstall = values.subcon_items.reduce(
+      (sum, item) => sum + Math.max(0, Math.min(Number(item.install_tickets) || 0, Number(item.disputed_install) || 0)),
+      0,
+    );
+    const subconDisputedRepair = values.subcon_items.reduce(
+      (sum, item) => sum + Math.max(0, Math.min(Number(item.repair_tickets) || 0, Number(item.disputed_repair) || 0)),
+      0,
+    );
+    const subconDisputedNapRehab = values.subcon_items.reduce(
+      (sum, item) => sum + Math.max(0, Math.min(Number(item.nap_rehab_tickets) || 0, Number(item.disputed_nap_rehab) || 0)),
+      0,
+    );
+    const employeeInstall = Math.max(0, employeeSubconInstall - subconInstall);
+    const employeeRepair = Math.max(0, employeeSubconRepair - subconRepair);
+    const employeeNapRehab = Math.max(0, employeeSubconNapRehab - subconNapRehab);
     // Clamped against the current ticket totals (not just at input time) so a stale
     // disputed count left over from a since-lowered ticket count or a since-changed
     // billing period can never be persisted higher than the tickets it's disputing.
-    const disputedInstall = Math.min(employeeSubconInstall, Number(values.disputed_install) || 0);
-    const disputedRepair = Math.min(employeeSubconRepair, Number(values.disputed_repair) || 0);
-    // Subcontractors don't perform Nap Rehab tickets, so unlike install/repair this has
-    // no subcon component -- it's employee-only.
-    const employeeNapRehab = Number(values.nap_rehab_tickets) || 0;
-    const disputedNapRehab = Math.min(employeeNapRehab, Number(values.disputed_nap_rehab) || 0);
+    const employeeDisputedInstall = Math.max(0, Math.min(employeeInstall, Number(values.disputed_install) || 0));
+    const employeeDisputedRepair = Math.max(0, Math.min(employeeRepair, Number(values.disputed_repair) || 0));
+    const employeeDisputedNapRehab = Math.max(0, Math.min(employeeNapRehab, Number(values.disputed_nap_rehab) || 0));
+    const disputedInstall = employeeDisputedInstall + subconDisputedInstall;
+    const disputedRepair = employeeDisputedRepair + subconDisputedRepair;
+    const disputedNapRehab = employeeDisputedNapRehab + subconDisputedNapRehab;
     const companyInstall = Number(values.company_install_tickets) || 0;
     const companyRepair = Number(values.company_repair_tickets) || 0;
     const companyDisputedInstall = Math.min(companyInstall, Number(values.company_disputed_install) || 0);
@@ -291,12 +308,12 @@ export function BillingFeature({
     const companyDisputedNapRehab = Math.min(companyNapRehab, Number(values.company_disputed_nap_rehab) || 0);
     const installTickets = employeeSubconInstall + companyInstall;
     const repairTickets = employeeSubconRepair + companyRepair;
-    const napRehabTickets = employeeNapRehab + companyNapRehab;
+    const napRehabTickets = employeeSubconNapRehab + companyNapRehab;
     const totalTickets = installTickets + repairTickets + napRehabTickets;
     const disputedTickets = disputedInstall + disputedRepair + disputedNapRehab + companyDisputedInstall + companyDisputedRepair + companyDisputedNapRehab;
     const billableInstall = Math.max(0, employeeSubconInstall - disputedInstall) + Math.max(0, companyInstall - companyDisputedInstall);
     const billableRepair = Math.max(0, employeeSubconRepair - disputedRepair) + Math.max(0, companyRepair - companyDisputedRepair);
-    const billableNapRehab = Math.max(0, employeeNapRehab - disputedNapRehab) + Math.max(0, companyNapRehab - companyDisputedNapRehab);
+    const billableNapRehab = Math.max(0, employeeSubconNapRehab - disputedNapRehab) + Math.max(0, companyNapRehab - companyDisputedNapRehab);
     const billableTickets = billableInstall + billableRepair + billableNapRehab;
     // Rates and the collections split come from `values`, not live `settings`, so
     // editing an existing record recomputes against the rate/pct that was actually
@@ -307,9 +324,39 @@ export function BillingFeature({
     const effectiveRepairRate = Number(values.repair_rate) || 0;
     const effectiveNapRehabRate = Number(values.nap_rehab_rate) || 0;
     const effectiveCollectionsPct = Number(values.collections_pct) || 0;
-    const billingAmount = billableInstall * effectiveInstallationRate + billableRepair * effectiveRepairRate + billableNapRehab * effectiveNapRehabRate;
-    const collectionsAmount = Math.round((billingAmount * effectiveCollectionsPct) / 100 * 100) / 100;
-    const collectiblesAmount = Math.round((billingAmount - collectionsAmount) * 100) / 100;
+    const clientTotals = computeClientBillingTotals(
+      [
+        {
+          install: employeeInstall,
+          repair: employeeRepair,
+          napRehab: employeeNapRehab,
+          disputedInstall: employeeDisputedInstall,
+          disputedRepair: employeeDisputedRepair,
+          disputedNapRehab: employeeDisputedNapRehab,
+        },
+        {
+          install: subconInstall,
+          repair: subconRepair,
+          napRehab: subconNapRehab,
+          disputedInstall: subconDisputedInstall,
+          disputedRepair: subconDisputedRepair,
+          disputedNapRehab: subconDisputedNapRehab,
+        },
+        {
+          install: companyInstall,
+          repair: companyRepair,
+          napRehab: companyNapRehab,
+          disputedInstall: companyDisputedInstall,
+          disputedRepair: companyDisputedRepair,
+          disputedNapRehab: companyDisputedNapRehab,
+        },
+      ],
+      { installation: effectiveInstallationRate, repair: effectiveRepairRate, napRehab: effectiveNapRehabRate },
+      effectiveCollectionsPct,
+    );
+    const billingAmount = clientTotals.billingAmount;
+    const collectionsAmount = clientTotals.collectionsAmount;
+    const collectiblesAmount = clientTotals.collectiblesAmount;
     const dueDate = values.due_date || addDays(todayKey(), 15);
 
     const subconItems: BillingSubconItem[] = values.subcon_items.map((item) => {
@@ -321,6 +368,9 @@ export function BillingFeature({
         Number(item.installation_rate) || 0,
         Number(item.repair_rate) || 0,
         Number(item.payable_pct) || 0,
+        Number(item.nap_rehab_tickets) || 0,
+        Number(item.disputed_nap_rehab) || 0,
+        Number(item.nap_rehab_rate) || 0,
       );
       return {
         id: item.id ?? crypto.randomUUID(),
@@ -330,10 +380,13 @@ export function BillingFeature({
         subcon_name: item.subcon_name,
         install_tickets: Number(item.install_tickets) || 0,
         repair_tickets: Number(item.repair_tickets) || 0,
+        nap_rehab_tickets: Number(item.nap_rehab_tickets) || 0,
         disputed_install: Number(item.disputed_install) || 0,
         disputed_repair: Number(item.disputed_repair) || 0,
+        disputed_nap_rehab: Number(item.disputed_nap_rehab) || 0,
         installation_rate: Number(item.installation_rate) || 0,
         repair_rate: Number(item.repair_rate) || 0,
+        nap_rehab_rate: Number(item.nap_rehab_rate) || 0,
         billable_tickets: computed.billableTickets,
         billing_amount: computed.billingAmount,
         payable_pct: Number(item.payable_pct) || 0,
@@ -351,10 +404,10 @@ export function BillingFeature({
       billing_period: period,
       install_tickets: installTickets,
       repair_tickets: repairTickets,
-      disputed_install: disputedInstall,
-      disputed_repair: disputedRepair,
+      disputed_install: employeeDisputedInstall,
+      disputed_repair: employeeDisputedRepair,
       nap_rehab_tickets: napRehabTickets,
-      disputed_nap_rehab: disputedNapRehab,
+      disputed_nap_rehab: employeeDisputedNapRehab,
       company_install_tickets: companyInstall,
       company_repair_tickets: companyRepair,
       company_disputed_install: companyDisputedInstall,
@@ -430,36 +483,16 @@ export function BillingFeature({
     collectiblesCollectionPayload: Record<string, unknown>,
     payoutPayloads: Array<Omit<PaymentReminder, "created_at" | "updated_at" | "payments">>,
     advanceUpdates: Array<{ id: string; payload: Pick<SubcontractorAdvance, "balance" | "status"> }>,
-    isUpdate: boolean,
+    _isUpdate: boolean,
   ) {
     if (!supabase) return { error: { message: "Supabase unavailable." } };
-
-    const collectionTable = supabase.from("collection_reminders");
-    const primaryResult = isUpdate
-      ? await collectionTable.update(collectionPayload).eq("id", billingPayload.collection_id!)
-      : await collectionTable.insert(collectionPayload);
-    if (primaryResult.error) return primaryResult;
-
-    const payableResult = isUpdate
-      ? await collectionTable.update(collectiblesCollectionPayload).eq("id", billingPayload.collectibles_collection_id!)
-      : await collectionTable.insert(collectiblesCollectionPayload);
-    if (payableResult.error) return payableResult;
-
-    const billingResult = await saveBillingRecord(supabase, billingPayload);
-    if (billingResult.error) return billingResult;
-
-    const subconResult = await saveBillingSubconItems(supabase, billingPayload.id, billingPayload.subcon_items);
-    if (subconResult.error) return subconResult;
-
-    const payoutResult = await saveSubconPaymentReminders(supabase, payoutPayloads);
-    if (payoutResult.error) return payoutResult;
-
-    for (const update of advanceUpdates) {
-      const advanceResult = await supabase.from("subcontractor_advances").update(update.payload).eq("id", update.id);
-      if (advanceResult.error) return advanceResult;
-    }
-
-    return { error: null };
+    return supabase.rpc("save_billing_bundle", {
+      billing_payload: billingPayload,
+      collection_payloads: [collectionPayload, collectiblesCollectionPayload],
+      subcon_item_payloads: billingPayload.subcon_items,
+      reminder_payloads: payoutPayloads,
+      advance_updates: advanceUpdates,
+    });
   }
 
   async function createBilling(
@@ -881,7 +914,7 @@ export function BillingFeature({
                                     return (
                                       <tr key={item.id}>
                                         <td className="subcon-detail-name" data-label="Subcontractor">{item.subcon_name}</td>
-                                        <td className="num" data-label="Tickets">{item.install_tickets + item.repair_tickets}</td>
+                                        <td className="num" data-label="Tickets">{item.install_tickets + item.repair_tickets + (item.nap_rehab_tickets ?? 0)}</td>
                                         <td className="num" data-label="Gross">{currency.format(item.billing_amount)}</td>
                                         <td className="num" data-label="Net payable"><strong>{currency.format(item.payable_amount)}</strong></td>
                                         <td data-label="Payout">
@@ -1201,13 +1234,15 @@ function BillingDetailsModal({
     (sum, item) => ({
       install: sum.install + item.install_tickets,
       repair: sum.repair + item.repair_tickets,
+      napRehab: sum.napRehab + (item.nap_rehab_tickets ?? 0),
       disputedInstall: sum.disputedInstall + item.disputed_install,
       disputedRepair: sum.disputedRepair + item.disputed_repair,
+      disputedNapRehab: sum.disputedNapRehab + (item.disputed_nap_rehab ?? 0),
       billableTickets: sum.billableTickets + item.billable_tickets,
       gross: sum.gross + item.billing_amount,
       payable: sum.payable + item.payable_amount,
     }),
-    { install: 0, repair: 0, disputedInstall: 0, disputedRepair: 0, billableTickets: 0, gross: 0, payable: 0 },
+    { install: 0, repair: 0, napRehab: 0, disputedInstall: 0, disputedRepair: 0, disputedNapRehab: 0, billableTickets: 0, gross: 0, payable: 0 },
   );
   const paymentsByItemId = new Map<string, PaymentReminder[]>();
   payments
@@ -1223,7 +1258,7 @@ function BillingDetailsModal({
   const companyDisputedNapRehab = Number(record.company_disputed_nap_rehab) || 0;
   const billingLevelDisputes = record.disputed_install + record.disputed_repair + disputedNapRehab;
   const companyDisputes = record.company_disputed_install + record.company_disputed_repair + companyDisputedNapRehab;
-  const subcontractorDisputes = subconTotals.disputedInstall + subconTotals.disputedRepair;
+  const subcontractorDisputes = subconTotals.disputedInstall + subconTotals.disputedRepair + subconTotals.disputedNapRehab;
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -1336,7 +1371,7 @@ function BillingDetailsModal({
                     return (
                       <tr key={item.id}>
                         <td data-label="Subcontractor">{item.subcon_name}</td>
-                        <td className="num" data-label="Tickets">{item.install_tickets + item.repair_tickets} <span>I:{item.install_tickets} R:{item.repair_tickets}</span></td>
+                        <td className="num" data-label="Tickets">{item.install_tickets + item.repair_tickets + (item.nap_rehab_tickets ?? 0)} <span>I:{item.install_tickets} R:{item.repair_tickets} N:{item.nap_rehab_tickets ?? 0}</span></td>
                         <td className="num" data-label="Disputed">{item.disputed_install + item.disputed_repair} <span>I:{item.disputed_install} R:{item.disputed_repair}</span></td>
                         <td className="num" data-label="Billable">{item.billable_tickets}</td>
                         <td className="num" data-label="Gross">{currency.format(item.billing_amount)}</td>
@@ -1387,6 +1422,7 @@ function BillingDetailsModal({
               <div><span>Company Nap Rehab disputes</span><strong>{companyDisputedNapRehab}</strong></div>
               <div><span>Subcon install disputes</span><strong>{subconTotals.disputedInstall}</strong></div>
               <div><span>Subcon repair disputes</span><strong>{subconTotals.disputedRepair}</strong></div>
+              <div><span>Subcon Nap Rehab disputes</span><strong>{subconTotals.disputedNapRehab}</strong></div>
             </div>
           </section>
         </div>
@@ -1508,12 +1544,23 @@ function BillingQuickCollectModal({
   );
 }
 
-const WIZARD_STEPS: Array<{ id: 1 | 2 | 3 | 4; label: string }> = [
+type BillingWizardStep = 1 | 2 | 3 | 4 | 5;
+
+const WIZARD_STEPS: Array<{ id: BillingWizardStep; label: string }> = [
   { id: 1, label: "Billing Details" },
   { id: 2, label: "Employee Tickets" },
-  { id: 3, label: "Review Tickets" },
-  { id: 4, label: "Billable Summary" },
+  { id: 3, label: "Subcontractors" },
+  { id: 4, label: "Company & Disputes" },
+  { id: 5, label: "Billable Summary" },
 ];
+
+const WIZARD_STEP_DESCRIPTIONS: Record<BillingWizardStep, string> = {
+  1: "Choose the coverage period and payment due date.",
+  2: "Confirm employee work included in this billing cycle.",
+  3: "Review subcontractor tickets, disputes, and payout amounts.",
+  4: "Review company ticket sources and disputed work.",
+  5: "Check the final client statement before creating the billing.",
+};
 
 function BillingForm({
   initial,
@@ -1550,6 +1597,7 @@ function BillingForm({
           name: item.subcon_name,
           installation_rate: item.installation_rate,
           repair_rate: item.repair_rate,
+          nap_rehab_rate: item.nap_rehab_rate ?? 0,
           payable_pct: item.payable_pct,
           status: "archived",
           email: "",
@@ -1572,10 +1620,13 @@ function BillingForm({
           subcon_name: subcontractor.name,
           install_tickets: String(existing?.install_tickets ?? counts.install),
           repair_tickets: String(existing?.repair_tickets ?? counts.repair),
+          nap_rehab_tickets: String(existing?.nap_rehab_tickets ?? counts.napRehab),
           disputed_install: String(existing?.disputed_install ?? 0),
           disputed_repair: String(existing?.disputed_repair ?? 0),
+          disputed_nap_rehab: String(existing?.disputed_nap_rehab ?? 0),
           installation_rate: String(existing?.installation_rate ?? subcontractor.installation_rate),
           repair_rate: String(existing?.repair_rate ?? subcontractor.repair_rate),
+          nap_rehab_rate: String(existing?.nap_rehab_rate ?? subcontractor.nap_rehab_rate ?? 0),
           payable_pct: String(existing?.payable_pct ?? subcontractor.payable_pct),
         };
       });
@@ -1590,6 +1641,7 @@ function BillingForm({
       const initialCompanyInstall = toNumber(initial.company_install_tickets);
       const initialCompanyRepair = toNumber(initial.company_repair_tickets);
       const initialCompanyNapRehab = toNumber(initial.company_nap_rehab_tickets);
+      const initialSubconItems = buildSubconItems(initial.billing_month, initial.billing_year, initial.billing_period);
       return {
         billing_month: String(initial.billing_month),
         billing_year: String(initial.billing_year),
@@ -1619,7 +1671,7 @@ function BillingForm({
         nap_rehab_rate: String(initial.nap_rehab_rate != null ? initial.nap_rehab_rate : settings.nap_rehab_rate),
         collections_pct: String(initial.collections_pct != null ? initial.collections_pct : settings.collections_pct),
         due_date: initial.due_date ?? "",
-        subcon_items: buildSubconItems(initial.billing_month, initial.billing_year, initial.billing_period),
+        subcon_items: initialSubconItems,
         notes: initial.notes,
       };
     }
@@ -1629,6 +1681,7 @@ function BillingForm({
     const subconItems = buildSubconItems(month, year, defaultPeriod);
     const subconInstall = subconItems.reduce((sum, item) => sum + (Number(item.install_tickets) || 0), 0);
     const subconRepair = subconItems.reduce((sum, item) => sum + (Number(item.repair_tickets) || 0), 0);
+    const subconNapRehab = subconItems.reduce((sum, item) => sum + (Number(item.nap_rehab_tickets) || 0), 0);
     return {
       billing_month: String(month),
       billing_year: String(year),
@@ -1637,7 +1690,7 @@ function BillingForm({
       repair_tickets: String(employeeCounts.repair + subconRepair),
       disputed_install: "0",
       disputed_repair: "0",
-      nap_rehab_tickets: String(employeeCounts.nap_rehab),
+      nap_rehab_tickets: String(employeeCounts.nap_rehab + subconNapRehab),
       disputed_nap_rehab: "0",
       company_install_tickets: "0",
       company_repair_tickets: "0",
@@ -1658,7 +1711,17 @@ function BillingForm({
   const [values, setValues] = useState<BillingFormValues>(buildInitialValues);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<ActionProgressState | null>(null);
-  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+  const [step, setStep] = useState<BillingWizardStep>(1);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    closeButtonRef.current?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busy) onClose();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [busy, onClose]);
 
   function formatStatementDate(dateKey: string) {
     const [year, month, day] = dateKey.slice(0, 10).split("-").map(Number);
@@ -1674,11 +1737,12 @@ function BillingForm({
     const subconItems = buildSubconItems(month, year, values.billing_period);
     const subconInstall = subconItems.reduce((sum, item) => sum + (Number(item.install_tickets) || 0), 0);
     const subconRepair = subconItems.reduce((sum, item) => sum + (Number(item.repair_tickets) || 0), 0);
+    const subconNapRehab = subconItems.reduce((sum, item) => sum + (Number(item.nap_rehab_tickets) || 0), 0);
     setValues((current) => ({
       ...current,
       install_tickets: String(employeeCounts.installation + subconInstall),
       repair_tickets: String(employeeCounts.repair + subconRepair),
-      nap_rehab_tickets: String(employeeCounts.nap_rehab),
+      nap_rehab_tickets: String(employeeCounts.nap_rehab + subconNapRehab),
       subcon_items: subconItems,
     }));
   }, [dailyTicketEntries, initial, subconDailyTickets, subcontractors, values.billing_month, values.billing_period, values.billing_year]);
@@ -1715,12 +1779,31 @@ function BillingForm({
   );
   const subconInstall = values.subcon_items.reduce((sum, item) => sum + (Number(item.install_tickets) || 0), 0);
   const subconRepair = values.subcon_items.reduce((sum, item) => sum + (Number(item.repair_tickets) || 0), 0);
+  const subconNapRehab = values.subcon_items.reduce((sum, item) => sum + (Number(item.nap_rehab_tickets) || 0), 0);
+  const subconDisputedInstall = values.subcon_items.reduce(
+    (sum, item) => sum + Math.max(0, Math.min(Number(item.install_tickets) || 0, Number(item.disputed_install) || 0)),
+    0,
+  );
+  const subconDisputedRepair = values.subcon_items.reduce(
+    (sum, item) => sum + Math.max(0, Math.min(Number(item.repair_tickets) || 0, Number(item.disputed_repair) || 0)),
+    0,
+  );
+  const subconDisputedNapRehab = values.subcon_items.reduce(
+    (sum, item) => sum + Math.max(0, Math.min(Number(item.nap_rehab_tickets) || 0, Number(item.disputed_nap_rehab) || 0)),
+    0,
+  );
   const installTickets = Math.max(0, Number(values.install_tickets) || 0);
   const repairTickets = Math.max(0, Number(values.repair_tickets) || 0);
-  const disputedInstall = Math.min(installTickets, Number(values.disputed_install) || 0);
-  const disputedRepair = Math.min(repairTickets, Number(values.disputed_repair) || 0);
   const napRehabTickets = Math.max(0, Number(values.nap_rehab_tickets) || 0);
-  const disputedNapRehab = Math.min(napRehabTickets, Number(values.disputed_nap_rehab) || 0);
+  const employeeInstallTickets = Math.max(0, installTickets - subconInstall);
+  const employeeRepairTickets = Math.max(0, repairTickets - subconRepair);
+  const employeeNapRehabTickets = Math.max(0, napRehabTickets - subconNapRehab);
+  const employeeDisputedInstall = Math.max(0, Math.min(employeeInstallTickets, Number(values.disputed_install) || 0));
+  const employeeDisputedRepair = Math.max(0, Math.min(employeeRepairTickets, Number(values.disputed_repair) || 0));
+  const employeeDisputedNapRehab = Math.max(0, Math.min(employeeNapRehabTickets, Number(values.disputed_nap_rehab) || 0));
+  const disputedInstall = employeeDisputedInstall + subconDisputedInstall;
+  const disputedRepair = employeeDisputedRepair + subconDisputedRepair;
+  const disputedNapRehab = employeeDisputedNapRehab + subconDisputedNapRehab;
   const companyInstallTickets = Math.max(0, Number(values.company_install_tickets) || 0);
   const companyRepairTickets = Math.max(0, Number(values.company_repair_tickets) || 0);
   const companyDisputedInstall = Math.min(companyInstallTickets, Number(values.company_disputed_install) || 0);
@@ -1730,18 +1813,48 @@ function BillingForm({
   const combinedInstallTickets = installTickets + companyInstallTickets;
   const combinedRepairTickets = repairTickets + companyRepairTickets;
   const combinedNapRehabTickets = napRehabTickets + companyNapRehabTickets;
-  const employeeDisplayInstall = Math.max(0, employeeTotals.install - disputedInstall);
-  const employeeDisplayRepair = Math.max(0, employeeTotals.repair - disputedRepair);
-  const employeeDisplayNapRehab = Math.max(0, employeeTotals.napRehab - disputedNapRehab);
+  const employeeDisplayInstall = Math.max(0, employeeTotals.install - employeeDisputedInstall);
+  const employeeDisplayRepair = Math.max(0, employeeTotals.repair - employeeDisputedRepair);
+  const employeeDisplayNapRehab = Math.max(0, employeeTotals.napRehab - employeeDisputedNapRehab);
   const employeeDisplayTickets = employeeDisplayInstall + employeeDisplayRepair + employeeDisplayNapRehab;
   const employeeDisplayGross = employeeDisplayInstall * effectiveInstallationRate + employeeDisplayRepair * effectiveRepairRate + employeeDisplayNapRehab * effectiveNapRehabRate;
   const billableInstall = (installTickets - disputedInstall) + (companyInstallTickets - companyDisputedInstall);
   const billableRepair = (repairTickets - disputedRepair) + (companyRepairTickets - companyDisputedRepair);
   const billableNapRehab = (napRehabTickets - disputedNapRehab) + (companyNapRehabTickets - companyDisputedNapRehab);
   const billableTickets = billableInstall + billableRepair + billableNapRehab;
-  const billingAmount = billableInstall * effectiveInstallationRate + billableRepair * effectiveRepairRate + billableNapRehab * effectiveNapRehabRate;
-  const collectionsAmount = Math.round((billingAmount * effectiveCollectionsPct) / 100 * 100) / 100;
-  const collectiblesAmount = Math.round((billingAmount - collectionsAmount) * 100) / 100;
+  const clientTotals = computeClientBillingTotals(
+    [
+      {
+        install: employeeInstallTickets,
+        repair: employeeRepairTickets,
+        napRehab: employeeNapRehabTickets,
+        disputedInstall: employeeDisputedInstall,
+        disputedRepair: employeeDisputedRepair,
+        disputedNapRehab: employeeDisputedNapRehab,
+      },
+      {
+        install: subconInstall,
+        repair: subconRepair,
+        napRehab: subconNapRehab,
+        disputedInstall: subconDisputedInstall,
+        disputedRepair: subconDisputedRepair,
+        disputedNapRehab: subconDisputedNapRehab,
+      },
+      {
+        install: companyInstallTickets,
+        repair: companyRepairTickets,
+        napRehab: companyNapRehabTickets,
+        disputedInstall: companyDisputedInstall,
+        disputedRepair: companyDisputedRepair,
+        disputedNapRehab: companyDisputedNapRehab,
+      },
+    ],
+    { installation: effectiveInstallationRate, repair: effectiveRepairRate, napRehab: effectiveNapRehabRate },
+    effectiveCollectionsPct,
+  );
+  const billingAmount = clientTotals.billingAmount;
+  const collectionsAmount = clientTotals.collectionsAmount;
+  const collectiblesAmount = clientTotals.collectiblesAmount;
   const totalSubconNet = values.subcon_items.reduce((sum, item) => {
     const computed = computeSubconItem(
       Number(item.install_tickets) || 0,
@@ -1751,6 +1864,9 @@ function BillingForm({
       Number(item.installation_rate) || 0,
       Number(item.repair_rate) || 0,
       Number(item.payable_pct) || 0,
+      Number(item.nap_rehab_tickets) || 0,
+      Number(item.disputed_nap_rehab) || 0,
+      Number(item.nap_rehab_rate) || 0,
     );
     return sum + computed.payableAmount;
   }, 0);
@@ -1778,13 +1894,25 @@ function BillingForm({
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal cbf-modal cbf-modal--compact" onClick={(event) => event.stopPropagation()}>
+      <div
+        aria-labelledby="billing-modal-title"
+        aria-modal="true"
+        className="modal cbf-modal cbf-modal--compact"
+        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+      >
         <div className="cbf-header">
-          <div>
-            <h3 className="cbf-title">{initial ? "Edit Billing" : "New Billing"}</h3>
-            <p className="cbf-eyebrow">Semi-Monthly Invoicing</p>
+          <div className="cbf-header-main">
+            <span className="cbf-header-icon" aria-hidden="true"><ReceiptText size={20} /></span>
+            <div>
+              <div className="cbf-title-row">
+                <h3 className="cbf-title" id="billing-modal-title">{initial ? "Edit billing" : "Create billing"}</h3>
+                <span className="cbf-status-pill">{initial ? "Editing" : "Draft"}</span>
+              </div>
+              <p className="cbf-eyebrow">Semi-monthly invoice - Step {step} of {WIZARD_STEPS.length}</p>
+            </div>
           </div>
-          <button className="cbf-close-btn" onClick={onClose} type="button" aria-label="Close"><X size={18} /></button>
+          <button ref={closeButtonRef} className="cbf-close-btn" onClick={onClose} type="button" aria-label="Close billing modal"><X size={18} /></button>
         </div>
 
         <form className="cbf-form action-progress-shell" onSubmit={handleSubmit}>
@@ -1799,6 +1927,7 @@ function BillingForm({
           <div className="cbf-stepper">
             {WIZARD_STEPS.map((wizardStep) => (
               <button
+                aria-current={step === wizardStep.id ? "step" : undefined}
                 className={`cbf-step${step === wizardStep.id ? " cbf-step--active" : ""}${step > wizardStep.id ? " cbf-step--done" : ""}`}
                 disabled={busy}
                 key={wizardStep.id}
@@ -1810,6 +1939,19 @@ function BillingForm({
                 <span className="cbf-step-label">{wizardStep.label}</span>
               </button>
             ))}
+          </div>
+
+          <div className="cbf-step-intro">
+            <div>
+              <span className="cbf-step-kicker">Step {step} of {WIZARD_STEPS.length}</span>
+              <h4>{WIZARD_STEPS[step - 1].label}</h4>
+              <p>{WIZARD_STEP_DESCRIPTIONS[step]}</p>
+            </div>
+            <div className="cbf-period-chip">
+              <CalendarDays size={15} />
+              <span>{monthNames[Number(values.billing_month) - 1]} {values.billing_year}</span>
+              <small>{billingPeriodLabel(values.billing_period)}</small>
+            </div>
           </div>
 
           {step === 1 && (
@@ -1873,8 +2015,8 @@ function BillingForm({
                 </section>
 
                 <section className="cbf-section cbf-section-card">
-                  <label className="cbf-section-label">
-                    Notes <span className="cbf-section-sub">optional</span>
+                  <label className="cbf-section-label cbf-notes-label">
+                    Notes <span className="cbf-optional-pill">Optional</span>
                     <textarea className="cbf-textarea" rows={2} value={values.notes} onChange={(event) => setValues({ ...values, notes: event.target.value })} />
                   </label>
                 </section>
@@ -1931,13 +2073,52 @@ function BillingForm({
                     </tbody>
                   </table>
                 </div>
+                <div className="cbf-employee-disputes">
+                  <div>
+                    <strong>Employee disputes</strong>
+                    <span>Only tickets rejected by the client</span>
+                  </div>
+                  <label>
+                    <span>Install</span>
+                    <input
+                      disabled={employeeInstallTickets === 0}
+                      max={employeeInstallTickets}
+                      min="0"
+                      onChange={(event) => setValues({ ...values, disputed_install: String(Math.max(0, Math.min(employeeInstallTickets, Number(event.target.value) || 0))) })}
+                      type="number"
+                      value={String(employeeDisputedInstall)}
+                    />
+                  </label>
+                  <label>
+                    <span>Repair</span>
+                    <input
+                      disabled={employeeRepairTickets === 0}
+                      max={employeeRepairTickets}
+                      min="0"
+                      onChange={(event) => setValues({ ...values, disputed_repair: String(Math.max(0, Math.min(employeeRepairTickets, Number(event.target.value) || 0))) })}
+                      type="number"
+                      value={String(employeeDisputedRepair)}
+                    />
+                  </label>
+                  <label>
+                    <span>Nap Rehab</span>
+                    <input
+                      disabled={employeeNapRehabTickets === 0}
+                      max={employeeNapRehabTickets}
+                      min="0"
+                      onChange={(event) => setValues({ ...values, disputed_nap_rehab: String(Math.max(0, Math.min(employeeNapRehabTickets, Number(event.target.value) || 0))) })}
+                      type="number"
+                      value={String(employeeDisputedNapRehab)}
+                    />
+                  </label>
+                </div>
               </section>
             </div>
           )}
 
-          {step === 3 && (
+          {step === 4 && (
             <div className="cbf-step-panel">
-              <section className="cbf-section cbf-section-card">
+              <section className="cbf-section cbf-section-card cbf-section--sources">
                 <div className="cbf-section-heading">
                   <p className="cbf-section-label">Ticket Sources</p>
                 </div>
@@ -1953,10 +2134,11 @@ function BillingForm({
                   </div>
                   <div className="billing-ticket-source-card">
                     <span className="billing-ticket-source-title">Subcontractors</span>
-                    <strong className="billing-ticket-source-total">{subconInstall + subconRepair}</strong>
+                    <strong className="billing-ticket-source-total">{subconInstall + subconRepair + subconNapRehab}</strong>
                     <div className="billing-ticket-source-breakdown">
                       <small>Install: {subconInstall}</small>
                       <small>Repair: {subconRepair}</small>
+                      <small>Nap Rehab: {subconNapRehab}</small>
                     </div>
                   </div>
                   <div className="billing-ticket-source-card">
@@ -1980,7 +2162,7 @@ function BillingForm({
                 </div>
               </section>
 
-              <section className="cbf-section cbf-section-card">
+              <section className="cbf-section cbf-section-card cbf-section--company">
                 <div className="cbf-section-heading">
                   <p className="cbf-section-label">Company Tickets <span className="cbf-section-sub">closed by the company, not an employee</span></p>
                 </div>
@@ -2083,76 +2265,11 @@ function BillingForm({
                 </div>
               </section>
 
-              <section className="cbf-section cbf-section-card cbf-section--dispute">
-                <div className="cbf-section-heading">
-                  <p className="cbf-section-label">Disputed Totals <span className="cbf-section-sub">deducted from billable</span></p>
-                </div>
-                <div className="cbf-dispute-summary">
-                  <div className="cbf-dispute-summary-item">
-                    <span>Installation tickets</span>
-                    <strong>{installTickets}</strong>
-                  </div>
-                  <div className="cbf-dispute-summary-item">
-                    <span>Repair tickets</span>
-                    <strong>{repairTickets}</strong>
-                  </div>
-                  <div className="cbf-dispute-summary-item">
-                    <span>Nap Rehab tickets</span>
-                    <strong>{napRehabTickets}</strong>
-                  </div>
-                </div>
-                <div className="cbf-ticket-pair">
-                  <div className="cbf-ticket-card cbf-ticket-card--dispute">
-                    <label className="cbf-ticket-field">
-                      <span className="cbf-ticket-type">Installation</span>
-                      <span className="cbf-ticket-input-wrap">
-                        <input
-                          className="cbf-ticket-input cbf-ticket-input--dispute"
-                          disabled={installTickets === 0}
-                          max={installTickets}
-                          min="0"
-                          type="number"
-                          value={String(disputedInstall)}
-                          onChange={(event) => setValues({ ...values, disputed_install: String(Math.max(0, Math.min(installTickets, Number(event.target.value) || 0))) })}
-                        />
-                      </span>
-                    </label>
-                  </div>
-                  <div className="cbf-ticket-card cbf-ticket-card--dispute">
-                    <label className="cbf-ticket-field">
-                      <span className="cbf-ticket-type">Repair</span>
-                      <span className="cbf-ticket-input-wrap">
-                        <input
-                          className="cbf-ticket-input cbf-ticket-input--dispute"
-                          disabled={repairTickets === 0}
-                          max={repairTickets}
-                          min="0"
-                          type="number"
-                          value={String(disputedRepair)}
-                          onChange={(event) => setValues({ ...values, disputed_repair: String(Math.max(0, Math.min(repairTickets, Number(event.target.value) || 0))) })}
-                        />
-                      </span>
-                    </label>
-                  </div>
-                  <div className="cbf-ticket-card cbf-ticket-card--dispute">
-                    <label className="cbf-ticket-field">
-                      <span className="cbf-ticket-type">Nap Rehab</span>
-                      <span className="cbf-ticket-input-wrap">
-                        <input
-                          className="cbf-ticket-input cbf-ticket-input--dispute"
-                          disabled={napRehabTickets === 0}
-                          max={napRehabTickets}
-                          min="0"
-                          type="number"
-                          value={String(disputedNapRehab)}
-                          onChange={(event) => setValues({ ...values, disputed_nap_rehab: String(Math.max(0, Math.min(napRehabTickets, Number(event.target.value) || 0))) })}
-                        />
-                      </span>
-                    </label>
-                  </div>
-                </div>
-              </section>
+            </div>
+          )}
 
+          {step === 3 && (
+            <div className="cbf-step-panel">
               <section className="cbf-section cbf-section-card">
                 <div className="cbf-section-heading">
                   <p className="cbf-section-label">Subcontractor Tickets</p>
@@ -2163,8 +2280,10 @@ function BillingForm({
                     <span><span className="tbl-label-full">Subcontractor</span><span className="tbl-label-abbr">Subcon</span></span>
                     <span><span className="tbl-label-full">Install</span><span className="tbl-label-abbr">Ins</span></span>
                     <span><span className="tbl-label-full">Repair</span><span className="tbl-label-abbr">Rep</span></span>
+                    <span><span className="tbl-label-full">Nap Rehab</span><span className="tbl-label-abbr">NR</span></span>
                     <span><span className="tbl-label-full">Disputed Install</span><span className="tbl-label-abbr">D.Ins</span></span>
                     <span><span className="tbl-label-full">Disputed Repair</span><span className="tbl-label-abbr">D.Rep</span></span>
+                    <span><span className="tbl-label-full">Disputed Nap Rehab</span><span className="tbl-label-abbr">D.NR</span></span>
                     <span><span className="tbl-label-full">Net Amount</span><span className="tbl-label-abbr">Net</span></span>
                     <span><span className="tbl-label-full">Collectibles Amount</span><span className="tbl-label-abbr">Collect</span></span>
                   </div>
@@ -2174,8 +2293,10 @@ function BillingForm({
                     values.subcon_items.map((item, index) => {
                       const itemInstallTickets = Number(item.install_tickets) || 0;
                       const itemRepairTickets = Number(item.repair_tickets) || 0;
+                      const itemNapRehabTickets = Number(item.nap_rehab_tickets) || 0;
                       const itemDisputedInstall = Math.max(0, Math.min(itemInstallTickets, Number(item.disputed_install) || 0));
                       const itemDisputedRepair = Math.max(0, Math.min(itemRepairTickets, Number(item.disputed_repair) || 0));
+                      const itemDisputedNapRehab = Math.max(0, Math.min(itemNapRehabTickets, Number(item.disputed_nap_rehab) || 0));
                       const computed = computeSubconItem(
                         itemInstallTickets,
                         itemRepairTickets,
@@ -2184,6 +2305,9 @@ function BillingForm({
                         Number(item.installation_rate) || 0,
                         Number(item.repair_rate) || 0,
                         Number(item.payable_pct) || 0,
+                        itemNapRehabTickets,
+                        itemDisputedNapRehab,
+                        Number(item.nap_rehab_rate) || 0,
                       );
                       return (
                         <div className="billing-subcon-form-row" key={item.subcontractor_id}>
@@ -2191,9 +2315,11 @@ function BillingForm({
                             <strong>{item.subcon_name}</strong>
                             <span>Install rate: {currency.format(Number(item.installation_rate) || 0)}</span>
                             <span>Repair rate: {currency.format(Number(item.repair_rate) || 0)}</span>
+                            <span>Nap Rehab rate: {currency.format(Number(item.nap_rehab_rate) || 0)}</span>
                           </div>
                           <div className="billing-subcon-inline-values"><span>{item.install_tickets}</span></div>
                           <div className="billing-subcon-inline-values"><span>{item.repair_tickets}</span></div>
+                          <div className="billing-subcon-inline-values"><span>{item.nap_rehab_tickets}</span></div>
                           <div className="billing-subcon-dispute-cell">
                             <input
                               disabled={itemInstallTickets === 0}
@@ -2214,6 +2340,16 @@ function BillingForm({
                               onChange={(event) => updateSubconItem(index, { disputed_repair: String(Math.max(0, Math.min(itemRepairTickets, Number(event.target.value) || 0))) })}
                             />
                           </div>
+                          <div className="billing-subcon-dispute-cell">
+                            <input
+                              disabled={itemNapRehabTickets === 0}
+                              max={itemNapRehabTickets}
+                              min="0"
+                              type="number"
+                              value={String(itemDisputedNapRehab)}
+                              onChange={(event) => updateSubconItem(index, { disputed_nap_rehab: String(Math.max(0, Math.min(itemNapRehabTickets, Number(event.target.value) || 0))) })}
+                            />
+                          </div>
                           <div className="billing-subcon-amount">
                             <strong>{currency.format(computed.billingAmount)}</strong>
                             <span>{computed.billableTickets} billable tickets</span>
@@ -2232,7 +2368,7 @@ function BillingForm({
             </div>
           )}
 
-          {step === 4 && (
+          {step === 5 && (
             <div className="cbf-step-panel">
               <div className="cbf-invoice">
                 <h3 className="cbf-invoice-title">Billing Statement</h3>
@@ -2313,12 +2449,12 @@ function BillingForm({
             <button className="cbf-btn-cancel" disabled={busy} onClick={onClose} type="button">Cancel</button>
             <div className="cbf-nav-right">
               {step > 1 && (
-                <button className="cbf-btn-back" disabled={busy} key="back" onClick={() => setStep((current) => (current - 1) as 1 | 2 | 3 | 4)} type="button">Back</button>
+                <button className="cbf-btn-back" disabled={busy} key="back" onClick={() => setStep((current) => (current - 1) as BillingWizardStep)} type="button"><ArrowLeft size={15} /> Back</button>
               )}
-              {step < 4 ? (
-                <button className="cbf-btn-next" disabled={busy} key="next" onClick={() => setStep((current) => (current + 1) as 1 | 2 | 3 | 4)} type="button">Next</button>
+              {step < WIZARD_STEPS.length ? (
+                <button className="cbf-btn-next" disabled={busy} key="next" onClick={() => setStep((current) => (current + 1) as BillingWizardStep)} type="button">Continue <ArrowRight size={15} /></button>
               ) : (
-                <button className="cbf-btn-submit" disabled={busy} key="submit" type="submit">{busy ? "Saving..." : initial ? "Update Billing" : "Create Billing"}</button>
+                <button className="cbf-btn-submit" disabled={busy} key="submit" type="submit"><BadgeDollarSign size={16} />{busy ? "Saving..." : initial ? "Update Billing" : "Create Billing"}</button>
               )}
             </div>
           </div>

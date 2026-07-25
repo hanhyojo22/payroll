@@ -197,6 +197,32 @@ export async function getPendingMutations(userId: string) {
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
+export async function retryFailedMutations(userId: string) {
+  const db = await openOfflineDb();
+  const transaction = db.transaction(PENDING_MUTATIONS_STORE, "readwrite");
+  const store = transaction.objectStore(PENDING_MUTATIONS_STORE);
+  const records = await promisifyRequest<PendingMutation[]>(store.getAll());
+  const failed = records.filter((record) => record.userId === userId && record.status === "failed");
+
+  await Promise.all(failed.map((record) => promisifyRequest(store.put({
+    ...record,
+    attempts: 0,
+    lastError: undefined,
+    status: "pending" as const,
+  }))));
+  return failed.length;
+}
+
+export async function discardFailedMutations(userId: string) {
+  const db = await openOfflineDb();
+  const transaction = db.transaction(PENDING_MUTATIONS_STORE, "readwrite");
+  const store = transaction.objectStore(PENDING_MUTATIONS_STORE);
+  const records = await promisifyRequest<PendingMutation[]>(store.getAll());
+  const failed = records.filter((record) => record.userId === userId && record.status === "failed");
+  await Promise.all(failed.map((record) => promisifyRequest(store.delete(record.id))));
+  return failed.length;
+}
+
 export async function deleteMutation(id: string) {
   await withStore(PENDING_MUTATIONS_STORE, "readwrite", (store) => store.delete(id));
 }

@@ -1,6 +1,11 @@
 import { expect, test } from "playwright/test";
 
-const baseURL = "http://127.0.0.1:4173";
+const baseURL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:4173";
+
+test.skip(
+  !process.env.E2E_BASE_URL || process.env.E2E_ALLOW_WRITES !== "true",
+  "Set E2E_BASE_URL and E2E_ALLOW_WRITES=true to run this destructive backend test.",
+);
 
 test("payroll applies salary bond and employee advance deductions", async ({ page }) => {
   const stamp = Date.now();

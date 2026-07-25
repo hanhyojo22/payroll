@@ -9876,7 +9876,7 @@ td {
 .billing-subcon-form-row {
   display: grid;
   gap: 6px;
-  grid-template-columns: minmax(122px, 1.3fr) minmax(44px, 0.35fr) minmax(44px, 0.35fr) minmax(56px, 0.55fr) minmax(56px, 0.55fr) minmax(80px, 0.75fr) minmax(80px, 0.75fr);
+  grid-template-columns: minmax(122px, 1.3fr) repeat(3, minmax(44px, 0.35fr)) repeat(3, minmax(56px, 0.55fr)) repeat(2, minmax(80px, 0.75fr));
   min-width: 0;
   padding: 10px 10px;
 }
@@ -9894,17 +9894,19 @@ td {
 }
 
 .billing-subcon-form-head span:nth-child(2),
-.billing-subcon-form-head span:nth-child(3) {
+.billing-subcon-form-head span:nth-child(3),
+.billing-subcon-form-head span:nth-child(4) {
   text-align: center;
 }
 
-.billing-subcon-form-head span:nth-child(4),
-.billing-subcon-form-head span:nth-child(5) {
-  text-align: center;
-}
-
+.billing-subcon-form-head span:nth-child(5),
 .billing-subcon-form-head span:nth-child(6),
 .billing-subcon-form-head span:nth-child(7) {
+  text-align: center;
+}
+
+.billing-subcon-form-head span:nth-child(8),
+.billing-subcon-form-head span:nth-child(9) {
   text-align: right;
 }
 
@@ -11228,6 +11230,73 @@ td {
   }
 }
 
+.cbf-employee-disputes {
+  align-items: end;
+  background: #fffaf3;
+  border-radius: 12px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(180px, 1fr) repeat(3, minmax(92px, 120px));
+  margin-top: 16px;
+  padding: 14px 16px;
+}
+
+.cbf-employee-disputes > div {
+  display: grid;
+  gap: 3px;
+}
+
+.cbf-employee-disputes strong {
+  color: #7c2d12;
+  font-size: 0.88rem;
+}
+
+.cbf-employee-disputes > div span,
+.cbf-employee-disputes label > span {
+  color: #9a5a29;
+  font-size: 0.72rem;
+}
+
+.cbf-employee-disputes label {
+  display: grid;
+  gap: 5px;
+}
+
+.cbf-employee-disputes input {
+  background: #fff;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  color: #7c2d12;
+  min-height: 38px;
+  padding: 0 10px;
+  width: 100%;
+}
+
+.cbf-employee-disputes input:focus {
+  border-color: #f59e0b;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.12);
+  outline: 0;
+}
+
+.ticket-rate-warning {
+  color: #b45309;
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  margin-top: 3px;
+  white-space: nowrap;
+}
+
+@media (max-width: 700px) {
+  .cbf-employee-disputes {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .cbf-employee-disputes > div {
+    grid-column: 1 / -1;
+  }
+}
+
 @media (max-width: 640px) {
   .cbf-header,
   .cbf-step-panel,
@@ -11326,13 +11395,14 @@ td {
   /* Subcontractor Tickets grid (New Billing): same goal as the employee
      table above — every column visible at once, no horizontal scroll. */
   .billing-subcon-form-scroll {
-    overflow-x: visible;
+    overflow-x: auto;
   }
 
   .billing-subcon-form-head,
   .billing-subcon-form-row {
     column-gap: 3px;
-    grid-template-columns: 1.5fr 0.55fr 0.55fr 0.85fr 0.85fr 1fr 1fr;
+    grid-template-columns: 1.5fr repeat(3, 0.55fr) repeat(3, 0.85fr) repeat(2, 1fr);
+    min-width: 720px;
     padding: 8px 4px;
   }
 
@@ -14374,5 +14444,425 @@ td {
 
   .emp-form-header h1 {
     font-size: var(--font-size-xl);
+  }
+}
+
+/* Modern SaaS billing wizard */
+.modal-backdrop:has(.cbf-modal) {
+  background: rgba(15, 23, 42, 0.58);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.cbf-modal.cbf-modal--compact {
+  background: #f7f9fc;
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  border-radius: 24px;
+  box-shadow: 0 32px 80px rgba(15, 23, 42, 0.24), 0 8px 24px rgba(15, 23, 42, 0.12);
+  max-height: min(92vh, 900px);
+  max-width: 1080px;
+  width: min(94vw, 1080px);
+}
+
+.cbf-header {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.96);
+  border-bottom-color: #e9edf4;
+  padding: 20px 24px;
+}
+
+.cbf-header-main,
+.cbf-title-row {
+  align-items: center;
+  display: flex;
+}
+
+.cbf-header-main { gap: 12px; }
+.cbf-title-row { gap: 10px; }
+
+.cbf-header-icon {
+  align-items: center;
+  background: linear-gradient(145deg, #2563eb, #4f46e5);
+  border-radius: 12px;
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.22);
+  color: #fff;
+  display: flex;
+  height: 42px;
+  justify-content: center;
+  width: 42px;
+}
+
+.cbf-title {
+  color: #111827;
+  font-size: 1.2rem;
+  letter-spacing: -0.025em;
+}
+
+.cbf-eyebrow {
+  color: #64748b;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.cbf-status-pill,
+.cbf-optional-pill,
+.cbf-lock-pill {
+  background: #eef2ff;
+  border: 1px solid #e0e7ff;
+  border-radius: 999px;
+  color: #4f46e5;
+  display: inline-flex;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 4px 8px;
+  text-transform: uppercase;
+}
+
+.cbf-close-btn {
+  background: #f8fafc;
+  border: 1px solid #e8edf4;
+  border-radius: 10px;
+  color: #64748b;
+}
+
+.cbf-close-btn:hover {
+  background: #f1f5f9;
+  border-color: #dce3ec;
+  color: #0f172a;
+}
+
+.cbf-form { background: #f7f9fc; }
+
+.cbf-stepper {
+  background: #fff;
+  border-bottom: 1px solid #e9edf4;
+  gap: 8px;
+  justify-content: flex-start;
+  padding: 14px 24px;
+}
+
+.cbf-step {
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  flex: 1 1 0;
+  flex-direction: row;
+  gap: 9px;
+  justify-content: center;
+  max-width: none;
+  min-height: 42px;
+  padding: 7px 10px;
+}
+
+.cbf-step:hover:not(:disabled) { background: #f8fafc; }
+.cbf-step-line { display: none; }
+
+.cbf-step-circle {
+  background: #f1f5f9;
+  border: 0;
+  color: #64748b;
+  flex: 0 0 auto;
+  height: 26px;
+  width: 26px;
+}
+
+.cbf-step-label {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 650;
+  text-align: left;
+}
+
+.cbf-step--active {
+  background: #eff6ff;
+  border-color: #dbeafe;
+}
+
+.cbf-step--active .cbf-step-circle {
+  background: #2563eb;
+  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.22);
+}
+
+.cbf-step--active .cbf-step-label { color: #1d4ed8; }
+.cbf-step--done .cbf-step-circle { background: #10b981; border-color: #10b981; }
+.cbf-step--done .cbf-step-label { color: #334155; }
+
+.cbf-step-intro {
+  align-items: center;
+  display: flex;
+  flex-shrink: 0;
+  justify-content: space-between;
+  padding: 22px 28px 8px;
+}
+
+.cbf-step-kicker {
+  color: #2563eb;
+  display: block;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+}
+
+.cbf-step-intro h4 {
+  color: #0f172a;
+  font-size: 1.18rem;
+  letter-spacing: -0.025em;
+  margin: 0;
+}
+
+.cbf-step-intro p {
+  color: #64748b;
+  font-size: 12px;
+  margin: 4px 0 0;
+}
+
+.cbf-period-chip {
+  align-items: center;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  color: #475569;
+  display: grid;
+  gap: 0 8px;
+  grid-template-columns: auto auto;
+  padding: 9px 12px;
+}
+
+.cbf-period-chip svg { grid-row: 1 / span 2; color: #2563eb; }
+.cbf-period-chip span { color: #0f172a; font-size: 12px; font-weight: 700; }
+.cbf-period-chip small { color: #64748b; font-size: 10px; }
+
+.cbf-step-panel {
+  gap: 16px;
+  padding: 16px 28px 28px;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+.cbf-step-panel--narrow { max-width: 760px; }
+
+.cbf-section-card {
+  border-color: #e7ebf1;
+  border-radius: 16px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03), 0 8px 24px rgba(15, 23, 42, 0.035);
+  padding: 20px;
+}
+
+.cbf-section-label { color: #334155; font-size: 11px; }
+.cbf-section-description { color: #64748b; font-size: 12px; margin: 5px 0 0; }
+.cbf-notes-label { align-items: center; display: flex; flex-wrap: wrap; gap: 7px; }
+.cbf-notes-label .cbf-textarea { flex-basis: 100%; }
+
+.cbf-select,
+.cbf-input,
+.cbf-textarea {
+  background: #fff;
+  border: 1px solid #dce3ec;
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+}
+
+.cbf-select,
+.cbf-input { height: 44px; }
+
+.cbf-select:focus,
+.cbf-input:focus,
+.cbf-textarea:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+}
+
+.cbf-half-btn {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  min-height: 44px;
+}
+
+.cbf-half-btn--active {
+  background: #eff6ff;
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.08);
+  color: #1d4ed8;
+}
+
+.billing-ticket-source-card {
+  background: #fff;
+  border-color: #e7ebf1;
+  border-radius: 14px;
+  min-height: 104px;
+  padding: 14px;
+}
+
+.billing-ticket-source-total { font-size: 1.5rem; }
+.billing-ticket-source-breakdown { grid-template-columns: repeat(3, auto); margin-top: auto; }
+
+.cbf-ticket-card {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+  border-radius: 12px;
+}
+
+.cbf-ticket-card--dispute { background: #fffaf5; border-color: #fed7aa; }
+.cbf-ticket-input-wrap { border-color: #e2e8f0; border-radius: 9px; }
+
+.billing-subcon-form-table,
+.cbf-invoice {
+  border-color: #e7ebf1;
+  border-radius: 16px;
+  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.05);
+}
+
+.cbf-invoice { max-width: 760px; padding: 34px 38px; }
+.cbf-invoice-title { color: #0f172a; font-size: 1.35rem; letter-spacing: -0.03em; }
+.cbf-invoice-grand-row td { background: #eff6ff; color: #1d4ed8; }
+
+.cbf-actions {
+  background: rgba(255, 255, 255, 0.96);
+  border-top-color: #e7ebf1;
+  padding: 14px 24px;
+}
+
+.cbf-btn-cancel,
+.cbf-btn-back,
+.cbf-btn-next,
+.cbf-btn-submit {
+  align-items: center;
+  border-radius: 10px;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 700;
+  gap: 7px;
+  justify-content: center;
+  min-height: 42px;
+  padding: 0 17px;
+}
+
+.cbf-btn-next,
+.cbf-btn-submit {
+  background: linear-gradient(135deg, #2563eb, #4f46e5);
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.22);
+}
+
+.cbf-btn-next:hover:not(:disabled),
+.cbf-btn-submit:hover:not(:disabled) {
+  box-shadow: 0 10px 22px rgba(37, 99, 235, 0.28);
+  opacity: 1;
+  transform: translateY(-1px);
+}
+@media (max-width: 760px) {
+  .cbf-modal.cbf-modal--compact { border-radius: 20px 20px 0 0; width: 100%; }
+  .cbf-header { padding: 16px 18px; }
+  .cbf-header-icon { height: 38px; width: 38px; }
+  .cbf-status-pill { display: none; }
+  .cbf-stepper { gap: 4px; padding: 10px 12px; }
+  .cbf-step { min-height: 38px; padding: 6px; }
+  .cbf-step-label { display: none; }
+  .cbf-step-circle { height: 27px; width: 27px; }
+  .cbf-step-intro { align-items: flex-start; gap: 12px; padding: 18px 18px 6px; }
+  .cbf-step-intro p { max-width: 230px; }
+  .cbf-period-chip { padding: 8px 10px; }
+  .cbf-period-chip small { display: none; }
+  .cbf-step-panel { padding: 14px 18px 22px; }
+  .cbf-section-card { border-radius: 14px; padding: 16px; }
+  .billing-ticket-source-breakdown { grid-template-columns: 1fr; }
+  .cbf-actions { padding: 12px 18px; }
+  .cbf-btn-cancel { padding: 0 13px; }
+}
+
+@media (max-width: 430px) {
+  .cbf-period-chip { display: none; }
+  .cbf-step-intro p { max-width: none; }
+  .cbf-title { font-size: 1.05rem; }
+  .cbf-eyebrow { font-size: 11px; }
+  .cbf-nav-right { gap: 7px; }
+  .cbf-btn-back,
+  .cbf-btn-next,
+  .cbf-btn-submit { padding: 0 12px; }
+}
+
+/* Flatter Company & Disputes fields */
+.cbf-section--sources {
+  padding: 16px 18px;
+}
+
+.cbf-section--sources .billing-ticket-source-grid {
+  background: #f8fafc;
+  border-radius: 12px;
+  gap: 0;
+  overflow: hidden;
+}
+
+.cbf-section--sources .billing-ticket-source-card {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  border-right: 1px solid #e8edf4;
+  min-height: 94px;
+  padding: 12px 14px;
+}
+
+.cbf-section--sources .billing-ticket-source-card:last-child {
+  border-right: 0;
+}
+
+.cbf-section--sources .billing-ticket-source-card.emphasis {
+  background: #eef5ff;
+}
+
+.cbf-section--company .cbf-ticket-pair {
+  gap: 12px;
+}
+
+.cbf-section--company .cbf-ticket-card,
+.cbf-section--company .cbf-ticket-card--dispute {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+}
+
+.cbf-section--company .cbf-ticket-input-wrap {
+  background: #f1f5f9;
+  border: 0;
+  border-radius: 10px;
+  box-shadow: none;
+  min-height: 48px;
+}
+
+.cbf-section--company .cbf-ticket-card--dispute .cbf-ticket-input-wrap {
+  background: #fff7ed;
+}
+
+.cbf-section--company .cbf-ticket-input-wrap:focus-within {
+  border: 0;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.13);
+}
+
+.cbf-section--company .cbf-ticket-card--dispute .cbf-ticket-input-wrap:focus-within {
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.14);
+}
+
+.cbf-section--company .cbf-ticket-pair + .cbf-section-heading {
+  margin-top: 22px;
+}
+
+@media (max-width: 980px) {
+  .cbf-section--sources .billing-ticket-source-card {
+    border-bottom: 1px solid #e8edf4;
+    border-right: 0;
+  }
+
+  .cbf-section--sources .billing-ticket-source-card:last-child {
+    border-bottom: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .cbf-section--company .cbf-ticket-pair {
+    gap: 14px;
   }
 }

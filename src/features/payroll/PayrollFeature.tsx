@@ -190,6 +190,7 @@ function salaryBondTransactionPayloadsForDeductions(
   paidDate: string,
 ) {
   return deductions.map(({ amount, bond }) => ({
+    id: crypto.randomUUID(),
     user_id: bond.user_id,
     salary_bond_id: bond.id,
     employee_id: bond.employee_id,
@@ -227,6 +228,7 @@ function salaryBondTransactionPayloadsForItemDeductions(
     deductions
       .filter(({ bond }) => !salaryBondHasDeductionForItem(bond, itemId))
       .map(({ amount, bond }) => ({
+        id: crypto.randomUUID(),
         user_id: bond.user_id,
         salary_bond_id: bond.id,
         employee_id: bond.employee_id,
@@ -643,108 +645,13 @@ export function PayrollFeature({
       return;
     }
 
-    const runResult = await supabase.from("payroll_runs").insert(runPayload).select().single();
-    if (runResult.error) {
-      if (isOfflineLikeError(runResult.error)) {
-        const offlineRunId = crypto.randomUUID();
-        const offlineRun = {
-          ...runPayload,
-          id: offlineRunId,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        } as PayrollRun;
-        const periodDailyEntries = dailyTicketEntriesForPayrollPeriod(
-          dailyTicketEntries,
-          offlineRun.period_month,
-          offlineRun.period_year,
-          offlineRun.pay_period,
-        );
-        const employeePayrollItems = activeTeamEmployees.map((employee) =>
-          payrollItemPayloadForEmployeeWithEmployeeAdvances(
-            employee,
-            positions.find((position) => position.id === employee.position_id),
-            offlineRun.id,
-            userId,
-            periodDailyEntries,
-            employeeAdvances,
-            salaryBonds,
-            resolvedPayrollSettings,
-            offlineRun.generated_date,
-            attendanceEntries,
-            offlineRun.period_month,
-            offlineRun.period_year,
-            offlineRun.pay_period,
-          ),
-        );
-        const { detailPayloads, itemPayloads, items: offlineItems } = createOfflinePayrollItems(employeePayrollItems.map((item) => item.payload));
-        const employeeAdvanceUpdates = employeeAdvanceUpdatesForDeductions(
-          employeePayrollItems.flatMap((item) => item.advanceDeductions),
-        );
-        const salaryBondTransactionPayloads = salaryBondTransactionPayloadsForDeductions(
-          employeePayrollItems.flatMap((item) => item.bondDeductions),
-          offlineRun.id,
-          offlineRun.generated_date,
-        );
-
-        reportProgress({
-          title: "Generating payroll",
-          description: "Queueing payroll for sync.",
-          completed: 2,
-          total: 4,
-        });
-        await onQueueOfflineMutation({
-          resource: "payrollRuns",
-          affectedResources: ["payrollRuns", "payrollHistory", "employeeAdvances", "salaryBonds", "dashboardSummary"],
-          operation: "payroll_group",
-          table: "payroll_runs",
-          payload: {
-            runPayload: offlineRun,
-            itemPayloads,
-            detailPayloads,
-            employeeAdvanceUpdates,
-            salaryBondTransactionPayloads,
-          },
-        });
-        reportProgress({
-          title: "Generating payroll",
-          description: "Syncing payroll expense record.",
-          completed: 3,
-          total: 4,
-        });
-        await syncPayrollExpense(offlineRun, itemPayloads);
-        onLocalPayrollRunsChange([
-          { ...offlineRun, items: offlineItems },
-          ...payrollRuns,
-        ]);
-        setFormOpen(false);
-        setSelectedRunId(offlineRunId);
-        reportProgress(null);
-        return;
-      }
-      const errMsg = `${runResult.error.message ?? ""} ${runResult.error.details ?? ""}`.toLowerCase();
-      if (errMsg.includes("duplicate key") || errMsg.includes("payroll_runs_user_id_period")) {
-        await onChange();
-        const existing = await supabase
-          .from("payroll_runs")
-          .select("id")
-          .eq("period_month", runPayload.period_month)
-          .eq("period_year", runPayload.period_year)
-          .eq("pay_period", runPayload.pay_period)
-          .single();
-        if (existing.data) {
-          setSelectedRunId(existing.data.id);
-          setFormOpen(false);
-          NotificationService.showSuccess("Payroll for this pay period already exists and has been selected.");
-        } else {
-          NotificationService.showError(friendlyError(runResult.error));
-        }
-        return;
-      }
-      NotificationService.showError(friendlyError(runResult.error));
-      return;
-    }
-
-    const newRun = runResult.data as PayrollRun;
+    const now = new Date().toISOString();
+    const newRun = {
+      ...runPayload,
+      id: crypto.randomUUID(),
+      created_at: now,
+      updated_at: now,
+    } as PayrollRun;
     const periodDailyEntries = dailyTicketEntriesForPayrollPeriod(
       dailyTicketEntries,
       newRun.period_month,
@@ -768,36 +675,70 @@ export function PayrollFeature({
         newRun.pay_period,
       ),
     );
-    const itemPayloads = employeePayrollItems.map((item) => item.payload);
-    const advanceDeductions = employeePayrollItems.flatMap((item) => item.advanceDeductions);
-    const bondDeductions = employeePayrollItems.flatMap((item) => item.bondDeductions);
-    reportProgress({
-      title: "Generating payroll",
-      description: "Applying deductions.",
-      completed: 2,
-      total: 4,
-    });
-    // Apply the deduction ledger writes before creating any payroll item, so an item is
-    // never inserted showing a deduction that never actually happened against the
-    // employee's advance balance / salary bond.
-    const ledgerError = await applyPayrollDeductionLedger(
-      advanceDeductions,
-      salaryBondTransactionPayloadsForDeductions(bondDeductions, newRun.id, newRun.generated_date),
+    const { detailPayloads, itemPayloads, items: savedItems } = createOfflinePayrollItems(employeePayrollItems.map((item) => item.payload));
+    const employeeAdvanceUpdates = employeeAdvanceUpdatesForDeductions(
+      employeePayrollItems.flatMap((item) => item.advanceDeductions),
     );
-    if (ledgerError) {
-      NotificationService.showError(friendlyError(ledgerError));
-      return;
-    }
+    const salaryBondTransactionPayloads = salaryBondTransactionPayloadsForDeductions(
+      employeePayrollItems.flatMap((item) => item.bondDeductions),
+      newRun.id,
+      newRun.generated_date,
+    );
 
     reportProgress({
       title: "Generating payroll",
-      description: "Saving payroll items.",
-      completed: 3,
+      description: "Saving payroll and deductions in one transaction.",
+      completed: 2,
       total: 4,
     });
-    const itemResult = await insertPayrollItems(itemPayloads);
-    if (itemResult.error) {
-      NotificationService.showError(friendlyError(itemResult.error));
+    const runResult = await supabase.rpc("save_payroll_bundle", {
+      run_payload: newRun,
+      item_payloads: itemPayloads,
+      detail_payloads: detailPayloads,
+      advance_updates: employeeAdvanceUpdates,
+      bond_payloads: salaryBondTransactionPayloads,
+    });
+    if (runResult.error) {
+      if (isOfflineLikeError(runResult.error)) {
+        await onQueueOfflineMutation({
+          resource: "payrollRuns",
+          affectedResources: ["payrollRuns", "payrollHistory", "employeeAdvances", "salaryBonds", "dashboardSummary"],
+          operation: "payroll_group",
+          table: "payroll_runs",
+          payload: {
+            runPayload: newRun,
+            itemPayloads,
+            detailPayloads,
+            employeeAdvanceUpdates,
+            salaryBondTransactionPayloads,
+          },
+        });
+        onLocalPayrollRunsChange([{ ...newRun, items: savedItems }, ...payrollRuns]);
+        setFormOpen(false);
+        setSelectedRunId(newRun.id);
+        reportProgress(null);
+        return;
+      }
+      const errMsg = `${runResult.error.message ?? ""} ${runResult.error.details ?? ""}`.toLowerCase();
+      if (errMsg.includes("duplicate key") || errMsg.includes("payroll_runs_user_id_period")) {
+        await onChange();
+        const existing = await supabase
+          .from("payroll_runs")
+          .select("id")
+          .eq("period_month", runPayload.period_month)
+          .eq("period_year", runPayload.period_year)
+          .eq("pay_period", runPayload.pay_period)
+          .single();
+        if (existing.data) {
+          setSelectedRunId(existing.data.id);
+          setFormOpen(false);
+          NotificationService.showSuccess("Payroll for this pay period already exists and has been selected.");
+        } else {
+          NotificationService.showError(friendlyError(runResult.error));
+        }
+        return;
+      }
+      NotificationService.showError(friendlyError(runResult.error));
       return;
     }
 
@@ -936,49 +877,42 @@ export function PayrollFeature({
       selectedRun.id,
       selectedRun.generated_date,
     );
+    const {
+      detailPayloads,
+      itemPayloads: savedItemPayloads,
+      items: savedItems,
+    } = createOfflinePayrollItems(itemPayloads);
     if (!navigator.onLine) {
-      const { detailPayloads, itemPayloads: offlineItemPayloads, items: offlineItems } = createOfflinePayrollItems(itemPayloads);
       onLocalPayrollRunsChange(payrollRuns.map((run) =>
-        run.id === selectedRun.id ? { ...run, items: [...run.items, ...offlineItems] } : run,
+        run.id === selectedRun.id ? { ...run, items: [...run.items, ...savedItems] } : run,
       ));
       await onQueueOfflineMutation({
         resource: "payrollRuns",
         affectedResources: ["payrollRuns", "payrollHistory", "employeeAdvances", "salaryBonds", "dashboardSummary"],
         operation: "payroll_items_group",
         table: "payroll_run_items",
-        payload: { itemPayloads: offlineItemPayloads, detailPayloads, employeeAdvanceUpdates, salaryBondTransactionPayloads },
+        payload: { itemPayloads: savedItemPayloads, detailPayloads, employeeAdvanceUpdates, salaryBondTransactionPayloads },
       });
       await syncPayrollExpense(selectedRun, [...selectedRun.items, ...itemPayloads]);
       return;
     }
-    // Apply the deduction ledger writes before creating any payroll item, so an item is
-    // never inserted showing a deduction that never actually happened against the
-    // employee's advance balance / salary bond.
-    const ledgerError = await applyPayrollDeductionLedger(
-      employeePayrollItems.flatMap((item) => item.advanceDeductions),
-      salaryBondTransactionPayloads,
-    );
-    if (ledgerError) {
-      NotificationService.showError(friendlyError(ledgerError));
-      return;
-    }
-
-    const { error } = await insertPayrollItems(itemPayloads);
+    const { error } = await supabase.rpc("save_payroll_items_bundle", {
+      item_payloads: savedItemPayloads,
+      detail_payloads: detailPayloads,
+      advance_updates: employeeAdvanceUpdates,
+      bond_payloads: salaryBondTransactionPayloads,
+    });
     if (error) {
       if (isOfflineLikeError(error)) {
-        // The deduction ledger was already applied above (online), so the queued
-        // composite mutation must only create the items on sync, not reapply the
-        // advance/bond ledger writes a second time.
-        const { detailPayloads, itemPayloads: offlineItemPayloads, items: offlineItems } = createOfflinePayrollItems(itemPayloads);
         onLocalPayrollRunsChange(payrollRuns.map((run) =>
-          run.id === selectedRun.id ? { ...run, items: [...run.items, ...offlineItems] } : run,
+          run.id === selectedRun.id ? { ...run, items: [...run.items, ...savedItems] } : run,
         ));
         await onQueueOfflineMutation({
           resource: "payrollRuns",
           affectedResources: ["payrollRuns", "payrollHistory", "employeeAdvances", "salaryBonds", "dashboardSummary"],
           operation: "payroll_items_group",
           table: "payroll_run_items",
-          payload: { itemPayloads: offlineItemPayloads, detailPayloads, employeeAdvanceUpdates: [], salaryBondTransactionPayloads: [] },
+          payload: { itemPayloads: savedItemPayloads, detailPayloads, employeeAdvanceUpdates, salaryBondTransactionPayloads },
         });
         await syncPayrollExpense(selectedRun, [...selectedRun.items, ...itemPayloads]);
         return;
@@ -1828,4 +1762,3 @@ function PayrollRunForm({
     </Modal>
   );
 }
-

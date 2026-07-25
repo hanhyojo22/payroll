@@ -1622,6 +1622,7 @@ create table if not exists public.subcontractors (
   name text not null,
   installation_rate numeric(12, 2) not null default 0 check (installation_rate >= 0),
   repair_rate numeric(12, 2) not null default 0 check (repair_rate >= 0),
+  nap_rehab_rate numeric(12, 2) not null default 0 check (nap_rehab_rate >= 0),
   payable_pct integer not null default 30 check (payable_pct >= 0 and payable_pct <= 100),
   status text not null default 'active' check (status in ('active', 'archived')),
   email text not null default '',
@@ -1761,10 +1762,13 @@ create table if not exists public.subcon_daily_tickets (
   subcon_name text not null,
   install_tickets integer not null default 0 check (install_tickets >= 0),
   repair_tickets integer not null default 0 check (repair_tickets >= 0),
+  nap_rehab_tickets integer not null default 0 check (nap_rehab_tickets >= 0),
   disputed_install integer not null default 0 check (disputed_install >= 0),
   disputed_repair integer not null default 0 check (disputed_repair >= 0),
+  disputed_nap_rehab integer not null default 0 check (disputed_nap_rehab >= 0),
   installation_rate numeric(12, 2) not null default 0,
   repair_rate numeric(12, 2) not null default 0,
+  nap_rehab_rate numeric(12, 2) not null default 0,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (user_id, entry_date, subcontractor_id)
@@ -1812,10 +1816,13 @@ create table if not exists public.billing_subcon_items (
   subcon_name text not null,
   install_tickets integer not null default 0 check (install_tickets >= 0),
   repair_tickets integer not null default 0 check (repair_tickets >= 0),
+  nap_rehab_tickets integer not null default 0 check (nap_rehab_tickets >= 0),
   disputed_install integer not null default 0 check (disputed_install >= 0),
   disputed_repair integer not null default 0 check (disputed_repair >= 0),
+  disputed_nap_rehab integer not null default 0 check (disputed_nap_rehab >= 0),
   installation_rate numeric(12, 2) not null default 0,
   repair_rate numeric(12, 2) not null default 0,
+  nap_rehab_rate numeric(12, 2) not null default 0,
   billable_tickets integer not null default 0,
   billing_amount numeric(12, 2) not null default 0,
   payable_pct integer not null default 30,
@@ -2343,8 +2350,7 @@ alter table public.subcontractors add column if not exists address text not null
 -- or ticket columns for them -- the company was paying employees for this work without
 -- ever invoicing the client for it. Add a rate to billing_settings and ticket/dispute
 -- columns to billing_records so Nap Rehab flows through billing the same way
--- Installation/Repair already do. Subcontractors don't perform Nap Rehab tickets, so no
--- equivalent column is added to subcontractors/billing_subcon_items.
+-- Installation/Repair already do.
 alter table public.billing_settings
 add column if not exists nap_rehab_rate numeric(12, 2) not null default 0 check (nap_rehab_rate >= 0);
 
@@ -2378,3 +2384,574 @@ set installation_rate = coalesce((select bs.installation_rate from public.billin
     repair_rate = coalesce((select bs.repair_rate from public.billing_settings bs where bs.user_id = billing_records.user_id), 0),
     nap_rehab_rate = coalesce((select bs.nap_rehab_rate from public.billing_settings bs where bs.user_id = billing_records.user_id), 0)
 where installation_rate = 0 and repair_rate = 0 and nap_rehab_rate = 0;
+
+-- Subcontractor Nap Rehab support. Rates are stored on the subcontractor, snapshotted
+-- onto daily entries and billing items, and disputes are tracked per ticket type.
+alter table public.subcontractors
+add column if not exists nap_rehab_rate numeric(12, 2) not null default 0 check (nap_rehab_rate >= 0);
+
+alter table public.subcon_daily_tickets
+add column if not exists nap_rehab_tickets integer not null default 0 check (nap_rehab_tickets >= 0),
+add column if not exists disputed_nap_rehab integer not null default 0 check (disputed_nap_rehab >= 0),
+add column if not exists nap_rehab_rate numeric(12, 2) not null default 0 check (nap_rehab_rate >= 0);
+
+alter table public.billing_subcon_items
+add column if not exists nap_rehab_tickets integer not null default 0 check (nap_rehab_tickets >= 0),
+add column if not exists disputed_nap_rehab integer not null default 0 check (disputed_nap_rehab >= 0),
+add column if not exists nap_rehab_rate numeric(12, 2) not null default 0 check (nap_rehab_rate >= 0);
+
+-- Atomic financial bundles. Each function runs in one PostgreSQL transaction, so a
+-- failed child write rolls back the run/invoice and every ledger update with it.
+create or replace function public.save_payroll_bundle(
+  run_payload jsonb,
+  item_payloads jsonb,
+  detail_payloads jsonb default '[]'::jsonb,
+  advance_updates jsonb default '[]'::jsonb,
+  bond_payloads jsonb default '[]'::jsonb
+)
+returns void
+language plpgsql
+set search_path = public
+as $$
+declare
+  run_row public.payroll_runs%rowtype;
+  item_row public.payroll_run_items%rowtype;
+  detail_row public.payroll_run_item_ticket_details%rowtype;
+  bond_row public.employee_salary_bond_transactions%rowtype;
+  entry jsonb;
+  affected integer;
+begin
+  if auth.uid() is null then raise exception 'Authentication required.'; end if;
+  if (run_payload->>'user_id')::uuid <> auth.uid() then raise exception 'Payroll owner mismatch.'; end if;
+  if exists (
+    select 1 from public.payroll_runs
+    where id = (run_payload->>'id')::uuid and user_id = auth.uid()
+  ) then
+    return;
+  end if;
+
+  select * into run_row
+  from jsonb_populate_record(
+    null::public.payroll_runs,
+    run_payload || jsonb_build_object(
+      'created_at', coalesce(run_payload->>'created_at', now()::text),
+      'updated_at', coalesce(run_payload->>'updated_at', now()::text)
+    )
+  );
+  insert into public.payroll_runs select (run_row).*;
+
+  for entry in select value from jsonb_array_elements(coalesce(item_payloads, '[]'::jsonb))
+  loop
+    if (entry->>'user_id')::uuid <> auth.uid() or (entry->>'payroll_run_id')::uuid <> run_row.id then
+      raise exception 'Payroll item ownership mismatch.';
+    end if;
+    select * into item_row
+    from jsonb_populate_record(
+      null::public.payroll_run_items,
+      entry || jsonb_build_object(
+        'created_at', coalesce(entry->>'created_at', now()::text),
+        'updated_at', coalesce(entry->>'updated_at', now()::text)
+      )
+    );
+    insert into public.payroll_run_items select (item_row).*;
+  end loop;
+
+  for entry in select value from jsonb_array_elements(coalesce(detail_payloads, '[]'::jsonb))
+  loop
+    if (entry->>'user_id')::uuid <> auth.uid() then raise exception 'Payroll detail owner mismatch.'; end if;
+    select * into detail_row
+    from jsonb_populate_record(
+      null::public.payroll_run_item_ticket_details,
+      entry || jsonb_build_object('created_at', coalesce(entry->>'created_at', now()::text))
+    );
+    insert into public.payroll_run_item_ticket_details select (detail_row).*;
+  end loop;
+
+  for entry in select value from jsonb_array_elements(coalesce(advance_updates, '[]'::jsonb))
+  loop
+    update public.employee_advances
+    set
+      balance = (entry->'payload'->>'balance')::numeric,
+      status = entry->'payload'->>'status'
+    where id = (entry->>'id')::uuid and user_id = auth.uid();
+    get diagnostics affected = row_count;
+    if affected <> 1 then raise exception 'Employee advance not found or not owned by current user.'; end if;
+  end loop;
+
+  for entry in select value from jsonb_array_elements(coalesce(bond_payloads, '[]'::jsonb))
+  loop
+    if (entry->>'user_id')::uuid <> auth.uid() then raise exception 'Salary bond transaction owner mismatch.'; end if;
+    select * into bond_row
+    from jsonb_populate_record(
+      null::public.employee_salary_bond_transactions,
+      entry || jsonb_build_object(
+        'note', coalesce(entry->>'note', ''),
+        'is_void', coalesce((entry->>'is_void')::boolean, false),
+        'void_reason', coalesce(entry->>'void_reason', ''),
+        'created_at', coalesce(entry->>'created_at', now()::text),
+        'updated_at', coalesce(entry->>'updated_at', now()::text)
+      )
+    );
+    insert into public.employee_salary_bond_transactions select (bond_row).*;
+  end loop;
+end;
+$$;
+
+revoke all on function public.save_payroll_bundle(jsonb, jsonb, jsonb, jsonb, jsonb) from public;
+grant execute on function public.save_payroll_bundle(jsonb, jsonb, jsonb, jsonb, jsonb) to authenticated;
+
+create or replace function public.save_payroll_items_bundle(
+  item_payloads jsonb,
+  detail_payloads jsonb default '[]'::jsonb,
+  advance_updates jsonb default '[]'::jsonb,
+  bond_payloads jsonb default '[]'::jsonb
+)
+returns void
+language plpgsql
+set search_path = public
+as $$
+declare
+  item_row public.payroll_run_items%rowtype;
+  detail_row public.payroll_run_item_ticket_details%rowtype;
+  bond_row public.employee_salary_bond_transactions%rowtype;
+  entry jsonb;
+  affected integer;
+  first_item_id uuid;
+begin
+  if auth.uid() is null then raise exception 'Authentication required.'; end if;
+  select (value->>'id')::uuid into first_item_id
+  from jsonb_array_elements(coalesce(item_payloads, '[]'::jsonb))
+  limit 1;
+  if first_item_id is not null and exists (
+    select 1 from public.payroll_run_items where id = first_item_id and user_id = auth.uid()
+  ) then
+    return;
+  end if;
+
+  for entry in select value from jsonb_array_elements(coalesce(item_payloads, '[]'::jsonb))
+  loop
+    if (entry->>'user_id')::uuid <> auth.uid() then raise exception 'Payroll item owner mismatch.'; end if;
+    select * into item_row
+    from jsonb_populate_record(
+      null::public.payroll_run_items,
+      entry || jsonb_build_object(
+        'created_at', coalesce(nullif(entry->>'created_at', ''), now()::text),
+        'updated_at', coalesce(nullif(entry->>'updated_at', ''), now()::text)
+      )
+    );
+    insert into public.payroll_run_items select (item_row).*;
+  end loop;
+
+  for entry in select value from jsonb_array_elements(coalesce(detail_payloads, '[]'::jsonb))
+  loop
+    if (entry->>'user_id')::uuid <> auth.uid() then raise exception 'Payroll detail owner mismatch.'; end if;
+    select * into detail_row
+    from jsonb_populate_record(
+      null::public.payroll_run_item_ticket_details,
+      entry || jsonb_build_object('created_at', coalesce(nullif(entry->>'created_at', ''), now()::text))
+    );
+    insert into public.payroll_run_item_ticket_details select (detail_row).*;
+  end loop;
+
+  for entry in select value from jsonb_array_elements(coalesce(advance_updates, '[]'::jsonb))
+  loop
+    update public.employee_advances
+    set balance = (entry->'payload'->>'balance')::numeric, status = entry->'payload'->>'status'
+    where id = (entry->>'id')::uuid and user_id = auth.uid();
+    get diagnostics affected = row_count;
+    if affected <> 1 then raise exception 'Employee advance not found or not owned by current user.'; end if;
+  end loop;
+
+  for entry in select value from jsonb_array_elements(coalesce(bond_payloads, '[]'::jsonb))
+  loop
+    if (entry->>'user_id')::uuid <> auth.uid() then raise exception 'Salary bond transaction owner mismatch.'; end if;
+    select * into bond_row
+    from jsonb_populate_record(
+      null::public.employee_salary_bond_transactions,
+      entry || jsonb_build_object(
+        'note', coalesce(entry->>'note', ''),
+        'is_void', coalesce((entry->>'is_void')::boolean, false),
+        'void_reason', coalesce(entry->>'void_reason', ''),
+        'created_at', coalesce(nullif(entry->>'created_at', ''), now()::text),
+        'updated_at', coalesce(nullif(entry->>'updated_at', ''), now()::text)
+      )
+    );
+    insert into public.employee_salary_bond_transactions select (bond_row).*;
+  end loop;
+end;
+$$;
+
+revoke all on function public.save_payroll_items_bundle(jsonb, jsonb, jsonb, jsonb) from public;
+grant execute on function public.save_payroll_items_bundle(jsonb, jsonb, jsonb, jsonb) to authenticated;
+
+create or replace function public.save_billing_bundle(
+  billing_payload jsonb,
+  collection_payloads jsonb,
+  subcon_item_payloads jsonb default '[]'::jsonb,
+  reminder_payloads jsonb default '[]'::jsonb,
+  advance_updates jsonb default '[]'::jsonb
+)
+returns void
+language plpgsql
+set search_path = public
+as $$
+declare
+  billing_row public.billing_records%rowtype;
+  collection_row public.collection_reminders%rowtype;
+  item_row public.billing_subcon_items%rowtype;
+  reminder_row public.payment_reminders%rowtype;
+  entry jsonb;
+  affected integer;
+begin
+  if auth.uid() is null then raise exception 'Authentication required.'; end if;
+  if (billing_payload->>'user_id')::uuid <> auth.uid() then raise exception 'Billing owner mismatch.'; end if;
+
+  for entry in select value from jsonb_array_elements(coalesce(collection_payloads, '[]'::jsonb))
+  loop
+    if (entry->>'user_id')::uuid <> auth.uid() then raise exception 'Collection owner mismatch.'; end if;
+    select * into collection_row
+    from jsonb_populate_record(
+      null::public.collection_reminders,
+      entry || jsonb_build_object(
+        'created_at', coalesce(nullif(entry->>'created_at', ''), now()::text),
+        'updated_at', coalesce(nullif(entry->>'updated_at', ''), now()::text)
+      )
+    );
+    insert into public.collection_reminders select (collection_row).*
+    on conflict (id) do update set
+      title = excluded.title,
+      client_name = excluded.client_name,
+      external_reference = excluded.external_reference,
+      issue_date = excluded.issue_date,
+      amount = excluded.amount,
+      due_date = excluded.due_date,
+      status = excluded.status,
+      notes = excluded.notes;
+  end loop;
+
+  select * into billing_row
+  from jsonb_populate_record(
+    null::public.billing_records,
+    billing_payload || jsonb_build_object(
+      'created_at', coalesce(nullif(billing_payload->>'created_at', ''), now()::text),
+      'updated_at', coalesce(nullif(billing_payload->>'updated_at', ''), now()::text)
+    )
+  );
+  insert into public.billing_records select (billing_row).*
+  on conflict (id) do update set
+    billing_month = excluded.billing_month,
+    billing_year = excluded.billing_year,
+    billing_period = excluded.billing_period,
+    install_tickets = excluded.install_tickets,
+    repair_tickets = excluded.repair_tickets,
+    disputed_install = excluded.disputed_install,
+    disputed_repair = excluded.disputed_repair,
+    nap_rehab_tickets = excluded.nap_rehab_tickets,
+    disputed_nap_rehab = excluded.disputed_nap_rehab,
+    company_install_tickets = excluded.company_install_tickets,
+    company_repair_tickets = excluded.company_repair_tickets,
+    company_disputed_install = excluded.company_disputed_install,
+    company_disputed_repair = excluded.company_disputed_repair,
+    company_nap_rehab_tickets = excluded.company_nap_rehab_tickets,
+    company_disputed_nap_rehab = excluded.company_disputed_nap_rehab,
+    total_tickets = excluded.total_tickets,
+    disputed_tickets = excluded.disputed_tickets,
+    billable_tickets = excluded.billable_tickets,
+    billing_rate = excluded.billing_rate,
+    installation_rate = excluded.installation_rate,
+    repair_rate = excluded.repair_rate,
+    nap_rehab_rate = excluded.nap_rehab_rate,
+    billing_amount = excluded.billing_amount,
+    collections_pct = excluded.collections_pct,
+    collections_amount = excluded.collections_amount,
+    collectibles_amount = excluded.collectibles_amount,
+    collection_id = excluded.collection_id,
+    collectibles_collection_id = excluded.collectibles_collection_id,
+    due_date = excluded.due_date,
+    notes = excluded.notes;
+
+  delete from public.billing_subcon_items existing
+  where existing.billing_record_id = billing_row.id
+    and existing.user_id = auth.uid()
+    and not exists (
+      select 1 from jsonb_array_elements(coalesce(subcon_item_payloads, '[]'::jsonb)) candidate
+      where (candidate->>'id')::uuid = existing.id
+    );
+
+  for entry in select value from jsonb_array_elements(coalesce(subcon_item_payloads, '[]'::jsonb))
+  loop
+    if (entry->>'user_id')::uuid <> auth.uid()
+      or (entry->>'billing_record_id')::uuid <> billing_row.id
+    then
+      raise exception 'Subcontractor billing item ownership mismatch.';
+    end if;
+    select * into item_row
+    from jsonb_populate_record(
+      null::public.billing_subcon_items,
+      entry || jsonb_build_object('created_at', coalesce(nullif(entry->>'created_at', ''), now()::text))
+    );
+    insert into public.billing_subcon_items select (item_row).*
+    on conflict (id) do update set
+      subcon_name = excluded.subcon_name,
+      install_tickets = excluded.install_tickets,
+      repair_tickets = excluded.repair_tickets,
+      nap_rehab_tickets = excluded.nap_rehab_tickets,
+      disputed_install = excluded.disputed_install,
+      disputed_repair = excluded.disputed_repair,
+      disputed_nap_rehab = excluded.disputed_nap_rehab,
+      installation_rate = excluded.installation_rate,
+      repair_rate = excluded.repair_rate,
+      nap_rehab_rate = excluded.nap_rehab_rate,
+      billable_tickets = excluded.billable_tickets,
+      billing_amount = excluded.billing_amount,
+      payable_pct = excluded.payable_pct,
+      payable_amount = excluded.payable_amount,
+      collection_amount = excluded.collection_amount;
+  end loop;
+
+  for entry in select value from jsonb_array_elements(coalesce(reminder_payloads, '[]'::jsonb))
+  loop
+    if (entry->>'user_id')::uuid <> auth.uid() then raise exception 'Payment reminder owner mismatch.'; end if;
+    select * into reminder_row
+    from jsonb_populate_record(
+      null::public.payment_reminders,
+      entry || jsonb_build_object(
+        'created_at', coalesce(nullif(entry->>'created_at', ''), now()::text),
+        'updated_at', coalesce(nullif(entry->>'updated_at', ''), now()::text)
+      )
+    );
+    insert into public.payment_reminders select (reminder_row).*
+    on conflict (billing_subcon_item_id, payout_leg) do update set
+      title = excluded.title,
+      amount = excluded.amount,
+      due_date = excluded.due_date,
+      status = excluded.status,
+      notes = excluded.notes,
+      subcontractor_id = excluded.subcontractor_id,
+      billing_month = excluded.billing_month,
+      billing_year = excluded.billing_year,
+      billing_period = excluded.billing_period;
+  end loop;
+
+  for entry in select value from jsonb_array_elements(coalesce(advance_updates, '[]'::jsonb))
+  loop
+    update public.subcontractor_advances
+    set
+      balance = (entry->'payload'->>'balance')::numeric,
+      status = entry->'payload'->>'status'
+    where id = (entry->>'id')::uuid and user_id = auth.uid();
+    get diagnostics affected = row_count;
+    if affected <> 1 then raise exception 'Subcontractor advance not found or not owned by current user.'; end if;
+  end loop;
+end;
+$$;
+
+revoke all on function public.save_billing_bundle(jsonb, jsonb, jsonb, jsonb, jsonb) from public;
+grant execute on function public.save_billing_bundle(jsonb, jsonb, jsonb, jsonb, jsonb) to authenticated;
+
+create or replace function public.record_expense_payment_bundle(
+  payment_payload jsonb,
+  expense_record_id uuid,
+  expense_patch jsonb
+)
+returns void
+language plpgsql
+set search_path = public
+as $$
+begin
+  if auth.uid() is null then raise exception 'Authentication required.'; end if;
+  if (payment_payload->>'user_id')::uuid <> auth.uid()
+    or (payment_payload->>'expense_id')::uuid <> expense_record_id
+  then
+    raise exception 'Expense payment owner mismatch.';
+  end if;
+
+  insert into public.expense_installment_payments
+    (id, user_id, expense_id, amount, payment_date, payment_method, reference_number, notes)
+  values
+    ((payment_payload->>'id')::uuid, auth.uid(), expense_record_id,
+     (payment_payload->>'amount')::numeric, (payment_payload->>'payment_date')::date,
+     payment_payload->>'payment_method', coalesce(payment_payload->>'reference_number', ''),
+     coalesce(payment_payload->>'notes', ''))
+  on conflict (id) do nothing;
+
+  update public.expenses
+  set
+    status = coalesce(expense_patch->>'status', status),
+    paid_date = case
+      when expense_patch ? 'paid_date' then nullif(expense_patch->>'paid_date', '')::date
+      else paid_date
+    end
+  where id = expense_record_id and user_id = auth.uid();
+  if not found then raise exception 'Expense not found or not owned by current user.'; end if;
+end;
+$$;
+
+revoke all on function public.record_expense_payment_bundle(jsonb, uuid, jsonb) from public;
+grant execute on function public.record_expense_payment_bundle(jsonb, uuid, jsonb) to authenticated;
+
+create or replace function public.record_reminder_payment_bundle(
+  payment_payload jsonb,
+  reminder_record_id uuid,
+  reminder_patch jsonb default '{}'::jsonb
+)
+returns void
+language plpgsql
+set search_path = public
+as $$
+begin
+  if auth.uid() is null then raise exception 'Authentication required.'; end if;
+  if (payment_payload->>'user_id')::uuid <> auth.uid()
+    or (payment_payload->>'payment_reminder_id')::uuid <> reminder_record_id
+  then
+    raise exception 'Payment reminder owner mismatch.';
+  end if;
+
+  insert into public.payment_reminder_payments
+    (id, user_id, payment_reminder_id, amount, payment_date, payment_method, reference_number, notes)
+  values
+    ((payment_payload->>'id')::uuid, auth.uid(), reminder_record_id,
+     (payment_payload->>'amount')::numeric, (payment_payload->>'payment_date')::date,
+     payment_payload->>'payment_method', coalesce(payment_payload->>'reference_number', ''),
+     coalesce(payment_payload->>'notes', ''))
+  on conflict (id) do nothing;
+
+  update public.payment_reminders
+  set status = coalesce(reminder_patch->>'status', status)
+  where id = reminder_record_id and user_id = auth.uid();
+  if not found then raise exception 'Payment reminder not found or not owned by current user.'; end if;
+end;
+$$;
+
+revoke all on function public.record_reminder_payment_bundle(jsonb, uuid, jsonb) from public;
+grant execute on function public.record_reminder_payment_bundle(jsonb, uuid, jsonb) to authenticated;
+
+-- SECURITY DEFINER sequence helpers must never be callable by anonymous/public roles.
+revoke all on function public.next_billing_number(uuid, integer) from public;
+
+-- Foreign keys prove that a parent exists, but not that it belongs to the same tenant.
+-- This reusable trigger closes that cross-owner reference gap on all financial children.
+create or replace function public.enforce_same_owner_references()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  argument_index integer;
+  parent_table text;
+  child_column text;
+  parent_id uuid;
+  parent_is_owned boolean;
+begin
+  if auth.uid() is null or new.user_id <> auth.uid() then
+    raise exception 'Record owner must match the authenticated user.';
+  end if;
+
+  for argument_index in 0..tg_nargs - 1 by 2
+  loop
+    parent_table := tg_argv[argument_index];
+    child_column := tg_argv[argument_index + 1];
+    parent_id := nullif(to_jsonb(new)->>child_column, '')::uuid;
+    if parent_id is null then continue; end if;
+
+    execute format(
+      'select exists (select 1 from public.%I where id = $1 and user_id = $2)',
+      parent_table
+    )
+    into parent_is_owned
+    using parent_id, new.user_id;
+
+    if not parent_is_owned then
+      raise exception 'Referenced % is not owned by the current user.', parent_table;
+    end if;
+  end loop;
+  return new;
+end;
+$$;
+
+revoke all on function public.enforce_same_owner_references() from public;
+
+drop trigger if exists enforce_billing_subcon_item_owners on public.billing_subcon_items;
+create trigger enforce_billing_subcon_item_owners
+before insert or update on public.billing_subcon_items for each row
+execute function public.enforce_same_owner_references(
+  'billing_records', 'billing_record_id', 'subcontractors', 'subcontractor_id'
+);
+
+drop trigger if exists enforce_subcon_daily_ticket_owners on public.subcon_daily_tickets;
+create trigger enforce_subcon_daily_ticket_owners
+before insert or update on public.subcon_daily_tickets for each row
+execute function public.enforce_same_owner_references('subcontractors', 'subcontractor_id');
+
+drop trigger if exists enforce_payroll_item_owners on public.payroll_run_items;
+create trigger enforce_payroll_item_owners
+before insert or update on public.payroll_run_items for each row
+execute function public.enforce_same_owner_references(
+  'payroll_runs', 'payroll_run_id', 'employees', 'employee_id', 'positions', 'position_id'
+);
+
+drop trigger if exists enforce_payroll_detail_owners on public.payroll_run_item_ticket_details;
+create trigger enforce_payroll_detail_owners
+before insert or update on public.payroll_run_item_ticket_details for each row
+execute function public.enforce_same_owner_references(
+  'payroll_run_items', 'payroll_run_item_id',
+  'position_ticket_categories', 'position_ticket_category_id'
+);
+
+drop trigger if exists enforce_daily_ticket_owners on public.daily_ticket_entries;
+create trigger enforce_daily_ticket_owners
+before insert or update on public.daily_ticket_entries for each row
+execute function public.enforce_same_owner_references(
+  'employees', 'employee_id', 'positions', 'position_id'
+);
+
+drop trigger if exists enforce_daily_ticket_item_owners on public.daily_ticket_entry_items;
+create trigger enforce_daily_ticket_item_owners
+before insert or update on public.daily_ticket_entry_items for each row
+execute function public.enforce_same_owner_references(
+  'daily_ticket_entries', 'daily_ticket_entry_id',
+  'position_ticket_categories', 'position_ticket_category_id'
+);
+
+drop trigger if exists enforce_attendance_owners on public.attendance_entries;
+create trigger enforce_attendance_owners
+before insert or update on public.attendance_entries for each row
+execute function public.enforce_same_owner_references(
+  'employees', 'employee_id', 'positions', 'position_id'
+);
+
+drop trigger if exists enforce_collection_payment_owners on public.collection_payments;
+create trigger enforce_collection_payment_owners
+before insert or update on public.collection_payments for each row
+execute function public.enforce_same_owner_references('collection_reminders', 'collection_id');
+
+drop trigger if exists enforce_expense_payment_owners on public.expense_installment_payments;
+create trigger enforce_expense_payment_owners
+before insert or update on public.expense_installment_payments for each row
+execute function public.enforce_same_owner_references('expenses', 'expense_id');
+
+drop trigger if exists enforce_reminder_payment_owners on public.payment_reminder_payments;
+create trigger enforce_reminder_payment_owners
+before insert or update on public.payment_reminder_payments for each row
+execute function public.enforce_same_owner_references('payment_reminders', 'payment_reminder_id');
+
+drop trigger if exists enforce_employee_advance_owners on public.employee_advances;
+create trigger enforce_employee_advance_owners
+before insert or update on public.employee_advances for each row
+execute function public.enforce_same_owner_references('employees', 'employee_id');
+
+drop trigger if exists enforce_salary_bond_owners on public.employee_salary_bonds;
+create trigger enforce_salary_bond_owners
+before insert or update on public.employee_salary_bonds for each row
+execute function public.enforce_same_owner_references('employees', 'employee_id');
+
+drop trigger if exists enforce_salary_bond_transaction_owners on public.employee_salary_bond_transactions;
+create trigger enforce_salary_bond_transaction_owners
+before insert or update on public.employee_salary_bond_transactions for each row
+execute function public.enforce_same_owner_references(
+  'employee_salary_bonds', 'salary_bond_id',
+  'employees', 'employee_id',
+  'payroll_runs', 'payroll_run_id',
+  'payroll_run_items', 'payroll_run_item_id'
+);

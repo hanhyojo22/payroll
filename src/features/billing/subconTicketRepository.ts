@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { SubconDailyTicket } from "../../types";
 
 const SELECT =
-  "id,user_id,entry_date,subcontractor_id,subcon_name,install_tickets,repair_tickets,disputed_install,disputed_repair,installation_rate,repair_rate,created_at,updated_at";
+  "id,user_id,entry_date,subcontractor_id,subcon_name,install_tickets,repair_tickets,nap_rehab_tickets,disputed_install,disputed_repair,disputed_nap_rehab,installation_rate,repair_rate,nap_rehab_rate,created_at,updated_at";
 
 export async function fetchSubconDailyTickets(supabase: SupabaseClient) {
   const result = await supabase

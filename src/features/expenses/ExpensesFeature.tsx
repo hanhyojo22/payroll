@@ -29,7 +29,6 @@ import {
   deleteExpense,
   deleteExpenseCategory,
   deleteExpenseInstallmentPayment,
-  payExpenseInstallment,
   saveExpense,
   saveExpenseCategory,
   updateExpenseCompletion,
@@ -380,18 +379,14 @@ export function ExpensesFeature({
       return;
     }
 
-    const paymentResult = await payExpenseInstallment(supabase, userId, expense.id, paymentPayload);
+    const paymentResult = await supabase.rpc("record_expense_payment_bundle", {
+      payment_payload: { ...paymentPayload, id: paymentId, user_id: userId, expense_id: expense.id },
+      expense_record_id: expense.id,
+      expense_patch: next,
+    });
     if (paymentResult.error) {
       NotificationService.showError(friendlyError(paymentResult.error, "Failed to record the payment."));
       return;
-    }
-    if (complete) {
-      const completionResult = await updateExpenseCompletion(supabase, expense.id, next);
-      if (completionResult.error) {
-        NotificationService.showError(friendlyError(completionResult.error, "Payment recorded, but failed to mark the expense complete."));
-        await onChange();
-        return;
-      }
     }
     setPayingInstallmentExpense(null);
     NotificationService.showSuccess(complete ? "Final payment recorded — expense moved to History." : "Payment recorded.");

@@ -7,8 +7,8 @@ import type {
   Subcontractor,
 } from "../../types";
 
-const BILLING_RECORDS_SELECT = "id,user_id,invoice_no,billing_month,billing_year,billing_period,install_tickets,repair_tickets,disputed_install,disputed_repair,nap_rehab_tickets,disputed_nap_rehab,company_install_tickets,company_repair_tickets,company_disputed_install,company_disputed_repair,company_nap_rehab_tickets,company_disputed_nap_rehab,total_tickets,disputed_tickets,billable_tickets,billing_rate,installation_rate,repair_rate,nap_rehab_rate,billing_amount,collections_pct,collections_amount,collectibles_amount,collection_id,collectibles_collection_id,due_date,notes,created_at,updated_at,subcon_items:billing_subcon_items(id,user_id,billing_record_id,subcontractor_id,subcon_name,install_tickets,repair_tickets,disputed_install,disputed_repair,installation_rate,repair_rate,billable_tickets,billing_amount,payable_pct,payable_amount,collection_amount,created_at)";
-const SUBCONTRACTOR_SELECT = "id,user_id,name,installation_rate,repair_rate,payable_pct,status,email,contact_number,address,created_at,updated_at";
+const BILLING_RECORDS_SELECT = "id,user_id,invoice_no,billing_month,billing_year,billing_period,install_tickets,repair_tickets,disputed_install,disputed_repair,nap_rehab_tickets,disputed_nap_rehab,company_install_tickets,company_repair_tickets,company_disputed_install,company_disputed_repair,company_nap_rehab_tickets,company_disputed_nap_rehab,total_tickets,disputed_tickets,billable_tickets,billing_rate,installation_rate,repair_rate,nap_rehab_rate,billing_amount,collections_pct,collections_amount,collectibles_amount,collection_id,collectibles_collection_id,due_date,notes,created_at,updated_at,subcon_items:billing_subcon_items(id,user_id,billing_record_id,subcontractor_id,subcon_name,install_tickets,repair_tickets,nap_rehab_tickets,disputed_install,disputed_repair,disputed_nap_rehab,installation_rate,repair_rate,nap_rehab_rate,billable_tickets,billing_amount,payable_pct,payable_amount,collection_amount,created_at)";
+const SUBCONTRACTOR_SELECT = "id,user_id,name,installation_rate,repair_rate,nap_rehab_rate,payable_pct,status,email,contact_number,address,created_at,updated_at";
 const BILLING_SETTINGS_SELECT = "id,user_id,installation_rate,repair_rate,nap_rehab_rate,collections_pct,client_name,created_at,updated_at";
 const PAYMENT_REMINDER_SUBCON_SELECT = "id,user_id,title,type,amount,due_date,status,notes,subcontractor_id,billing_subcon_item_id,billing_month,billing_year,billing_period,payout_leg,created_at,updated_at";
 const PAYMENT_REMINDER_PAYMENT_SELECT = "id,user_id,payment_reminder_id,amount,payment_date,payment_method,reference_number,notes,created_at";
@@ -117,7 +117,7 @@ export async function fetchSubcontractors(supabase: SupabaseClient) {
 export async function saveSubcontractor(
   supabase: SupabaseClient,
   userId: string,
-  payload: { id?: string; name: string; installation_rate: number; repair_rate: number; payable_pct: number; status: string; email: string; contact_number: string; address: string },
+  payload: { id?: string; name: string; installation_rate: number; repair_rate: number; nap_rehab_rate: number; payable_pct: number; status: string; email: string; contact_number: string; address: string },
 ) {
   if (payload.id) {
     return supabase.from("subcontractors").update(payload).eq("id", payload.id).select(SUBCONTRACTOR_SELECT).single();
@@ -151,7 +151,7 @@ export async function saveBillingSubconItems(
   const result = await supabase
     .from("billing_subcon_items")
     .upsert(items.map(({ created_at: _ca, ...item }: typeof items[number] & { created_at?: string }) => ({ ...item, billing_record_id: billingRecordId })))
-    .select("id,user_id,billing_record_id,subcontractor_id,subcon_name,install_tickets,repair_tickets,disputed_install,disputed_repair,installation_rate,repair_rate,billable_tickets,billing_amount,payable_pct,payable_amount,collection_amount,created_at");
+    .select("id,user_id,billing_record_id,subcontractor_id,subcon_name,install_tickets,repair_tickets,nap_rehab_tickets,disputed_install,disputed_repair,disputed_nap_rehab,installation_rate,repair_rate,nap_rehab_rate,billable_tickets,billing_amount,payable_pct,payable_amount,collection_amount,created_at");
 
   return {
     data: (result.data ?? []) as import("../../types").BillingSubconItem[],

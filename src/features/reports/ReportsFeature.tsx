@@ -1492,10 +1492,10 @@ function uniqueValues(values: string[]) {
 }
 
 function startOfWeek(value: string) {
-  const date = new Date(`${value}T00:00:00`);
-  const day = date.getDay();
+  const date = new Date(`${value}T00:00:00Z`);
+  const day = date.getUTCDay();
   const diff = day === 0 ? -6 : 1 - day;
-  date.setDate(date.getDate() + diff);
+  date.setUTCDate(date.getUTCDate() + diff);
   return date.toISOString().slice(0, 10);
 }
 
