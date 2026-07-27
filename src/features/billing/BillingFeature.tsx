@@ -45,7 +45,7 @@ import {
   saveBillingSettings,
   updatePaymentReminderCompletion,
 } from "./billingRepository";
-import { recordReceivablePayment } from "../collections/collectionRepository";
+import { useRepositories } from "../../app/RepositoriesProvider";
 import { ensureSubcontractorPayoutExpenseCategory, saveExpense } from "../expenses/expenseRepository";
 
 function collectionStatusForRecord(record: BillingRecord, collections: CollectionReminder[], collectionId: string | null): string {
@@ -93,6 +93,9 @@ export function BillingFeature({
   const [editingRecord, setEditingRecord] = useState<BillingRecord | null>(null);
   const [settings, setSettings] = useState<BillingSettings | null>(billingSettings);
   const [quickCollecting, setQuickCollecting] = useState<{ record: BillingRecord; collection: CollectionReminder } | null>(null);
+  // Billing settles receivables through the collections port rather than reaching into that
+  // feature's repository, so the two features share a contract instead of an implementation.
+  const repos = useRepositories();
   const [expandedRecordId, setExpandedRecordId] = useState<string | null>(null);
   const [detailsRecord, setDetailsRecord] = useState<BillingRecord | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -248,9 +251,9 @@ export function BillingFeature({
       reference_number: "",
       notes: "",
     };
-    const result = await recordReceivablePayment(supabase, collection.id, id, values);
+    const result = await repos.collections.recordPayment({ collectionId: collection.id, paymentId: id, values });
     if (result.error) {
-      NotificationService.showError((result.error as { message?: string }).message ?? "Failed to record collection.");
+      NotificationService.showError(result.error.message ?? "Failed to record collection.");
       return;
     }
     setQuickCollecting(null);

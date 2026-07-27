@@ -26,7 +26,7 @@ import type {
 } from "../types";
 import { collectionAgingBucket } from "../domain/collections";
 import { isExpenseOverdue, isExpensePeriodDueToday } from "../domain/expenses";
-import { fetchReceivables } from "../features/collections/collectionRepository";
+import { supabaseCollectionRepository } from "../adapters/supabase/collectionRepository";
 import { fetchSubcontractors } from "../features/billing/billingRepository";
 import { fetchSubconDailyTickets } from "../features/billing/subconTicketRepository";
 import { fetchExpenseCategories, fetchExpenses } from "../features/expenses/expenseRepository";
@@ -326,8 +326,8 @@ export function buildPaymentLedger(
 
 export async function loadCollections(supabase: SupabaseClient) {
   try {
-    const result = await withTimeout(fetchReceivables(supabase), "Collections");
-    return { data: result.data, error: result.error, label: "Collections" };
+    const result = await withTimeout(supabaseCollectionRepository(supabase).list(), "Collections");
+    return { data: result.data ?? [], error: result.error, label: "Collections" };
   } catch (error) {
     return { data: [] as CollectionReminder[], error: error as AppErrorLike, label: "Collections" };
   }

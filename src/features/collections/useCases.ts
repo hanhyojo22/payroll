@@ -9,7 +9,7 @@ import type {
   CollectionPaymentFormValues,
   CollectionReminder,
 } from "../../types";
-import { receivablePayload } from "./collectionRepository";
+import { receivablePayload } from "./mapping";
 
 /**
  * Everything these use-cases reach outside themselves. `isOnline`, `newId` and `now` are

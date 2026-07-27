@@ -91,7 +91,7 @@ import { BillingFeature, BillingSettingsManager } from "./features/billing/Billi
 import { saveSubcontractor } from "./features/billing/billingRepository";
 import { saveSubconDailyTicket } from "./features/billing/subconTicketRepository";
 import { CollectionHistoryFeature, CollectionsFeature } from "./features/collections/CollectionsFeature";
-import { normalizeReceivable } from "./features/collections/collectionRepository";
+import { normalizeReceivable } from "./features/collections/mapping";
 import { ExpenseCategoriesManager, ExpensesFeature } from "./features/expenses/ExpensesFeature";
 import { PaymentsFeature } from "./features/payments/PaymentsFeature";
 import { EmployeeAdvancesFeature } from "./features/payroll/EmployeeAdvancesFeature";
