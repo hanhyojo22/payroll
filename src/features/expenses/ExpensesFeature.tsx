@@ -1,7 +1,6 @@
 import { useDialog } from "../../shared/components/useDialog";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Ban, CalendarClock, CheckCircle2, Eye, MoreVertical, Pencil, Plus, Receipt, Square, Tag, Trash2, X } from "lucide-react";
-import { supabase } from "../../supabase";
 import { isOfflineLikeError } from "../../lib/offlineSync";
 import { MoneyField } from "../../shared/components/MoneyField";
 import { PageHeader, RecordTitle, Toolbar } from "../../shared/components/PageLayout";
@@ -25,35 +24,19 @@ import {
 } from "../../domain/expenses";
 import { normalizeSubcontractorPayoutTitle } from "../../domain/paymentReminders";
 import type { CollectionPaymentMethod, Employee, Expense, ExpenseCategory, ExpenseCategoryType, ExpenseFrequency, ExpenseInstallmentPayment } from "../../types";
+import { useRepositories } from "../../app/RepositoriesProvider";
+import { notificationServiceNotifier } from "../../adapters/notifications/notifier";
 import {
-  cancelExpense,
-  deleteExpense,
-  deleteExpenseCategory,
-  deleteExpenseInstallmentPayment,
-  saveExpense,
-  saveExpenseCategory,
-  updateExpenseCompletion,
-} from "./expenseRepository";
-
-type ExpenseFormValues = {
-  employee_id: string;
-  employee_name: string;
-  category_id: string;
-  amount: string;
-  frequency: ExpenseFrequency;
-  expense_date: string;
-  due_date: string;
-  payment_date: string;
-  notes: string;
-};
-
-type InstallmentPaymentFormValues = {
-  amount: string;
-  payment_date: string;
-  payment_method: CollectionPaymentMethod;
-  reference_number: string;
-  notes: string;
-};
+  cancelExpense as cancelExpenseUseCase,
+  deleteExpense as deleteExpenseUseCase,
+  deleteInstallmentPayment as deleteInstallmentPaymentUseCase,
+  endRecurringExpense as endRecurringExpenseUseCase,
+  payInstallment as payInstallmentUseCase,
+  saveExpense as saveExpenseUseCase,
+  type ExpenseDeps,
+  type ExpenseFormValues,
+  type InstallmentPaymentFormValues,
+} from "./useCases";
 
 const ORDINAL_SUFFIXES: Record<number, string> = { 1: "st", 2: "nd", 3: "rd" };
 
@@ -174,304 +157,51 @@ export function ExpensesFeature({
     return { totalExpensesAmount, outstanding, paidThisMonth, overdueTotal, overdueCount: overdue.length };
   }, [expenses]);
 
+  const repos = useRepositories();
+
+  // The use-cases hold the orchestration and are unit-tested against fakes; this component
+  // only renders and delegates.
+  const useCaseDeps: ExpenseDeps = useMemo(() => ({
+    repos,
+    queue: onQueueOfflineMutation,
+    notify: notificationServiceNotifier,
+    isOnline: () => navigator.onLine,
+    reload: onChange,
+    newId: () => crypto.randomUUID(),
+    now: () => new Date().toISOString(),
+    today: () => todayKey(),
+  }), [repos, onQueueOfflineMutation, onChange]);
+
   async function handleSaveExpense(values: ExpenseFormValues) {
-    if (!supabase) return;
-    const category = activeCategories.find((item) => item.id === values.category_id);
-    if (!category) {
-      NotificationService.showError("Select a valid category.");
-      return;
-    }
-
-    let employeeId: string | null = null;
-    let employeeName = "";
-    if (category.type === "company") {
-      const employee = activeEmployees.find((item) => item.id === values.employee_id);
-      if (!employee) {
-        NotificationService.showError("Select a valid employee.");
-        return;
-      }
-      employeeId = employee.id;
-      employeeName = employee.full_name;
-    } else {
-      if (!values.employee_name.trim()) {
-        NotificationService.showError("Enter a name for this personal expense.");
-        return;
-      }
-      employeeName = values.employee_name.trim();
-    }
-
-    const durationMonths = values.frequency !== "one_time" && values.due_date
-      ? expenseDurationCount(values.frequency, values.expense_date, values.due_date)
-      : null;
-
-    const payload = {
-      id: editingExpense?.id ?? crypto.randomUUID(),
-      user_id: userId,
-      employee_id: employeeId,
-      employee_name: employeeName,
-      category_id: category.id,
-      category_name: category.name,
-      amount: toNumber(values.amount),
-      frequency: values.frequency,
-      duration_months: durationMonths,
-      status: editingExpense?.status ?? "pending",
-      paid_date: editingExpense?.paid_date ?? null,
-      expense_date: values.expense_date,
-      due_date: values.due_date || null,
-      payment_date: values.payment_date || null,
-      notes: values.notes.trim(),
-      payroll_run_id: editingExpense?.payroll_run_id ?? null,
-      subcontractor_payment_reminder_id: editingExpense?.subcontractor_payment_reminder_id ?? null,
-    };
-
-    if (!navigator.onLine) {
-      await onQueueOfflineMutation({
-        resource: "expenses",
-        affectedResources: ["expenses"],
-        operation: "upsert",
-        table: "expenses",
-        recordId: payload.id,
-        payload,
-      });
+    const saved = await saveExpenseUseCase(useCaseDeps, {
+      values, editing: editingExpense, activeCategories, activeEmployees, userId,
+    });
+    if (saved) {
       setFormOpen(false);
       setEditingExpense(null);
-      NotificationService.showSuccess("Expense saved locally. It will sync when online.");
-      return;
     }
-
-    const result = await saveExpense(supabase, payload);
-    if (result.error) {
-      if (isOfflineLikeError(result.error)) {
-        await onQueueOfflineMutation({
-          resource: "expenses",
-          affectedResources: ["expenses"],
-          operation: "upsert",
-          table: "expenses",
-          recordId: payload.id,
-          payload,
-        });
-        setFormOpen(false);
-        setEditingExpense(null);
-        NotificationService.showSuccess("Expense saved locally. It will sync when online.");
-        return;
-      }
-      if (isLegacyExpensesStatusConstraintError(result.error)) {
-        NotificationService.showError("Your database still uses the older expenses status rule. Apply the latest expense schema update to enable cancelled expenses.");
-        return;
-      }
-      if (isLegacyExpensesFrequencyConstraintError(result.error)) {
-        NotificationService.showError("Your database still uses the older expenses frequency rule. Apply the latest expense schema update to enable Daily frequency.");
-        return;
-      }
-      NotificationService.showError(result.error.message ?? "Failed to save expense.");
-      return;
-    }
-
-    setFormOpen(false);
-    setEditingExpense(null);
-    NotificationService.showSuccess("Expense saved.");
-    await onChange();
   }
 
   async function handleDeleteExpense(expense: Expense) {
-    if (!supabase || expense.installment_payments.length > 0) return;
-
-    if (!navigator.onLine) {
-      await onQueueOfflineMutation({
-        resource: "expenses",
-        affectedResources: ["expenses"],
-        operation: "delete",
-        table: "expenses",
-        recordId: expense.id,
-      });
-      setDeletingExpense(null);
-      NotificationService.showSuccess("Expense deleted locally. It will sync when online.");
-      return;
-    }
-
-    const result = await deleteExpense(supabase, expense.id);
-    if (result.error) {
-      NotificationService.showError(result.error.message ?? "Failed to delete expense.");
-      return;
-    }
-    setDeletingExpense(null);
-    NotificationService.showSuccess("Expense deleted.");
-    await onChange();
+    const deleted = await deleteExpenseUseCase(useCaseDeps, { expense });
+    if (deleted) setDeletingExpense(null);
   }
 
   async function handleCancelExpense(expense: Expense) {
-    if (!supabase || expense.installment_payments.length > 0) return;
-    const confirmed = await NotificationService.showConfirm({
-      message: "Cancel this expense? It will move to Expense History.",
-      danger: true,
-    });
-    if (!confirmed) return;
-
-    if (!navigator.onLine) {
-      await onQueueOfflineMutation({
-        resource: "expenses",
-        affectedResources: ["expenses"],
-        operation: "update",
-        table: "expenses",
-        recordId: expense.id,
-        payload: { status: "cancelled" },
-      });
-      NotificationService.showSuccess("Cancelled locally. It will sync when online.");
-      return;
-    }
-
-    const result = await cancelExpense(supabase, expense.id);
-    if (result.error) {
-      if (isLegacyExpensesStatusConstraintError(result.error)) {
-        NotificationService.showError("This database does not yet allow cancelled expense status. Apply the latest expense schema update, then try again.");
-        return;
-      }
-      NotificationService.showError(friendlyError(result.error, "Failed to cancel this expense."));
-      return;
-    }
-    NotificationService.showSuccess("Expense cancelled.");
-    await onChange();
+    await cancelExpenseUseCase(useCaseDeps, { expense });
   }
 
   async function handlePayInstallment(expense: Expense, values: InstallmentPaymentFormValues) {
-    if (!supabase) return;
-    const amount = toNumber(values.amount);
-    const remainingBalance = expenseRemainingBalance(expense, expense.installment_payments);
-    const validationError = validateExpensePayment({
-      amount,
-      cancelled: expense.status === "cancelled",
-      remainingBalance,
-      paymentDate: values.payment_date,
-      today: todayKey(),
-    });
-    if (validationError) {
-      NotificationService.showError(validationError);
-      return;
-    }
-
-    const paymentId = crypto.randomUUID();
-    const paymentPayload = {
-      amount,
-      payment_date: values.payment_date,
-      payment_method: values.payment_method,
-      reference_number: values.reference_number.trim(),
-      notes: values.notes.trim(),
-    };
-    const newPayment: ExpenseInstallmentPayment = {
-      id: paymentId, user_id: userId, expense_id: expense.id, ...paymentPayload, created_at: new Date().toISOString(),
-    };
-    const next = nextExpenseCompletionState(expense, [...expense.installment_payments, newPayment], todayKey());
-    const complete = next.status === "paid";
-
-    if (!navigator.onLine) {
-      await onQueueOfflineMutation({
-        resource: "expenses",
-        affectedResources: ["expenses"],
-        operation: "expense_payment_group",
-        table: "expense_installment_payments",
-        recordId: paymentId,
-        payload: {
-          paymentPayload: { ...paymentPayload, id: paymentId, user_id: userId, expense_id: expense.id },
-          expenseUpdate: { id: expense.id, payload: next },
-        },
-      });
-      setPayingInstallmentExpense(null);
-      NotificationService.showSuccess("Payment recorded locally. It will sync when online.");
-      return;
-    }
-
-    const paymentResult = await supabase.rpc("record_expense_payment_bundle", {
-      payment_payload: { ...paymentPayload, id: paymentId, user_id: userId, expense_id: expense.id },
-      expense_record_id: expense.id,
-      expense_patch: next,
-    });
-    if (paymentResult.error) {
-      NotificationService.showError(friendlyError(paymentResult.error, "Failed to record the payment."));
-      return;
-    }
-    setPayingInstallmentExpense(null);
-    NotificationService.showSuccess(complete ? "Final payment recorded — expense moved to History." : "Payment recorded.");
-    await onChange();
+    const paid = await payInstallmentUseCase(useCaseDeps, { expense, values, userId });
+    if (paid) setPayingInstallmentExpense(null);
   }
 
   async function handleDeleteInstallmentPayment(expense: Expense, payment: ExpenseInstallmentPayment) {
-    if (!supabase) return;
-    const confirmed = await NotificationService.showConfirm({
-      message: "Delete this installment payment?",
-      danger: true,
-    });
-    if (!confirmed) return;
-    const remainingPayments = expense.installment_payments.filter((item) => item.id !== payment.id);
-    const shouldRevert = expense.status === "paid" && nextExpenseCompletionState(expense, remainingPayments, todayKey()).status !== "paid";
-
-    if (!navigator.onLine) {
-      await onQueueOfflineMutation({
-        resource: "expenses",
-        affectedResources: ["expenses"],
-        operation: "delete",
-        table: "expense_installment_payments",
-        recordId: payment.id,
-      });
-      if (shouldRevert) {
-        await onQueueOfflineMutation({
-          resource: "expenses",
-          affectedResources: ["expenses"],
-          operation: "update",
-          table: "expenses",
-          recordId: expense.id,
-          payload: { status: "pending", paid_date: null },
-        });
-      }
-      NotificationService.showSuccess("Deleted locally. It will sync when online.");
-      return;
-    }
-
-    const deleteResult = await deleteExpenseInstallmentPayment(supabase, payment.id);
-    if (deleteResult.error) {
-      NotificationService.showError(friendlyError(deleteResult.error, "Failed to delete that payment."));
-      return;
-    }
-    if (shouldRevert) {
-      const completionResult = await updateExpenseCompletion(supabase, expense.id, { status: "pending", paid_date: null });
-      if (completionResult.error) {
-        NotificationService.showError(friendlyError(completionResult.error, "Payment deleted, but failed to reopen the expense."));
-        await onChange();
-        return;
-      }
-    }
-    NotificationService.showSuccess("Installment payment deleted.");
-    await onChange();
+    await deleteInstallmentPaymentUseCase(useCaseDeps, { expense, payment });
   }
 
   async function handleEndRecurringExpense(expense: Expense) {
-    if (!supabase) return;
-    const confirmed = await NotificationService.showConfirm({
-      message: "End this recurring expense? It will move to Expense History.",
-      danger: true,
-    });
-    if (!confirmed) return;
-    const payload = { status: "paid" as const, paid_date: todayKey() };
-
-    if (!navigator.onLine) {
-      await onQueueOfflineMutation({
-        resource: "expenses",
-        affectedResources: ["expenses"],
-        operation: "update",
-        table: "expenses",
-        recordId: expense.id,
-        payload,
-      });
-      NotificationService.showSuccess("Ended locally. It will sync when online.");
-      return;
-    }
-
-    const result = await updateExpenseCompletion(supabase, expense.id, payload);
-    if (result.error) {
-      NotificationService.showError(friendlyError(result.error, "Failed to end this expense."));
-      return;
-    }
-    NotificationService.showSuccess("Expense ended and moved to History.");
-    await onChange();
+    await endRecurringExpenseUseCase(useCaseDeps, { expense });
   }
 
   return (
@@ -1394,6 +1124,7 @@ export function ExpenseCategoriesManager({
   const [editing, setEditing] = useState<ExpenseCategory | null>(null);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  const repos = useRepositories();
   const tabCategories = categories.filter((category) => category.type === activeTab);
   const sortedCategories = [...tabCategories].sort((first, second) => {
     if (first.status !== second.status) {
@@ -1405,7 +1136,7 @@ export function ExpenseCategoriesManager({
   const archivedCount = tabCategories.length - activeCount;
 
   async function handleSaveCategory(status: "active" | "archived" = "active") {
-    if (!supabase || !name.trim()) return;
+    if (!name.trim()) return;
     setBusy(true);
     const categoryType = editing?.type ?? activeTab;
     const payload = { id: editing?.id, name: name.trim(), type: categoryType, status };
@@ -1427,7 +1158,7 @@ export function ExpenseCategoriesManager({
       return;
     }
 
-    const result = await saveExpenseCategory(supabase, userId, payload);
+    const result = await repos.expenseCategories.save(userId, payload);
     setBusy(false);
     if (result.error) {
       NotificationService.showError(friendlyError(result.error, "Failed to save expense category."));
@@ -1441,7 +1172,6 @@ export function ExpenseCategoriesManager({
   }
 
   async function deleteCategory(category: ExpenseCategory) {
-    if (!supabase) return;
     const confirmed = await NotificationService.showConfirm({
       message: `Delete the "${category.name}" category?`,
       danger: true,
@@ -1465,7 +1195,7 @@ export function ExpenseCategoriesManager({
       return;
     }
 
-    const result = await deleteExpenseCategory(supabase, category.id);
+    const result = await repos.expenseCategories.remove(category.id);
     if (result.error) {
       const message = `${result.error.message ?? ""} ${result.error.details ?? ""}`.toLowerCase();
       if (message.includes("foreign key") || message.includes("violates")) {

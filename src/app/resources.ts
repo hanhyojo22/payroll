@@ -29,7 +29,7 @@ import { isExpenseOverdue, isExpensePeriodDueToday } from "../domain/expenses";
 import { supabaseCollectionRepository } from "../adapters/supabase/collectionRepository";
 import { fetchSubcontractors } from "../features/billing/billingRepository";
 import { fetchSubconDailyTickets } from "../features/billing/subconTicketRepository";
-import { fetchExpenseCategories, fetchExpenses } from "../features/expenses/expenseRepository";
+import { supabaseExpenseCategoryRepository, supabaseExpenseRepository } from "../adapters/supabase/expenseRepository";
 import { fetchEmployeeAdvances } from "../features/payroll/employeeAdvanceRepository";
 import { fetchPayrollHistoryRows, fetchPayrollRunItems, fetchPayrollRuns, fetchPayrollSettings } from "../features/payroll/payrollRepository";
 import { fetchSalaryBonds } from "../features/salaryBonds/salaryBondRepository";
@@ -269,12 +269,12 @@ export async function loadPayments(supabase: SupabaseClient) {
 }
 
 export async function loadExpenseCategories(supabase: SupabaseClient) {
-  const result = await fetchExpenseCategories(supabase);
+  const result = await supabaseExpenseCategoryRepository(supabase).list();
   return { data: result.data as ExpenseCategory[], error: result.error, label: "Expense categories" };
 }
 
 export async function loadExpenses(supabase: SupabaseClient) {
-  const result = await fetchExpenses(supabase);
+  const result = await supabaseExpenseRepository(supabase).list();
   return { data: result.data as Expense[], error: result.error, label: "Expenses" };
 }
 

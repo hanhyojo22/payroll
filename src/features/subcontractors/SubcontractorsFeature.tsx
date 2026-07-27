@@ -29,13 +29,7 @@ import { currency, toNumber } from "../../shared/utils/currency";
 import { monthNames, todayKey } from "../../shared/utils/dates";
 import { formatPhoneNumber, normalizePhoneDigits } from "../../shared/utils/phone";
 import type { BillingPeriod, BillingRecord, CollectionPaymentMethod, ExpenseCategory, PaymentReminder, PaymentReminderPayment, SubconDailyTicket, Subcontractor, SubcontractorAdvance, SubcontractorAdvanceFormValues } from "../../types";
-import {
-  deleteExpenseInstallmentPayment,
-  ensureSubcontractorPayoutExpenseCategory,
-  payExpenseInstallment,
-  saveExpense,
-  updateExpenseCompletion,
-} from "../expenses/expenseRepository";
+import { useRepositories } from "../../app/RepositoriesProvider";
 
 type AccountTab = "daily" | "billing" | "payouts" | "advances";
 
@@ -90,6 +84,7 @@ export function SubcontractorsFeature({
   subcontractors: Subcontractor[];
   userId: string;
 }) {
+  const repos = useRepositories();
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState<AccountTab>(initialTab ?? "daily");
   const [editing, setEditing] = useState<Subcontractor | null>(null);
@@ -192,7 +187,7 @@ export function SubcontractorsFeature({
     if (subcontractorExpenseCategoryId) return subcontractorExpenseCategoryId;
     if (!supabase || !navigator.onLine) return null;
 
-    const result = await ensureSubcontractorPayoutExpenseCategory(supabase, userId);
+    const result = await repos.expenseCategories.ensureCompanyCategory(userId, SUBCONTRACTOR_PAYOUT_EXPENSE_CATEGORY_NAME);
     if (result.error || !result.data) return null;
     setSubcontractorExpenseCategoryId(result.data.id);
     return result.data.id;
@@ -386,6 +381,7 @@ function SubcontractorDetailsView({
   tab: AccountTab;
   userId: string;
 }) {
+  const repos = useRepositories();
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [periodFilter, setPeriodFilter] = useState<"all" | BillingPeriod>("all");
@@ -472,7 +468,7 @@ function SubcontractorDetailsView({
     }
 
     if (!supabase) return false;
-    const result = await saveExpense(supabase, payload);
+    const result = await repos.expenses.save(payload);
     return !result.error;
   }
 
@@ -613,13 +609,13 @@ function SubcontractorDetailsView({
     }
     const expenseSyncOk = await syncPayoutExpense(payment, payment.payments ?? []);
     if (expenseSyncOk) {
-      const expensePaymentResult = await payExpenseInstallment(supabase, userId, payment.id, paymentPayload);
+      const expensePaymentResult = await repos.expenses.addInstallmentPayment(userId, payment.id, paymentPayload);
       if (expensePaymentResult.error) {
         NotificationService.showError((expensePaymentResult.error as { message?: string }).message ?? "Payment recorded, but couldn't sync it to Expenses.");
         await onChange();
         return;
       }
-      const expenseCompletionResult = await updateExpenseCompletion(supabase, payment.id, expenseCompletionPayload);
+      const expenseCompletionResult = await repos.expenses.updateCompletion(payment.id, expenseCompletionPayload);
       if (expenseCompletionResult.error) {
         NotificationService.showError((expenseCompletionResult.error as { message?: string }).message ?? "Payment recorded, but couldn't update the linked expense.");
         await onChange();
@@ -693,13 +689,13 @@ function SubcontractorDetailsView({
     }
     const expenseSyncOk = await syncPayoutExpense(payment, payment.payments ?? []);
     if (expenseSyncOk) {
-      const expenseDeleteResult = await deleteExpenseInstallmentPayment(supabase, paymentRecord.id);
+      const expenseDeleteResult = await repos.expenses.deleteInstallmentPayment(paymentRecord.id);
       if (expenseDeleteResult.error) {
         NotificationService.showError((expenseDeleteResult.error as { message?: string }).message ?? "Payment deleted, but couldn't update the linked expense.");
         await onChange();
         return;
       }
-      const expenseCompletionResult = await updateExpenseCompletion(supabase, payment.id, {
+      const expenseCompletionResult = await repos.expenses.updateCompletion(payment.id, {
         status: shouldRevert ? "pending" : "paid",
         paid_date: shouldRevert
           ? null

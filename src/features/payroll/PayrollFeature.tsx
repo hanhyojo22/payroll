@@ -19,7 +19,7 @@ import { Modal, TextField } from "../../shared/components/FormLayout";
 import { DataTable } from "../../shared/components/DataTable";
 import { PageHeader, RecordTitle, Toolbar } from "../../shared/components/PageLayout";
 import { ensurePayrollSettings, savePayrollSettings } from "./payrollRepository";
-import { ensurePayrollExpenseCategory, saveExpense } from "../expenses/expenseRepository";
+import { useRepositories } from "../../app/RepositoriesProvider";
 import type { QueueOfflineMutation } from "../../shared/types";
 import { NotificationService } from "../../shared/notifications/NotificationService";
 import { currency, toNumber } from "../../shared/utils/currency";
@@ -363,6 +363,7 @@ export function PayrollFeature({
     });
   }, [activePayrollSettings, userId]);
 
+  const repos = useRepositories();
   const [payrollExpenseCategoryId, setPayrollExpenseCategoryId] = useState<string | null>(
     expenseCategories.find((category) => category.type === "company" && category.name === "Payroll")?.id ?? null,
   );
@@ -376,7 +377,7 @@ export function PayrollFeature({
     if (!supabase || payrollExpenseCategoryId) return;
     function tryEnsureCategory() {
       if (!supabase || payrollExpenseCategoryId || !navigator.onLine) return;
-      void ensurePayrollExpenseCategory(supabase, userId).then(({ data }) => {
+      void repos.expenseCategories.ensureCompanyCategory(userId, "Payroll").then(({ data }) => {
         if (data) setPayrollExpenseCategoryId(data.id);
       });
     }
@@ -477,7 +478,7 @@ export function PayrollFeature({
     }
 
     if (!supabase) return;
-    const result = await saveExpense(supabase, payload);
+    const result = await repos.expenses.save(payload);
     if (result.error && isOfflineLikeError(result.error)) {
       await onQueueOfflineMutation({
         resource: "expenses",

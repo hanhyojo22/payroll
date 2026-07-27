@@ -46,7 +46,6 @@ import {
   updatePaymentReminderCompletion,
 } from "./billingRepository";
 import { useRepositories } from "../../app/RepositoriesProvider";
-import { ensureSubcontractorPayoutExpenseCategory, saveExpense } from "../expenses/expenseRepository";
 
 function collectionStatusForRecord(record: BillingRecord, collections: CollectionReminder[], collectionId: string | null): string {
   if (!collectionId) return "-";
@@ -138,7 +137,7 @@ export function BillingFeature({
     if (subcontractorExpenseCategoryId) return subcontractorExpenseCategoryId;
     if (!supabase || !navigator.onLine) return null;
 
-    const result = await ensureSubcontractorPayoutExpenseCategory(supabase, userId);
+    const result = await repos.expenseCategories.ensureCompanyCategory(userId, SUBCONTRACTOR_PAYOUT_EXPENSE_CATEGORY_NAME);
     if (result.error || !result.data) return null;
     setSubcontractorExpenseCategoryId(result.data.id);
     return result.data.id;
@@ -179,7 +178,7 @@ export function BillingFeature({
       }
 
       if (!supabase) return false;
-      const result = await saveExpense(supabase, payload);
+      const result = await repos.expenses.save(payload);
       if (result.error && isOfflineLikeError(result.error)) {
         await onQueueOfflineMutation({
           resource: "expenses",

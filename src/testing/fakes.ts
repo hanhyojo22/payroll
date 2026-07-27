@@ -1,7 +1,8 @@
 import type { CollectionRepository, RecordCollectionPaymentInput, SaveCollectionInput } from "../core/ports/collections";
+import type { ExpenseCategoryRepository, ExpenseRepository } from "../core/ports/expenses";
 import { err, ok, type Result } from "../core/ports/result";
 import { withCollectionTotals } from "../domain/collections";
-import type { CollectionPayment, CollectionReminder } from "../types";
+import type { CollectionPayment, CollectionReminder, Expense, ExpenseCategory } from "../types";
 import type { AppError } from "../shared/types";
 
 export type FakeCollectionRepository = CollectionRepository & {
@@ -127,6 +128,189 @@ export function fakeCollectionRepository(): FakeCollectionRepository {
           : entry),
       }));
       return ok(undefined);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Expenses
+// ---------------------------------------------------------------------------
+
+export type FakeExpenseRepository = ExpenseRepository & {
+  failNext(error: AppError): void;
+  seed(expenses: Expense[]): void;
+};
+
+export function fakeExpenseRepository(): FakeExpenseRepository {
+  let rows: Expense[] = [];
+  let pendingFailure: AppError | null = null;
+
+  function takeFailure<T>(): Result<T> | null {
+    if (!pendingFailure) return null;
+    const failure = pendingFailure;
+    pendingFailure = null;
+    return err<T>(failure);
+  }
+
+  return {
+    failNext(error) {
+      pendingFailure = error;
+    },
+
+    seed(expenses) {
+      rows = [...expenses];
+    },
+
+    async list() {
+      return takeFailure<Expense[]>() ?? ok(rows);
+    },
+
+    async save(payload) {
+      const failure = takeFailure<void>();
+      if (failure) return failure;
+
+      const persistedStatus = payload.status === "paid" || payload.status === "cancelled" ? payload.status : "pending";
+      const existing = rows.find((row) => row.id === payload.id);
+      const next: Expense = {
+        ...payload,
+        status: persistedStatus,
+        paid_date: persistedStatus === "paid" ? payload.paid_date : null,
+        installment_payments: existing?.installment_payments ?? [],
+        created_at: existing?.created_at ?? new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      rows = existing ? rows.map((row) => row.id === next.id ? next : row) : [next, ...rows];
+      return ok(undefined);
+    },
+
+    async remove(id) {
+      const failure = takeFailure<void>();
+      if (failure) return failure;
+      rows = rows.filter((row) => row.id !== id);
+      return ok(undefined);
+    },
+
+    async cancel(id) {
+      const failure = takeFailure<void>();
+      if (failure) return failure;
+      rows = rows.map((row) => row.id === id ? { ...row, status: "cancelled" } : row);
+      return ok(undefined);
+    },
+
+    async updateCompletion(id, patch) {
+      const failure = takeFailure<void>();
+      if (failure) return failure;
+      rows = rows.map((row) => row.id === id ? { ...row, ...patch } : row);
+      return ok(undefined);
+    },
+
+    async payInstallment({ payment, expenseId, expensePatch }) {
+      const failure = takeFailure<void>();
+      if (failure) return failure;
+      // Mirrors the RPC: payment insert and expense patch land together or not at all.
+      rows = rows.map((row) => row.id === expenseId
+        ? {
+          ...row,
+          ...expensePatch,
+          installment_payments: [...row.installment_payments, { ...payment, created_at: new Date().toISOString() }],
+        }
+        : row);
+      return ok(undefined);
+    },
+
+    async deleteInstallmentPayment(paymentId) {
+      const failure = takeFailure<void>();
+      if (failure) return failure;
+      rows = rows.map((row) => ({
+        ...row,
+        installment_payments: row.installment_payments.filter((payment) => payment.id !== paymentId),
+      }));
+      return ok(undefined);
+    },
+
+    async addInstallmentPayment(userId, expenseId, payload) {
+      const failure = takeFailure<void>();
+      if (failure) return failure;
+      rows = rows.map((row) => row.id === expenseId
+        ? {
+          ...row,
+          installment_payments: [...row.installment_payments, {
+            ...payload, id: crypto.randomUUID(), user_id: userId,
+            expense_id: expenseId, created_at: new Date().toISOString(),
+          }],
+        }
+        : row);
+      return ok(undefined);
+    },
+  };
+}
+
+export type FakeExpenseCategoryRepository = ExpenseCategoryRepository & {
+  failNext(error: AppError): void;
+  seed(categories: ExpenseCategory[]): void;
+};
+
+export function fakeExpenseCategoryRepository(): FakeExpenseCategoryRepository {
+  let rows: ExpenseCategory[] = [];
+  let pendingFailure: AppError | null = null;
+
+  function takeFailure<T>(): Result<T> | null {
+    if (!pendingFailure) return null;
+    const failure = pendingFailure;
+    pendingFailure = null;
+    return err<T>(failure);
+  }
+
+  return {
+    failNext(error) {
+      pendingFailure = error;
+    },
+
+    seed(categories) {
+      rows = [...categories];
+    },
+
+    async list() {
+      return takeFailure<ExpenseCategory[]>() ?? ok(rows);
+    },
+
+    async save(userId, payload) {
+      const failure = takeFailure<void>();
+      if (failure) return failure;
+      const now = new Date().toISOString();
+      const existing = payload.id ? rows.find((row) => row.id === payload.id) : undefined;
+      const next: ExpenseCategory = {
+        id: payload.id ?? crypto.randomUUID(),
+        user_id: userId,
+        name: payload.name,
+        type: payload.type,
+        status: payload.status,
+        created_at: existing?.created_at ?? now,
+        updated_at: now,
+      };
+      rows = existing ? rows.map((row) => row.id === next.id ? next : row) : [...rows, next];
+      return ok(undefined);
+    },
+
+    async remove(id) {
+      const failure = takeFailure<void>();
+      if (failure) return failure;
+      rows = rows.filter((row) => row.id !== id);
+      return ok(undefined);
+    },
+
+    async ensureCompanyCategory(userId, name) {
+      const failure = takeFailure<ExpenseCategory>();
+      if (failure) return failure;
+      const found = rows.find((row) => row.type === "company" && row.name === name);
+      if (found) return ok(found);
+      const now = new Date().toISOString();
+      const created: ExpenseCategory = {
+        id: crypto.randomUUID(), user_id: userId, name, type: "company",
+        status: "active", created_at: now, updated_at: now,
+      };
+      rows = [...rows, created];
+      return ok(created);
     },
   };
 }
