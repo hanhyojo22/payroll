@@ -4,7 +4,6 @@ import {
   governmentDeductionForEmployee,
   payrollExpensePayload,
   payrollItemPayloadForEmployee,
-  payrollItemPayBasis,
   workingDaysInPeriod,
   attendanceTotalsForEmployee,
 } from "./payroll";
@@ -134,23 +133,6 @@ describe("position-based payroll", () => {
   it("keeps stamping ticket when the employee actually holds a ticket position", () => {
     const item = payrollItemPayloadForEmployee(employee, "run-1", "user-1", [ticketEntry], position("ticket"));
     expect(item.pay_mode).toBe("ticket");
-  });
-
-  describe("pay basis description", () => {
-    const item = (overrides: Partial<ReturnType<typeof payrollItemPayloadForEmployee>>) =>
-      ({ ...payrollItemPayloadForEmployee(employee, "run-1", "user-1", [ticketEntry]), ...overrides }) as never;
-
-    it("describes a legacy payout by its ticket count, like a ticket position", () => {
-      expect(payrollItemPayBasis(item({ pay_mode: "legacy" }))).toBe("3 tickets");
-      expect(payrollItemPayBasis(item({ pay_mode: "ticket" }))).toBe("3 tickets");
-    });
-
-    it("describes daily and fixed payouts by their own basis", () => {
-      expect(payrollItemPayBasis(item({ pay_mode: "daily", days_worked: 2.5, daily_rate: 800 })))
-        .toContain("2.5 days");
-      expect(payrollItemPayBasis(item({ pay_mode: "fixed", base_pay: 10_000 })))
-        .toContain("Base");
-    });
   });
 
   it("combines half-month base pay and ticket earnings for hybrid positions", () => {

@@ -1,3 +1,4 @@
+import { RepositoriesProvider } from "./app/RepositoriesProvider";
 import { useDialog } from "./shared/components/useDialog";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
@@ -83,7 +84,7 @@ import {
   loadPositions,
   loadEmployeeAdvances,
   loadSalaryBonds,
-} from "./lib/supabaseData";
+} from "./app/resources";
 import { clearOfflineDataForUser, discardFailedMutations, getPendingMutations, queueMutation, readCachedResource, retryFailedMutations, writeCachedResource } from "./lib/offlineDb";
 import { flushPendingMutations, isOfflineLikeError } from "./lib/offlineSync";
 import { BillingFeature, BillingSettingsManager } from "./features/billing/BillingFeature";
@@ -483,7 +484,11 @@ export function App() {
     return <Login />;
   }
 
-  return <Workspace session={session} />;
+  return (
+    <RepositoriesProvider>
+      <Workspace session={session} />
+    </RepositoriesProvider>
+  );
 }
 function FullPageMessage({ title, text }: { title: string; text: string }) {
   return (

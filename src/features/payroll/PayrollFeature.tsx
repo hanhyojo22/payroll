@@ -7,9 +7,10 @@ import {
   dailyTicketEntriesForPayrollPeriod,
   governmentDeductionForEmployee,
   payrollExpensePayload,
-  payrollItemPayBasis,
+
   payrollItemPayloadForEmployee,
 } from "../../domain/payroll";
+import { payrollItemPayBasis } from "./payBasis";
 import { salaryBondDeductionsForEmployee, salaryBondHasDeductionForItem } from "../../domain/salaryBonds";
 import { netPay, normalizeTicketCount, ticketGrossPay } from "../../domain/tickets";
 import { isOfflineLikeError } from "../../lib/offlineSync";

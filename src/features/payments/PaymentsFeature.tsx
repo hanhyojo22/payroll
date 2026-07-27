@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useDialog } from "../../shared/components/useDialog";
 import { CheckCircle2, Eye, Receipt, Wallet, X } from "lucide-react";
-import { buildPaymentLedger } from "../../lib/supabaseData";
+import { buildPaymentLedger } from "../../app/resources";
 import { paymentMethodLabel } from "../../domain/expenses";
 import { DataTable } from "../../shared/components/DataTable";
 import { PageHeader, RecordTitle } from "../../shared/components/PageLayout";
