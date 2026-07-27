@@ -3,15 +3,23 @@ import { todayKey } from "../shared/utils/dates";
 
 export type CollectionAgingBucket = "current" | "days1To30" | "days31To60" | "days61To90" | "daysOver90";
 
+// Every amount here is PHP denominated in centavos, so sums of instalments carry binary
+// float residue (333.33 + 333.33 + 333.44 vs 1000.10 is off by ~1.1e-13). Rounding to
+// centavos keeps a fully settled receivable at exactly 0 instead of leaving it in the
+// open/overdue pile forever, and keeps a real shortfall reporting a clean 0.01.
+const roundCentavos = (value: number) => Math.round(value * 100) / 100;
+
 export const collectionPaymentsTotal = (payments: CollectionPayment[] | null | undefined) =>
-  (payments ?? [])
-    .filter((payment) => !payment.is_void)
-    .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+  roundCentavos(
+    (payments ?? [])
+      .filter((payment) => !payment.is_void)
+      .reduce((sum, payment) => sum + Number(payment.amount || 0), 0),
+  );
 
 export const collectionBalance = (
   amount: number | string | null | undefined,
   payments: CollectionPayment[] | null | undefined,
-) => Math.max(0, Number(amount ?? 0) - collectionPaymentsTotal(payments));
+) => Math.max(0, roundCentavos(Number(amount ?? 0) - collectionPaymentsTotal(payments)));
 
 export function collectionStatus(
   collection: Pick<CollectionReminder, "amount" | "due_date" | "archived_at" | "payments">,
@@ -79,7 +87,7 @@ export function withCollectionTotals(collection: CollectionReminder): Collection
   return {
     ...collection,
     amount_paid: amountPaid,
-    outstanding_balance: Math.max(0, Number(collection.amount) - amountPaid),
+    outstanding_balance: collectionBalance(collection.amount, collection.payments),
     status: collectionStatus(collection),
   };
 }

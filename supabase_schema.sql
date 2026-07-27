@@ -2423,13 +2423,10 @@ declare
 begin
   if auth.uid() is null then raise exception 'Authentication required.'; end if;
   if (run_payload->>'user_id')::uuid <> auth.uid() then raise exception 'Payroll owner mismatch.'; end if;
-  if exists (
-    select 1 from public.payroll_runs
-    where id = (run_payload->>'id')::uuid and user_id = auth.uid()
-  ) then
-    return;
-  end if;
 
+  -- Idempotency is per row, not "the run already exists so stop". An offline replay after a
+  -- partial write (run inserted, items not) must still fill in the missing children, so every
+  -- insert below no-ops individually on its own id.
   select * into run_row
   from jsonb_populate_record(
     null::public.payroll_runs,
@@ -2438,7 +2435,7 @@ begin
       'updated_at', coalesce(run_payload->>'updated_at', now()::text)
     )
   );
-  insert into public.payroll_runs select (run_row).*;
+  insert into public.payroll_runs select (run_row).* on conflict (id) do nothing;
 
   for entry in select value from jsonb_array_elements(coalesce(item_payloads, '[]'::jsonb))
   loop
@@ -2453,7 +2450,7 @@ begin
         'updated_at', coalesce(entry->>'updated_at', now()::text)
       )
     );
-    insert into public.payroll_run_items select (item_row).*;
+    insert into public.payroll_run_items select (item_row).* on conflict (id) do nothing;
   end loop;
 
   for entry in select value from jsonb_array_elements(coalesce(detail_payloads, '[]'::jsonb))
@@ -2464,7 +2461,7 @@ begin
       null::public.payroll_run_item_ticket_details,
       entry || jsonb_build_object('created_at', coalesce(entry->>'created_at', now()::text))
     );
-    insert into public.payroll_run_item_ticket_details select (detail_row).*;
+    insert into public.payroll_run_item_ticket_details select (detail_row).* on conflict (id) do nothing;
   end loop;
 
   for entry in select value from jsonb_array_elements(coalesce(advance_updates, '[]'::jsonb))
@@ -2492,7 +2489,7 @@ begin
         'updated_at', coalesce(entry->>'updated_at', now()::text)
       )
     );
-    insert into public.employee_salary_bond_transactions select (bond_row).*;
+    insert into public.employee_salary_bond_transactions select (bond_row).* on conflict (id) do nothing;
   end loop;
 end;
 $$;
@@ -2516,18 +2513,12 @@ declare
   bond_row public.employee_salary_bond_transactions%rowtype;
   entry jsonb;
   affected integer;
-  first_item_id uuid;
 begin
   if auth.uid() is null then raise exception 'Authentication required.'; end if;
-  select (value->>'id')::uuid into first_item_id
-  from jsonb_array_elements(coalesce(item_payloads, '[]'::jsonb))
-  limit 1;
-  if first_item_id is not null and exists (
-    select 1 from public.payroll_run_items where id = first_item_id and user_id = auth.uid()
-  ) then
-    return;
-  end if;
 
+  -- Idempotency is per row. Keying it on the first item's id meant a replay after a partial
+  -- write returned early and silently skipped every remaining item, leaving the rest of the
+  -- payroll missing; each insert below no-ops on its own id instead.
   for entry in select value from jsonb_array_elements(coalesce(item_payloads, '[]'::jsonb))
   loop
     if (entry->>'user_id')::uuid <> auth.uid() then raise exception 'Payroll item owner mismatch.'; end if;
@@ -2539,7 +2530,7 @@ begin
         'updated_at', coalesce(nullif(entry->>'updated_at', ''), now()::text)
       )
     );
-    insert into public.payroll_run_items select (item_row).*;
+    insert into public.payroll_run_items select (item_row).* on conflict (id) do nothing;
   end loop;
 
   for entry in select value from jsonb_array_elements(coalesce(detail_payloads, '[]'::jsonb))
@@ -2550,7 +2541,7 @@ begin
       null::public.payroll_run_item_ticket_details,
       entry || jsonb_build_object('created_at', coalesce(nullif(entry->>'created_at', ''), now()::text))
     );
-    insert into public.payroll_run_item_ticket_details select (detail_row).*;
+    insert into public.payroll_run_item_ticket_details select (detail_row).* on conflict (id) do nothing;
   end loop;
 
   for entry in select value from jsonb_array_elements(coalesce(advance_updates, '[]'::jsonb))
@@ -2576,7 +2567,7 @@ begin
         'updated_at', coalesce(nullif(entry->>'updated_at', ''), now()::text)
       )
     );
-    insert into public.employee_salary_bond_transactions select (bond_row).*;
+    insert into public.employee_salary_bond_transactions select (bond_row).* on conflict (id) do nothing;
   end loop;
 end;
 $$;

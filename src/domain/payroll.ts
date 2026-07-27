@@ -4,6 +4,7 @@ import {
   toNumber,
 } from "./tickets";
 import { monthNames } from "../shared/utils/dates";
+import { currency } from "../shared/utils/currency";
 
 export const payPeriodLabel = (payPeriod: PayrollRun["pay_period"]) =>
   payPeriod === "first_half" ? "First half" : "Second half";
@@ -260,7 +261,10 @@ export function payrollItemPayloadForEmployee(
   payPeriod: PayrollPayPeriod = "first_half",
 ): Omit<PayrollRunItem, "id" | "created_at" | "updated_at"> {
   const dailyTotals = dailyTicketTotalsForEmployee(dailyTicketEntries, employee);
-  const payMode = position?.pay_mode ?? "ticket";
+  // No position means the payout came from the employee's own installation_rate/repair_rate
+  // columns. That earns the same as a ticket position, but payroll_run_items snapshots
+  // pay_mode for history, so it has to stay distinguishable from a real ticket position.
+  const payMode = position?.pay_mode ?? "legacy";
   let basePay: number;
   let ticketPay: number;
   let dailyRate = 0;
@@ -316,6 +320,24 @@ export function payrollItemPayloadForEmployee(
     paid_date: null,
     notes: "",
   };
+}
+
+// "legacy" earns exactly like "ticket" (it predates positions and reads the employee's own
+// rate columns), so it has to describe itself the same way -- otherwise position-less payouts
+// render a bare dash in payroll history.
+export function payrollItemPayBasis(item: PayrollRunItem): string {
+  if (item.pay_mode === "daily") {
+    return `${toNumber(item.days_worked)} days x ${currency.format(toNumber(item.daily_rate))}`;
+  }
+  if (item.pay_mode === "fixed") {
+    return `Base ${currency.format(toNumber(item.base_pay))}`;
+  }
+  const ticketCount = item.ticket_details && item.ticket_details.length > 0
+    ? item.ticket_details.reduce((sum, detail) => sum + (detail.ticket_count ?? 0), 0)
+    : toNumber(item.installation_tickets) + toNumber(item.repair_tickets) + toNumber(item.nap_rehab_tickets);
+  if (item.pay_mode === "ticket" || item.pay_mode === "legacy") return `${ticketCount} tickets`;
+  if (item.pay_mode === "hybrid") return `Base ${currency.format(toNumber(item.base_pay))} + ${ticketCount} tickets`;
+  return "-";
 }
 
 export function payrollExpensePayload(

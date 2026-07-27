@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { InputHTMLAttributes, ReactNode } from "react";
 import { CalendarClock, CheckCircle2, Eye, EyeOff, Pencil, Trash2, X } from "lucide-react";
 import { Spinner } from "./Spinner";
+import { useDialog } from "./useDialog";
 
 export function Modal({
   children,
@@ -14,9 +15,11 @@ export function Modal({
   onClose: () => void;
   title: string;
 }) {
+  const { backdropProps, dialogProps } = useDialog<HTMLElement>({ label: title, onClose });
+
   return (
-    <div className="modal-backdrop" role="presentation">
-      <section aria-label={title} aria-modal="true" className={`modal${className ? ` ${className}` : ""}`} role="dialog">
+    <div className="modal-backdrop" {...backdropProps}>
+      <section className={`modal${className ? ` ${className}` : ""}`} {...dialogProps}>
         <header>
           <h2>{title}</h2>
           <button aria-label="Close" onClick={onClose} type="button">

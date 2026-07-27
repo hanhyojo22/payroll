@@ -87,4 +87,12 @@ Requires `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in `.env`. See `.env.e
 
 ## Testing
 
-Tests live alongside domain code as `*.test.ts` files. Only `src/domain/**/*.test.ts` files are included (configured in `vitest.config.ts`). Tests run in Node environment, no DOM. Domain tests cover payroll and billing calculation logic — they do not touch Supabase or the UI.
+Tests live alongside the code they cover as `*.test.ts` / `*.test.tsx` files; `src/**/*.test.{ts,tsx}` is included (configured in `vitest.config.ts`).
+
+The default environment is Node with no DOM. Component/hook tests opt into jsdom per file with a `// @vitest-environment jsdom` docblock (see `src/shared/components/useDialog.test.tsx`), so the domain suite stays DOM-free and fast.
+
+Coverage today:
+- `src/domain/**` — payroll, billing, collections, expenses, salary bond and payment reminder calculations. No Supabase, no UI.
+- `src/lib/offlineDb.test.ts` — offline mutation queue coalescing and sign-out cache clearing, run against `fake-indexeddb`.
+- `src/lib/offlineSync.test.ts` — offline-vs-server error classification.
+- `src/shared/**` — `friendlyError` message mapping, and the `useDialog` modal accessibility hook.

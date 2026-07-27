@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { useDialog } from "../../shared/components/useDialog";
 import { Archive, History, Pencil, Plus, RotateCcw, Wallet, X } from "lucide-react";
 import { validateSalaryBondWithdrawal } from "../../domain/salaryBonds";
 import { isOfflineLikeError } from "../../lib/offlineSync";
@@ -58,6 +59,11 @@ export function SalaryBondsFeature({
   const [bondForm, setBondForm] = useState<SalaryBondFormValues>(() => emptyBondForm(employee?.id ?? ""));
   const [editingBond, setEditingBond] = useState<SalaryBond | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  const bondFormDialog = useDialog({
+    label: `${editingBond ? "Edit" : "Add"} salary bond`,
+    onClose: () => setFormOpen(false),
+    open: formOpen,
+  });
   const [withdrawingBond, setWithdrawingBond] = useState<SalaryBond | null>(null);
   const [withdrawalForm, setWithdrawalForm] = useState<SalaryBondWithdrawalFormValues>(emptyWithdrawalForm);
   const [withdrawalBusy, setWithdrawalBusy] = useState(false);
@@ -214,8 +220,8 @@ export function SalaryBondsFeature({
       />
 
       {formOpen && (
-        <div className="modal-backdrop" onClick={() => setFormOpen(false)}>
-          <div className="modal billing-form-modal subcon-form-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-backdrop" {...bondFormDialog.backdropProps}>
+          <div className="modal billing-form-modal subcon-form-modal" {...bondFormDialog.dialogProps}>
             <div className="modal-header">
               <h3>{editingBond ? "Edit" : "Add"} Salary Bond</h3>
               <button aria-label="Close" onClick={() => setFormOpen(false)} type="button"><X size={18} /></button>

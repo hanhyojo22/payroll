@@ -1656,14 +1656,6 @@ function openPrintPreview<Row extends object>({
             body { margin: 20px; }
           }
         </style>
-        <script>
-          window.addEventListener("load", function () {
-            window.setTimeout(function () {
-              window.focus();
-              window.print();
-            }, 250);
-          });
-        </script>
       </head>
       <body>
         <h1>${escapeHtml(title)}</h1>
@@ -1687,6 +1679,13 @@ function openPrintPreview<Row extends object>({
     </html>
   `);
   popup.document.close();
+  // Driven from the opener rather than an inline <script> in the popup: an about:blank window
+  // inherits this document's CSP, so an inline script there would need script-src 'unsafe-inline'
+  // for the whole app. The delay lets the webfont land before the print dialog opens.
+  window.setTimeout(() => {
+    popup.focus();
+    popup.print();
+  }, 250);
 }
 
 function buildPdfLines<Row extends object>(

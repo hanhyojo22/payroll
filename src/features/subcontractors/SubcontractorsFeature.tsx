@@ -1,3 +1,4 @@
+import { useDialog } from "../../shared/components/useDialog";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { AlertTriangle, ArrowLeft, CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, Eye, Pencil, Plus, ReceiptText, Ticket, Trash2, Users, WalletCards, X } from "lucide-react";
 import {
@@ -101,6 +102,11 @@ export function SubcontractorsFeature({
     billing_year: number;
     billing_period: BillingPeriod;
   }) | null>(null);
+  const drawerDialog = useDialog<HTMLElement>({
+    label: `Billing breakdown${drawerRow ? `: ${drawerRow.subcon_name}` : ""}`,
+    onClose: () => setDrawerRow(null),
+    open: Boolean(drawerRow),
+  });
 
   useEffect(() => {
     if (initialTab) setTab(initialTab);
@@ -236,8 +242,8 @@ export function SubcontractorsFeature({
       )}
 
       {drawerRow && (
-        <div className="modal-backdrop" onClick={() => setDrawerRow(null)}>
-          <aside className="subcon-billing-drawer" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-backdrop" {...drawerDialog.backdropProps}>
+          <aside className="subcon-billing-drawer" {...drawerDialog.dialogProps}>
             <div className="modal-header">
               <h3>{drawerRow.subcon_name}</h3>
               <button onClick={() => setDrawerRow(null)} type="button" aria-label="Close"><X size={18} /></button>
@@ -1337,6 +1343,7 @@ function SubcontractorProfileModal({
     address: initial?.address ?? "",
   });
   const [busy, setBusy] = useState(false);
+  const { backdropProps, dialogProps } = useDialog({ label: `${initial ? "Edit" : "Add"} subcontractor`, onClose });
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -1364,8 +1371,8 @@ function SubcontractorProfileModal({
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal billing-form-modal subcon-form-modal" onClick={(event) => event.stopPropagation()}>
+    <div className="modal-backdrop" {...backdropProps}>
+      <div className="modal billing-form-modal subcon-form-modal" {...dialogProps}>
         <div className="modal-header">
           <h3>{initial ? "Edit" : "Add"} Subcontractor</h3>
           <button onClick={onClose} type="button" aria-label="Close"><X size={18} /></button>
@@ -1431,10 +1438,11 @@ function PayoutPaymentForm({
     notes: "",
   });
   const [busy, setBusy] = useState(false);
+  const { backdropProps, dialogProps } = useDialog({ label: "Record payout payment", onClose });
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal billing-form-modal expense-payment-modal company-expense-modal" onClick={(event) => event.stopPropagation()}>
+    <div className="modal-backdrop" {...backdropProps}>
+      <div className="modal billing-form-modal expense-payment-modal company-expense-modal" {...dialogProps}>
         <div className="modal-header">
           <div>
             <h3>Record Payment</h3>
@@ -1513,10 +1521,11 @@ function PayoutDetailsModal({
   const displayStatus = paymentReminderDisplayStatus(payment, payment.payments);
   const paidAmount = paymentReminderPaymentsTotal(payment.payments);
   const remainingBalance = paymentReminderRemainingBalance(payment, payment.payments);
+  const { backdropProps, dialogProps } = useDialog({ label: `Payout details: ${payment.title}`, onClose });
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal expense-details-modal" onClick={(event) => event.stopPropagation()}>
+    <div className="modal-backdrop" {...backdropProps}>
+      <div className="modal expense-details-modal" {...dialogProps}>
         <div className="modal-header">
           <div>
             <h3>{payment.title}</h3>

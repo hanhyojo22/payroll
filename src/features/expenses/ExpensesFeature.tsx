@@ -1,3 +1,4 @@
+import { useDialog } from "../../shared/components/useDialog";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Ban, CalendarClock, CheckCircle2, Eye, MoreVertical, Pencil, Plus, Receipt, Square, Tag, Trash2, X } from "lucide-react";
 import { supabase } from "../../supabase";
@@ -956,10 +957,11 @@ function ExpenseFormModal({
     const dueDay = Number(values.due_date.split("-")[2]);
     return `Recurring on the ${ordinalDay(dueDay)} of each month, ending ${values.due_date} (${formatExpenseDuration("monthly", count)}).`;
   })();
+  const { backdropProps, dialogProps } = useDialog({ label: `${initial ? "Edit" : "Add"} ${categoryScope} expense`, onClose });
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className={`modal billing-form-modal${categoryScope === "personal" ? " personal-expense-modal" : " company-expense-modal"}`} onClick={(event) => event.stopPropagation()}>
+    <div className="modal-backdrop" {...backdropProps}>
+      <div className={`modal billing-form-modal${categoryScope === "personal" ? " personal-expense-modal" : " company-expense-modal"}`} {...dialogProps}>
         <div className="modal-header">
           <h3>{initial ? "Edit" : "Add"} {categoryScope === "personal" ? "Personal" : "Company"} Expense</h3>
           <button aria-label="Close" onClick={onClose} type="button"><X size={18} /></button>
@@ -1107,10 +1109,11 @@ function InstallmentPaymentForm({
     notes: "",
   });
   const [busy, setBusy] = useState(false);
+  const { backdropProps, dialogProps } = useDialog({ label: "Record expense payment", onClose });
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className={`modal billing-form-modal expense-payment-modal${categoryScope === "personal" ? " personal-expense-modal" : " company-expense-modal"}`} onClick={(event) => event.stopPropagation()}>
+    <div className="modal-backdrop" {...backdropProps}>
+      <div className={`modal billing-form-modal expense-payment-modal${categoryScope === "personal" ? " personal-expense-modal" : " company-expense-modal"}`} {...dialogProps}>
         <div className="modal-header">
           <div>
             <h3>Record Payment</h3>
@@ -1193,10 +1196,11 @@ function ExpenseDetailsModal({
   const paidAmount = expensePaymentsTotal(expense.installment_payments);
   const remainingBalance = expenseRemainingBalance(expense, expense.installment_payments);
   const canRecordPayment = displayStatus !== "paid" && displayStatus !== "cancelled";
+  const { backdropProps, dialogProps } = useDialog({ label: `Expense details: ${expense.employee_name}`, onClose });
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal expense-details-modal" onClick={(event) => event.stopPropagation()}>
+    <div className="modal-backdrop" {...backdropProps}>
+      <div className="modal expense-details-modal" {...dialogProps}>
         <div className="modal-header">
           <div>
             <h3>{expense.category_name}</h3>
@@ -1348,9 +1352,11 @@ function ConfirmDeleteExpenseModal({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const { backdropProps, dialogProps } = useDialog({ label: "Confirm delete expense", onClose: onCancel });
+
   return (
-    <div className="modal-backdrop" onClick={onCancel}>
-      <div className="modal expense-confirm-modal" onClick={(event) => event.stopPropagation()}>
+    <div className="modal-backdrop" {...backdropProps}>
+      <div className="modal expense-confirm-modal" {...dialogProps}>
         <div className="modal-header">
           <h3>Delete expense?</h3>
           <button aria-label="Close" onClick={onCancel} type="button"><X size={18} /></button>
@@ -1618,9 +1624,11 @@ function ExpenseCategoryFormModal({
   onNameChange: (value: string) => void;
   onSave: () => void;
 }) {
+  const { backdropProps, dialogProps } = useDialog({ label: "Expense categories", onClose });
+
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(event) => event.stopPropagation()}>
+    <div className="modal-backdrop" {...backdropProps}>
+      <div className="modal" {...dialogProps}>
         <div className="modal-header">
           <h3>{editing ? "Edit" : "Add"} {categoryScope === "personal" ? "Personal" : "Company"} Category</h3>
           <button aria-label="Close" onClick={onClose} type="button"><X size={18} /></button>

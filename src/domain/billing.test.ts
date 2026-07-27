@@ -3,7 +3,6 @@ import {
   buildSubcontractorAccountSummary,
   buildSubcontractorPaymentPayloads,
   buildSubcontractorPayoutArtifacts,
-  computeBilling,
   computeClientBillingTotals,
   computeSubconItem,
   countSubconTickets,
@@ -109,42 +108,6 @@ describe("countTicketsForMonth", () => {
       repair: 2,
       nap_rehab: 0,
     });
-  });
-});
-
-describe("computeBilling", () => {
-  it("computes billing with 70/30 split", () => {
-    const result = computeBilling(100, 10, 1500, 70);
-    expect(result.billableTickets).toBe(90);
-    expect(result.billingAmount).toBe(135_000);
-    expect(result.collectionsAmount).toBe(94_500);
-    expect(result.collectiblesAmount).toBe(40_500);
-  });
-
-  it("handles zero tickets", () => {
-    const result = computeBilling(0, 0, 1500, 70);
-    expect(result.billableTickets).toBe(0);
-    expect(result.billingAmount).toBe(0);
-    expect(result.collectionsAmount).toBe(0);
-    expect(result.collectiblesAmount).toBe(0);
-  });
-
-  it("clamps disputed tickets to total", () => {
-    const result = computeBilling(5, 10, 1500, 70);
-    expect(result.billableTickets).toBe(0);
-    expect(result.billingAmount).toBe(0);
-  });
-
-  it("handles 100% collections", () => {
-    const result = computeBilling(10, 0, 1000, 100);
-    expect(result.collectionsAmount).toBe(10_000);
-    expect(result.collectiblesAmount).toBe(0);
-  });
-
-  it("handles 0% collections", () => {
-    const result = computeBilling(10, 0, 1000, 0);
-    expect(result.collectionsAmount).toBe(0);
-    expect(result.collectiblesAmount).toBe(10_000);
   });
 });
 

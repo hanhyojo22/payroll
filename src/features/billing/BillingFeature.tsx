@@ -1,3 +1,4 @@
+import { useDialog } from "../../shared/components/useDialog";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { ArrowLeft, ArrowRight, BadgeDollarSign, CalendarDays, CheckCircle2, ChevronDown, Eye, FileText, MoreVertical, Pencil, Plus, ReceiptText, Send, Trash2, X } from "lucide-react";
 import {
@@ -1204,6 +1205,7 @@ function BillingDetailsModal({
   record: BillingRecord;
   settings: BillingSettings;
 }) {
+  const { backdropProps, dialogProps } = useDialog({ label: `Billing details ${record.invoice_no ?? ""}`.trim(), onClose });
   // Use the rate actually snapshotted onto this record, not live settings -- otherwise
   // viewing an old record's details after rates have changed would show a gross total
   // that doesn't match what was actually billed. Records saved before the snapshot
@@ -1261,8 +1263,8 @@ function BillingDetailsModal({
   const subcontractorDisputes = subconTotals.disputedInstall + subconTotals.disputedRepair + subconTotals.disputedNapRehab;
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal billing-details-modal" onClick={(event) => event.stopPropagation()}>
+    <div className="modal-backdrop" {...backdropProps}>
+      <div className="modal billing-details-modal" {...dialogProps}>
         <div className="modal-header">
           <div>
             <p className="eyebrow">Billing details · {record.invoice_no}</p>
@@ -1491,10 +1493,11 @@ function BillingQuickCollectModal({
 }) {
   const [method, setMethod] = useState<CollectionPayment["payment_method"]>("cash");
   const [busy, setBusy] = useState(false);
+  const { backdropProps, dialogProps } = useDialog({ label: "Record collection", onClose });
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal billing-form-modal" onClick={(event) => event.stopPropagation()} style={{ maxWidth: 440 }}>
+    <div className="modal-backdrop" {...backdropProps}>
+      <div className="modal billing-form-modal" {...dialogProps} style={{ maxWidth: 440 }}>
         <div className="modal-header">
           <h3>Mark as Collected</h3>
           <button onClick={onClose} type="button" aria-label="Close"><X size={18} /></button>
@@ -1579,6 +1582,7 @@ function BillingForm({
   onClose: () => void;
   onSubmit: (values: BillingFormValues, onProgress?: (progress: ActionProgressState | null) => void) => Promise<void>;
 }) {
+  const { backdropProps, dialogProps } = useDialog({ labelledBy: "billing-modal-title", onClose });
   const today = new Date();
   const defaultPeriod = (today.getDate() <= 15 ? "first_half" : "second_half") as BillingFormValues["billing_period"];
 
@@ -1893,13 +1897,10 @@ function BillingForm({
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop" {...backdropProps}>
       <div
-        aria-labelledby="billing-modal-title"
-        aria-modal="true"
         className="modal cbf-modal cbf-modal--compact"
-        onClick={(event) => event.stopPropagation()}
-        role="dialog"
+        {...dialogProps}
       >
         <div className="cbf-header">
           <div className="cbf-header-main">

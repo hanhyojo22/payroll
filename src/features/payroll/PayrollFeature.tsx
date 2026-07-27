@@ -7,6 +7,7 @@ import {
   dailyTicketEntriesForPayrollPeriod,
   governmentDeductionForEmployee,
   payrollExpensePayload,
+  payrollItemPayBasis,
   payrollItemPayloadForEmployee,
 } from "../../domain/payroll";
 import { salaryBondDeductionsForEmployee, salaryBondHasDeductionForItem } from "../../domain/salaryBonds";
@@ -1225,20 +1226,7 @@ function PayrollItemsTable({
   }, [employees]);
   const empCode = (id: string | null) => (id ? employeeCodeMap.get(id) ?? "-" : "-");
 
-  function payBasis(item: PayrollRunItem): string {
-    if (item.pay_mode === "daily") {
-      return `${toNumber(item.days_worked)} days x ${currency.format(toNumber(item.daily_rate))}`;
-    }
-    if (item.pay_mode === "fixed") {
-      return `Base ${currency.format(toNumber(item.base_pay))}`;
-    }
-    const ticketCount = item.ticket_details && item.ticket_details.length > 0
-      ? item.ticket_details.reduce((sum, d) => sum + (d.ticket_count ?? 0), 0)
-      : toNumber(item.installation_tickets) + toNumber(item.repair_tickets) + toNumber(item.nap_rehab_tickets);
-    if (item.pay_mode === "ticket") return `${ticketCount} tickets`;
-    if (item.pay_mode === "hybrid") return `Base ${currency.format(toNumber(item.base_pay))} + ${ticketCount} tickets`;
-    return "-";
-  }
+  const payBasis = payrollItemPayBasis;
 
   return (
     <div className="page-stack" style={{ gap: 8 }}>

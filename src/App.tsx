@@ -1,3 +1,4 @@
+import { useDialog } from "./shared/components/useDialog";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import {
@@ -83,7 +84,7 @@ import {
   loadEmployeeAdvances,
   loadSalaryBonds,
 } from "./lib/supabaseData";
-import { discardFailedMutations, queueMutation, readCachedResource, retryFailedMutations, writeCachedResource } from "./lib/offlineDb";
+import { clearOfflineDataForUser, discardFailedMutations, getPendingMutations, queueMutation, readCachedResource, retryFailedMutations, writeCachedResource } from "./lib/offlineDb";
 import { flushPendingMutations, isOfflineLikeError } from "./lib/offlineSync";
 import { BillingFeature, BillingSettingsManager } from "./features/billing/BillingFeature";
 import { saveSubcontractor } from "./features/billing/billingRepository";
@@ -659,6 +660,7 @@ function ChangePasswordModal({ onClose, userEmail }: { onClose: () => void; user
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const { backdropProps, dialogProps } = useDialog({ label: "Change password", onClose });
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -689,8 +691,8 @@ function ChangePasswordModal({ onClose, userEmail }: { onClose: () => void; user
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal billing-form-modal subcon-form-modal" onClick={(event) => event.stopPropagation()}>
+    <div className="modal-backdrop" {...backdropProps}>
+      <div className="modal billing-form-modal subcon-form-modal" {...dialogProps}>
         <div className="modal-header">
           <h3>Change Password</h3>
           <button aria-label="Close" onClick={onClose} type="button"><X size={18} /></button>
@@ -1145,6 +1147,18 @@ function Workspace({ session }: { session: Session }) {
   }, []);
 
   async function signOut() {
+    // The offline cache holds employee names, salaries and government ID numbers, so it must
+    // not outlive the session on a shared machine. Unsent writes die with it, so confirm first.
+    const pending = await getPendingMutations(session.user.id);
+    if (pending.length > 0) {
+      const confirmed = await NotificationService.showConfirm({
+        title: "Sign out with unsynced changes?",
+        message: `${pending.length} offline change${pending.length === 1 ? "" : "s"} ${pending.length === 1 ? "has" : "have"} not reached the server yet. Signing out discards ${pending.length === 1 ? "it" : "them"}.`,
+        danger: true,
+      });
+      if (!confirmed) return;
+    }
+    await clearOfflineDataForUser(session.user.id);
     await supabase?.auth.signOut();
   }
 
@@ -3333,6 +3347,11 @@ export function DailyTicketEntryView({
   const [calendarMonth, setCalendarMonth] = useState(() => Number(entryDate.split("-")[1]));
   const calendarRef = useRef<HTMLDivElement>(null);
   const [detailEmployee, setDetailEmployee] = useState<Employee | null>(null);
+  const ticketDetailDialog = useDialog({
+    label: `Ticket detail${detailEmployee ? `: ${detailEmployee.full_name}` : ""}`,
+    onClose: () => setDetailEmployee(null),
+    open: Boolean(detailEmployee),
+  });
   const [openMenuId, setOpenMenuId] = useState("");
   const menuRef = useRef<HTMLDivElement>(null);
   const employeeNumberMap = useMemo(() => {
@@ -4258,8 +4277,8 @@ export function DailyTicketEntryView({
         const cats = position?.categories.filter((c) => c.status === "active") ?? [];
         const totalGross = empEntries.reduce((sum, entry) => sum + entryBillableSnapshot(entry).gross, 0);
         return (
-          <div className="modal-backdrop" onClick={() => setDetailEmployee(null)}>
-            <div className="modal ticket-detail-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-backdrop" {...ticketDetailDialog.backdropProps}>
+            <div className="modal ticket-detail-modal" {...ticketDetailDialog.dialogProps}>
               <div className="modal-header">
                 <h2>{detailEmployee.full_name} — Ticket History</h2>
                 <button aria-label="Close" type="button" onClick={() => setDetailEmployee(null)}>

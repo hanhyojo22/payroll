@@ -1,3 +1,4 @@
+import { useDialog } from "../../shared/components/useDialog";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type InputHTMLAttributes, type ReactNode } from "react";
 import { AlertTriangle, Archive, CheckCircle2, Eye, MoreVertical, Plus, Receipt, RotateCcw, Search, Wallet, X } from "lucide-react";
 import { collectionAgingBucket, collectionStatus, dateCollectedFor, validateCollectionPayment, withCollectionTotals } from "../../domain/collections";
@@ -600,10 +601,14 @@ function CollectionDetailsModal({ collection, onClose }: { collection: Collectio
   const paymentsPageStart = (safePaymentsPage - 1) * PAYMENTS_PAGE_SIZE;
   const paymentsPageEnd = Math.min(paymentsPageStart + PAYMENTS_PAGE_SIZE, sortedPayments.length);
   const paginatedPayments = sortedPayments.slice(paymentsPageStart, paymentsPageEnd);
+  const { backdropProps, dialogProps } = useDialog({
+    label: `Receivable ${collection.collection_no ?? collection.title}`,
+    onClose,
+  });
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal collection-details-modal" onClick={(event) => event.stopPropagation()}>
+    <div className="modal-backdrop" {...backdropProps}>
+      <div className="modal collection-details-modal" {...dialogProps}>
         <div className="modal-header">
           <div>
             <h3>{collection.collection_no ?? "Pending sync"}</h3>
@@ -750,9 +755,10 @@ function ReceivableForm({ initial, onClose, onSubmit }: {
       : emptyForm()
   );
   const [busy, setBusy] = useState(false);
+  const { backdropProps, dialogProps } = useDialog({ label: `${initial ? "Edit" : "Add"} receivable`, onClose });
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal billing-form-modal collection-form-modal" onClick={(event) => event.stopPropagation()}>
+    <div className="modal-backdrop" {...backdropProps}>
+      <div className="modal billing-form-modal collection-form-modal" {...dialogProps}>
         <div className="modal-header">
           <h3>{initial ? "Edit" : "Add"} Receivable</h3>
           <button aria-label="Close" onClick={onClose} type="button"><X size={18} /></button>
@@ -790,9 +796,10 @@ function PaymentForm({ balance, onClose, onSubmit }: {
 }) {
   const [values, setValues] = useState({ ...emptyPayment(), amount: String(balance) });
   const [busy, setBusy] = useState(false);
+  const { backdropProps, dialogProps } = useDialog({ label: "Record collection", onClose });
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal billing-form-modal collection-form-modal" onClick={(event) => event.stopPropagation()}>
+    <div className="modal-backdrop" {...backdropProps}>
+      <div className="modal billing-form-modal collection-form-modal" {...dialogProps}>
         <div className="modal-header">
           <h3>Record Collection</h3>
           <button aria-label="Close" onClick={onClose} type="button"><X size={18} /></button>

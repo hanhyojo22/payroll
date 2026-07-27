@@ -1,7 +1,8 @@
-import { useEffect, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import { AlertTriangle, CheckCircle2, HelpCircle, Info, X, XCircle } from "lucide-react";
 import { dismissToast, getSnapshot, resolveConfirm, subscribe } from "./notificationStore";
 import type { ToastItem, ToastType } from "./notificationStore";
+import { useDialog } from "../components/useDialog";
 
 const TOAST_ICONS: Record<ToastType, JSX.Element> = {
   success: <CheckCircle2 size={18} />,
@@ -28,56 +29,51 @@ function ToastStack({ className, toasts }: { className: string; toasts: ToastIte
   );
 }
 
+// Its own component so useDialog can run unconditionally -- Escape, focus trap and focus
+// restore all come from the hook rather than being re-implemented here.
+function ConfirmDialog({ request }: { request: NonNullable<ReturnType<typeof getSnapshot>["confirmRequest"]> }) {
+  const { backdropProps, dialogProps } = useDialog<HTMLElement>({
+    label: request.title ?? "Confirm",
+    onClose: () => resolveConfirm(request.id, false),
+  });
+
+  return (
+    <div className="modal-backdrop" {...backdropProps}>
+      <section className="modal confirm-modal" {...dialogProps}>
+        <div className={`confirm-icon-wrap${request.danger ? " danger" : ""}`}>
+          {request.danger ? <AlertTriangle size={24} /> : <HelpCircle size={24} />}
+        </div>
+        {request.title && <h2>{request.title}</h2>}
+        <p>{request.message}</p>
+        <div className="confirm-actions">
+          <button className="secondary-button" onClick={() => resolveConfirm(request.id, false)} type="button">
+            {request.cancelText}
+          </button>
+          <button
+            className={`primary-button${request.danger ? " danger-button" : ""}`}
+            onClick={() => resolveConfirm(request.id, true)}
+            type="button"
+          >
+            {request.confirmText}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export function NotificationHost() {
   const state = useSyncExternalStore(subscribe, getSnapshot);
   const confirmRequest = state.confirmRequest;
   const successInfoToasts = state.toasts.filter((toast) => toast.type === "success" || toast.type === "info");
   const attentionToasts = state.toasts.filter((toast) => toast.type === "warning" || toast.type === "error");
 
-  useEffect(() => {
-    if (!confirmRequest) return;
-    const requestId = confirmRequest.id;
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") resolveConfirm(requestId, false);
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [confirmRequest]);
-
   return (
     <>
       <ToastStack className="toast-stack toast-stack-top-right toast-stack-success-info" toasts={successInfoToasts} />
       <ToastStack className="toast-stack toast-stack-top-center toast-stack-attention" toasts={attentionToasts} />
 
-      {confirmRequest && (
-        <div className="modal-backdrop" onClick={() => resolveConfirm(confirmRequest.id, false)} role="presentation">
-          <section
-            aria-label={confirmRequest.title ?? "Confirm"}
-            aria-modal="true"
-            className="modal confirm-modal"
-            onClick={(event) => event.stopPropagation()}
-            role="dialog"
-          >
-            <div className={`confirm-icon-wrap${confirmRequest.danger ? " danger" : ""}`}>
-              {confirmRequest.danger ? <AlertTriangle size={24} /> : <HelpCircle size={24} />}
-            </div>
-            {confirmRequest.title && <h2>{confirmRequest.title}</h2>}
-            <p>{confirmRequest.message}</p>
-            <div className="confirm-actions">
-              <button className="secondary-button" onClick={() => resolveConfirm(confirmRequest.id, false)} type="button">
-                {confirmRequest.cancelText}
-              </button>
-              <button
-                className={`primary-button${confirmRequest.danger ? " danger-button" : ""}`}
-                onClick={() => resolveConfirm(confirmRequest.id, true)}
-                type="button"
-              >
-                {confirmRequest.confirmText}
-              </button>
-            </div>
-          </section>
-        </div>
-      )}
+      {confirmRequest && <ConfirmDialog request={confirmRequest} />}
 
       {state.loading && (
         <div aria-busy="true" className="loading-overlay" role="status">
