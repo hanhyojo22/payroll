@@ -1,7 +1,7 @@
+import { useRepositories } from "../../app/RepositoriesProvider";
 import { useState, type FormEvent } from "react";
 import { CreditCard, Pencil, Save, X } from "lucide-react";
 import { isOfflineLikeError } from "../../lib/offlineSync";
-import { supabase } from "../../supabase";
 import { DataTable } from "../../shared/components/DataTable";
 import { MoneyField } from "../../shared/components/MoneyField";
 import { StatusBadge } from "../../shared/components/StatusBadge";
@@ -62,6 +62,7 @@ export function EmployeeAdvancesFeature({
   userId: string;
 }) {
   const [advanceForm, setAdvanceForm] = useState<EmployeeAdvanceFormValues>(() => emptyEmployeeAdvance(employee.id));
+  const repos = useRepositories();
   const [editingAdvance, setEditingAdvance] = useState<EmployeeAdvance | null>(null);
   const amount = toNumber(advanceForm.amount);
   const deductionPerPayroll = toNumber(advanceForm.deduction_per_payroll);
@@ -73,7 +74,6 @@ export function EmployeeAdvancesFeature({
 
   async function saveEmployeeAdvance(event: FormEvent) {
     event.preventDefault();
-    if (!supabase) return;
 
     const balance = advanceForm.balance ? toNumber(advanceForm.balance) : amount;
     const generatedAdvanceId = `EA-${Date.now().toString(36).toUpperCase()}`;
@@ -109,9 +109,7 @@ export function EmployeeAdvancesFeature({
       return;
     }
 
-    const result = editingAdvance
-      ? await supabase.from("employee_advances").update(payload).eq("id", editingAdvance.id)
-      : await supabase.from("employee_advances").insert(payload);
+    const result = await repos.employeeAdvances.save(payload, editingAdvance?.id);
     if (result.error) {
       if (isOfflineLikeError(result.error)) {
         await onQueueOfflineMutation({

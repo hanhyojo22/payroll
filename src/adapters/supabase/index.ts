@@ -3,6 +3,7 @@ import type { Repositories } from "../../core/ports";
 import { supabaseCollectionRepository } from "./collectionRepository";
 import { supabaseExpenseCategoryRepository, supabaseExpenseRepository } from "./expenseRepository";
 import { supabasePayrollRepository } from "./payrollRepository";
+import { supabaseEmployeeAdvanceRepository, supabaseSalaryBondRepository } from "./salaryBondRepository";
 
 /**
  * Composition root for data access: the single place where a SupabaseClient is turned into
@@ -14,5 +15,7 @@ export function createSupabaseRepositories(supabase: SupabaseClient): Repositori
     expenses: supabaseExpenseRepository(supabase),
     expenseCategories: supabaseExpenseCategoryRepository(supabase),
     payroll: supabasePayrollRepository(supabase),
+    salaryBonds: supabaseSalaryBondRepository(supabase),
+    employeeAdvances: supabaseEmployeeAdvanceRepository(supabase),
   };
 }

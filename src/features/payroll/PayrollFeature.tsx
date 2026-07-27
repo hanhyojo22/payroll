@@ -19,8 +19,8 @@ import {
 import { salaryBondDeductionsForEmployee, salaryBondHasDeductionForItem } from "../../domain/salaryBonds";
 import { netPay, normalizeTicketCount, ticketGrossPay } from "../../domain/tickets";
 import { isOfflineLikeError } from "../../lib/offlineSync";
-import { supabase } from "../../supabase";
 import type { PayrollRepository } from "../../core/ports/payroll";
+import type { EmployeeAdvanceRepository } from "../../core/ports/salaryBonds";
 import { Modal, TextField } from "../../shared/components/FormLayout";
 import { DataTable } from "../../shared/components/DataTable";
 import { PageHeader, RecordTitle, Toolbar } from "../../shared/components/PageLayout";
@@ -160,22 +160,16 @@ function payrollItemPayloadForEmployeeWithEmployeeAdvances(
   };
 }
 
-async function applyEmployeeAdvancePayrollDeductions(deductions: EmployeeAdvancePayrollDeduction[]) {
-  if (!supabase || deductions.length === 0) return null;
-  const client = supabase;
-
-  const updates = deductions.map(({ amount, advance }) => {
+async function applyEmployeeAdvancePayrollDeductions(
+  employeeAdvances: EmployeeAdvanceRepository,
+  deductions: EmployeeAdvancePayrollDeduction[],
+) {
+  if (deductions.length === 0) return null;
+  const result = await employeeAdvances.applyBalances(deductions.map(({ amount, advance }) => {
     const balance = Math.max(0, toNumber(advance.balance) - amount);
-    return client
-      .from("employee_advances")
-      .update({
-        balance,
-        status: balance === 0 ? "completed" : advance.status,
-      })
-      .eq("id", advance.id);
-  });
-  const results = await Promise.all(updates);
-  return results.find((result) => result.error)?.error ?? null;
+    return { id: advance.id, balance, status: balance === 0 ? "completed" : advance.status };
+  }));
+  return result.error ?? null;
 }
 
 function employeeAdvanceUpdatesForDeductions(deductions: EmployeeAdvancePayrollDeduction[]) {
@@ -258,11 +252,12 @@ function salaryBondTransactionPayloadsForItemDeductions(
 // ledger write it depends on has actually succeeded.
 async function applyPayrollDeductionLedger(
   payroll: PayrollRepository,
+  employeeAdvances: EmployeeAdvanceRepository,
   advanceDeductions: EmployeeAdvancePayrollDeduction[],
   bondTransactionPayloads: Array<Record<string, unknown>>,
 ) {
   const [advanceError, bondError] = await Promise.all([
-    applyEmployeeAdvancePayrollDeductions(advanceDeductions),
+    applyEmployeeAdvancePayrollDeductions(employeeAdvances, advanceDeductions),
     insertSalaryBondTransactionPayloads(payroll, bondTransactionPayloads),
   ]);
   return advanceError ?? bondError ?? null;
@@ -367,7 +362,7 @@ export function PayrollFeature({
   }, [payrollSettings]);
 
   useEffect(() => {
-    if (!supabase || activePayrollSettings) return;
+    if (activePayrollSettings) return;
     void repos.payroll.ensureSettings(userId).then(({ data }) => {
       if (data) setActivePayrollSettings(data);
     });
@@ -393,9 +388,9 @@ export function PayrollFeature({
   }, [expenseCategories]);
 
   useEffect(() => {
-    if (!supabase || payrollExpenseCategoryId) return;
+    if (payrollExpenseCategoryId) return;
     function tryEnsureCategory() {
-      if (!supabase || payrollExpenseCategoryId || !navigator.onLine) return;
+      if (payrollExpenseCategoryId || !navigator.onLine) return;
       void repos.expenseCategories.ensureCompanyCategory(userId, "Payroll").then(({ data }) => {
         if (data) setPayrollExpenseCategoryId(data.id);
       });
@@ -440,7 +435,7 @@ export function PayrollFeature({
 
   async function resolvePayrollSettings() {
     if (activePayrollSettings) return activePayrollSettings;
-    if (!supabase) return null;
+    return null;
 
     const result = await repos.payroll.ensureSettings(userId);
     if (result.error) {
@@ -471,7 +466,6 @@ export function PayrollFeature({
       return;
     }
 
-    if (!supabase) return;
     const result = await repos.expenses.save(payload);
     if (result.error && isOfflineLikeError(result.error)) {
       await onQueueOfflineMutation({
@@ -493,7 +487,6 @@ export function PayrollFeature({
     values: PayrollRunFormValues,
     onProgress?: (progress: ActionProgressState | null) => void,
   ) {
-    if (!supabase) return;
     const reportProgress = (progress: ActionProgressState | null) => {
       setGenerateProgress(progress);
       onProgress?.(progress);
@@ -752,7 +745,6 @@ export function PayrollFeature({
   }
 
   async function updateItem(item: PayrollRunItem, patch: Partial<PayrollRunItem>) {
-    if (!supabase) return;
     const installationTickets = normalizeTicketCount(patch.installation_tickets ?? item.installation_tickets);
     const repairTickets = normalizeTicketCount(patch.repair_tickets ?? item.repair_tickets);
     const installationRate = toNumber(patch.installation_rate ?? item.installation_rate);
@@ -795,7 +787,7 @@ export function PayrollFeature({
   }
 
   async function addMissingEmployees() {
-    if (!supabase || !selectedRun || missingEmployees.length === 0) return;
+    if (!selectedRun || missingEmployees.length === 0) return;
     const confirmed = await NotificationService.showConfirm({
       title: "Add missing employees",
       message: `Add ${missingEmployees.length} missing employee${missingEmployees.length === 1 ? "" : "s"} to this payroll run?`,
@@ -932,7 +924,7 @@ export function PayrollFeature({
   );
 
   async function applyMissingPayrollDeductions() {
-    if (!supabase || !selectedRun || itemsNeedingPayrollDeductions.length === 0) return;
+    if (!selectedRun || itemsNeedingPayrollDeductions.length === 0) return;
     if (!navigator.onLine) {
       NotificationService.showError("Connect to the internet to apply payroll deductions to this payroll run.");
       return;
@@ -948,7 +940,7 @@ export function PayrollFeature({
     // payroll_run_items. This way a retry after a partial failure — in either order —
     // can't double-deduct a bond balance or leave an item's notes claiming a deduction
     // that was never actually applied to the ledger.
-    const ledgerError = await applyPayrollDeductionLedger(repos.payroll,
+    const ledgerError = await applyPayrollDeductionLedger(repos.payroll, repos.employeeAdvances,
       itemsNeedingPayrollDeductions.flatMap((entry) => entry.patch.advanceDeductions),
       salaryBondTransactionPayloadsForItemDeductions(
         itemsNeedingPayrollDeductions.map(({ item, patch }) => ({ itemId: item.id, deductions: patch.bondDeductions })),
@@ -975,7 +967,7 @@ export function PayrollFeature({
   }
 
   async function markAllPaid() {
-    if (!supabase || !selectedRun || pendingItems.length === 0) return;
+    if (!selectedRun || pendingItems.length === 0) return;
     if (!navigator.onLine) {
       NotificationService.showError("Connect to the internet to mark all payroll items as paid.");
       return;
@@ -993,7 +985,7 @@ export function PayrollFeature({
       // item paid — so an item is never marked paid with a deduction note that was never
       // actually applied to the advance balance / salary bond ledger.
       if (itemsNeedingPayrollDeductions.length > 0) {
-        const ledgerError = await applyPayrollDeductionLedger(repos.payroll,
+        const ledgerError = await applyPayrollDeductionLedger(repos.payroll, repos.employeeAdvances,
           itemsNeedingPayrollDeductions.flatMap((entry) => entry.patch.advanceDeductions),
           salaryBondTransactionPayloadsForItemDeductions(
             itemsNeedingPayrollDeductions.map(({ item, patch }) => ({ itemId: item.id, deductions: patch.bondDeductions })),
@@ -1342,7 +1334,7 @@ export function PayrollSettingsManager({
   }, [payrollSettings]);
 
   useEffect(() => {
-    if (!supabase || settings) return;
+    if (settings) return;
     void repos.payroll.ensureSettings(userId).then(({ data }) => {
       if (data) {
         setSettings(data);
@@ -1381,7 +1373,6 @@ export function PayrollSettingsManager({
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if (!supabase) return;
     setBusy(true);
     const result = await repos.payroll.saveSettings(userId, { government_deduction_enabled: enabled, government_deduction_cutoff: cutoff });
     setBusy(false);

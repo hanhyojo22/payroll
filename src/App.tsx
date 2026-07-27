@@ -98,7 +98,7 @@ import { EmployeeAdvancesFeature } from "./features/payroll/EmployeeAdvancesFeat
 import { PayrollFeature, PayrollHistoryFeature, PayrollSettingsManager } from "./features/payroll/PayrollFeature";
 import { ReportsFeature } from "./features/reports/ReportsFeature";
 import { SalaryBondsFeature } from "./features/salaryBonds/SalaryBondsFeature";
-import { normalizeSalaryBond } from "./features/salaryBonds/salaryBondRepository";
+import { normalizeSalaryBond } from "./features/salaryBonds/mapping";
 import { SubcontractorsFeature } from "./features/subcontractors/SubcontractorsFeature";
 import { Sidebar } from "./Sidebar";
 import { MoneyField as MoneyInput } from "./shared/components/MoneyField";

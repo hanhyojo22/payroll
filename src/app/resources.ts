@@ -30,9 +30,8 @@ import { supabaseCollectionRepository } from "../adapters/supabase/collectionRep
 import { fetchSubcontractors } from "../features/billing/billingRepository";
 import { fetchSubconDailyTickets } from "../features/billing/subconTicketRepository";
 import { supabaseExpenseCategoryRepository, supabaseExpenseRepository } from "../adapters/supabase/expenseRepository";
-import { fetchEmployeeAdvances } from "../features/payroll/employeeAdvanceRepository";
+import { supabaseEmployeeAdvanceRepository, supabaseSalaryBondRepository } from "../adapters/supabase/salaryBondRepository";
 import { supabasePayrollRepository } from "../adapters/supabase/payrollRepository";
-import { fetchSalaryBonds } from "../features/salaryBonds/salaryBondRepository";
 import { fetchSubcontractorAdvances } from "../features/subcontractors/subcontractorAdvanceRepository";
 import { todayKey } from "../shared/utils/dates";
 
@@ -335,8 +334,8 @@ export async function loadCollections(supabase: SupabaseClient) {
 
 export async function loadEmployeeAdvances(supabase: SupabaseClient) {
   try {
-    const result = await withTimeout(fetchEmployeeAdvances(supabase), "Employee advances");
-    return { data: result.data, error: result.error, label: "Employee advances" };
+    const result = await withTimeout(supabaseEmployeeAdvanceRepository(supabase).list(), "Employee advances");
+    return { data: result.data ?? [], error: result.error, label: "Employee advances" };
   } catch (error) {
     return { data: [] as EmployeeAdvance[], error: error as AppErrorLike, label: "Employee advances" };
   }
@@ -344,8 +343,8 @@ export async function loadEmployeeAdvances(supabase: SupabaseClient) {
 
 export async function loadSalaryBonds(supabase: SupabaseClient) {
   try {
-    const result = await withTimeout(fetchSalaryBonds(supabase), "Salary bonds");
-    return { data: result.data, error: result.error, label: "Salary bonds" };
+    const result = await withTimeout(supabaseSalaryBondRepository(supabase).list(), "Salary bonds");
+    return { data: result.data ?? [], error: result.error, label: "Salary bonds" };
   } catch (error) {
     return { data: [] as SalaryBond[], error: error as AppErrorLike, label: "Salary bonds" };
   }

@@ -1,9 +1,10 @@
 import type { CollectionRepository, RecordCollectionPaymentInput, SaveCollectionInput } from "../core/ports/collections";
 import type { ExpenseCategoryRepository, ExpenseRepository } from "../core/ports/expenses";
 import type { PayrollRepository } from "../core/ports/payroll";
+import type { EmployeeAdvanceRepository, SalaryBondRepository } from "../core/ports/salaryBonds";
 import { err, ok, type Result } from "../core/ports/result";
 import { withCollectionTotals } from "../domain/collections";
-import type { CollectionPayment, CollectionReminder, Expense, ExpenseCategory, PayrollHistoryRow, PayrollRunItem, PayrollRunWithItems, PayrollSettings } from "../types";
+import type { CollectionPayment, CollectionReminder, Expense, ExpenseCategory, PayrollHistoryRow, PayrollRunItem, PayrollRunWithItems, PayrollSettings, EmployeeAdvance, SalaryBond } from "../types";
 import type { AppError } from "../shared/types";
 
 export type FakeCollectionRepository = CollectionRepository & {
@@ -401,6 +402,154 @@ export function fakePayrollRepository(): FakePayrollRepository {
 
     async insertSalaryBondTransactions() {
       return takeFailure<void>() ?? ok(undefined);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Salary bonds and employee advances
+// ---------------------------------------------------------------------------
+
+export type FakeSalaryBondRepository = SalaryBondRepository & {
+  failNext(error: AppError): void;
+  seed(bonds: SalaryBond[]): void;
+  transactions(): Record<string, unknown>[];
+};
+
+export function fakeSalaryBondRepository(): FakeSalaryBondRepository {
+  let rows: SalaryBond[] = [];
+  let written: Record<string, unknown>[] = [];
+  let pendingFailure: AppError | null = null;
+
+  function takeFailure<T>(): Result<T> | null {
+    if (!pendingFailure) return null;
+    const failure = pendingFailure;
+    pendingFailure = null;
+    return err<T>(failure);
+  }
+
+  return {
+    failNext(error) {
+      pendingFailure = error;
+    },
+    seed(bonds) {
+      rows = [...bonds];
+    },
+    transactions() {
+      return written;
+    },
+
+    async list() {
+      return takeFailure<SalaryBond[]>() ?? ok(rows);
+    },
+
+    async save(payload, id) {
+      const failure = takeFailure<void>();
+      if (failure) return failure;
+      const now = new Date().toISOString();
+      const existing = id ? rows.find((row) => row.id === id) : undefined;
+      const next = {
+        ...(existing ?? {}),
+        ...payload,
+        id: id ?? crypto.randomUUID(),
+        bond_reference: existing?.bond_reference ?? "SB-TEST",
+        status: existing?.status ?? "active",
+        transactions: existing?.transactions ?? [],
+        created_at: existing?.created_at ?? now,
+        updated_at: now,
+      } as SalaryBond;
+      rows = existing ? rows.map((row) => row.id === next.id ? next : row) : [next, ...rows];
+      return ok(undefined);
+    },
+
+    async archive(id) {
+      const failure = takeFailure<void>();
+      if (failure) return failure;
+      rows = rows.map((row) => row.id === id ? { ...row, status: "archived" } : row);
+      return ok(undefined);
+    },
+
+    async reactivate(id) {
+      const failure = takeFailure<void>();
+      if (failure) return failure;
+      rows = rows.map((row) => row.id === id ? { ...row, status: "active" } : row);
+      return ok(undefined);
+    },
+
+    async recordWithdrawal(input) {
+      const failure = takeFailure<void>();
+      if (failure) return failure;
+      written.push({ ...input, type: "withdrawal" });
+      return ok(undefined);
+    },
+
+    async voidTransaction(transactionId, reason) {
+      const failure = takeFailure<void>();
+      if (failure) return failure;
+      written.push({ transactionId, reason, voided: true });
+      return ok(undefined);
+    },
+
+    async insertTransactions(payloads) {
+      const failure = takeFailure<void>();
+      if (failure) return failure;
+      written = [...written, ...payloads];
+      return ok(undefined);
+    },
+  };
+}
+
+export type FakeEmployeeAdvanceRepository = EmployeeAdvanceRepository & {
+  failNext(error: AppError): void;
+  seed(advances: EmployeeAdvance[]): void;
+};
+
+export function fakeEmployeeAdvanceRepository(): FakeEmployeeAdvanceRepository {
+  let rows: EmployeeAdvance[] = [];
+  let pendingFailure: AppError | null = null;
+
+  function takeFailure<T>(): Result<T> | null {
+    if (!pendingFailure) return null;
+    const failure = pendingFailure;
+    pendingFailure = null;
+    return err<T>(failure);
+  }
+
+  return {
+    failNext(error) {
+      pendingFailure = error;
+    },
+    seed(advances) {
+      rows = [...advances];
+    },
+
+    async list() {
+      return takeFailure<EmployeeAdvance[]>() ?? ok(rows);
+    },
+
+    async save(payload, id) {
+      const failure = takeFailure<void>();
+      if (failure) return failure;
+      const now = new Date().toISOString();
+      const existing = id ? rows.find((row) => row.id === id) : undefined;
+      const next = {
+        ...payload,
+        id: id ?? payload.id,
+        created_at: existing?.created_at ?? now,
+        updated_at: now,
+      } as EmployeeAdvance;
+      rows = existing ? rows.map((row) => row.id === next.id ? next : row) : [next, ...rows];
+      return ok(undefined);
+    },
+
+    async applyBalances(updates) {
+      const failure = takeFailure<void>();
+      if (failure) return failure;
+      rows = rows.map((row) => {
+        const update = updates.find((item) => item.id === row.id);
+        return update ? { ...row, balance: update.balance, status: update.status } : row;
+      });
+      return ok(undefined);
     },
   };
 }

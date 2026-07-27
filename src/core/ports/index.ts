@@ -1,6 +1,7 @@
 import type { CollectionRepository } from "./collections";
 import type { ExpenseCategoryRepository, ExpenseRepository } from "./expenses";
 import type { PayrollRepository } from "./payroll";
+import type { EmployeeAdvanceRepository, SalaryBondRepository } from "./salaryBonds";
 
 /**
  * Everything the app can reach the database through. One entry per feature, added as each
@@ -11,6 +12,8 @@ export type Repositories = {
   expenses: ExpenseRepository;
   expenseCategories: ExpenseCategoryRepository;
   payroll: PayrollRepository;
+  salaryBonds: SalaryBondRepository;
+  employeeAdvances: EmployeeAdvanceRepository;
 };
 
 export type { CollectionRepository, RecordCollectionPaymentInput, SaveCollectionInput } from "./collections";
@@ -28,4 +31,12 @@ export type {
   PayrollRepository,
   PayrollSettingsPayload,
 } from "./payroll";
+export type {
+  EmployeeAdvanceBalanceUpdate,
+  EmployeeAdvancePayload,
+  EmployeeAdvanceRepository,
+  SalaryBondPayload,
+  SalaryBondRepository,
+  SalaryBondWithdrawal,
+} from "./salaryBonds";
 export { err, isOk, ok, type Result } from "./result";

@@ -3,7 +3,6 @@ import { useDialog } from "../../shared/components/useDialog";
 import { Archive, History, Pencil, Plus, RotateCcw, Wallet, X } from "lucide-react";
 import { validateSalaryBondWithdrawal } from "../../domain/salaryBonds";
 import { isOfflineLikeError } from "../../lib/offlineSync";
-import { supabase } from "../../supabase";
 import { DataTable } from "../../shared/components/DataTable";
 import { Modal } from "../../shared/components/FormLayout";
 import { MoneyField } from "../../shared/components/MoneyField";
@@ -20,12 +19,8 @@ import type {
   SalaryBondFormValues,
   SalaryBondWithdrawalFormValues,
 } from "../../types";
-import {
-  archiveSalaryBond,
-  reactivateSalaryBond,
-  recordSalaryBondWithdrawal,
-  saveSalaryBond,
-} from "./salaryBondRepository";
+import { useRepositories } from "../../app/RepositoriesProvider";
+import { salaryBondPayload } from "./mapping";
 
 const emptyBondForm = (employeeId: string): SalaryBondFormValues => ({
   employee_id: employeeId,
@@ -59,6 +54,7 @@ export function SalaryBondsFeature({
   const [bondForm, setBondForm] = useState<SalaryBondFormValues>(() => emptyBondForm(employee?.id ?? ""));
   const [editingBond, setEditingBond] = useState<SalaryBond | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  const repos = useRepositories();
   const bondFormDialog = useDialog({
     label: `${editingBond ? "Edit" : "Add"} salary bond`,
     onClose: () => setFormOpen(false),
@@ -94,7 +90,6 @@ export function SalaryBondsFeature({
 
   async function saveBond(event: FormEvent) {
     event.preventDefault();
-    if (!supabase) return;
     const targetEmployee = employee ?? employeesById.get(bondForm.employee_id);
     if (!targetEmployee) {
       NotificationService.showError("Select an employee for this salary bond.");
@@ -104,7 +99,7 @@ export function SalaryBondsFeature({
       NotificationService.showError("Connect to the internet to save a salary bond.");
       return;
     }
-    const result = await saveSalaryBond(supabase, bondForm, userId, targetEmployee, editingBond?.id);
+    const result = await repos.salaryBonds.save(salaryBondPayload(bondForm, userId, targetEmployee), editingBond?.id);
     if (result.error) {
       NotificationService.showError(friendlyError(result.error));
       return;
@@ -116,13 +111,13 @@ export function SalaryBondsFeature({
   }
 
   async function toggleArchiveBond(bond: SalaryBond) {
-    if (!supabase || !navigator.onLine) {
+    if (!navigator.onLine) {
       NotificationService.showError("Connect to the internet to update this salary bond.");
       return;
     }
     const result = bond.status === "archived"
-      ? await reactivateSalaryBond(supabase, bond.id)
-      : await archiveSalaryBond(supabase, bond.id);
+      ? await repos.salaryBonds.reactivate(bond.id)
+      : await repos.salaryBonds.archive(bond.id);
     if (result.error) {
       NotificationService.showError(friendlyError(result.error));
       return;
@@ -138,7 +133,7 @@ export function SalaryBondsFeature({
 
   async function submitWithdrawal(event: FormEvent) {
     event.preventDefault();
-    if (!supabase || !withdrawingBond) return;
+    if (!withdrawingBond) return;
     if (!navigator.onLine) {
       NotificationService.showError("Connect to the internet to record an emergency withdrawal.");
       return;
@@ -159,7 +154,13 @@ export function SalaryBondsFeature({
     setWithdrawalBusy(true);
     try {
       const transactionId = crypto.randomUUID();
-      const result = await recordSalaryBondWithdrawal(supabase, withdrawingBond.id, transactionId, withdrawalForm);
+      const result = await repos.salaryBonds.recordWithdrawal({
+        bondId: withdrawingBond.id,
+        transactionId,
+        amount: toNumber(withdrawalForm.amount),
+        transactionDate: withdrawalForm.transaction_date,
+        note: withdrawalForm.note.trim(),
+      });
       if (result.error) {
         NotificationService.showError(isOfflineLikeError(result.error) ? "Connect to the internet to record an emergency withdrawal." : friendlyError(result.error));
         return;
