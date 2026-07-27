@@ -1,9 +1,15 @@
 import { useDialog } from "../../shared/components/useDialog";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type InputHTMLAttributes, type ReactNode } from "react";
 import { AlertTriangle, Archive, CheckCircle2, Eye, MoreVertical, Plus, Receipt, RotateCcw, Search, Wallet, X } from "lucide-react";
-import { collectionAgingBucket, collectionStatus, dateCollectedFor, validateCollectionPayment, withCollectionTotals } from "../../domain/collections";
-import { isOfflineLikeError } from "../../lib/offlineSync";
-import { supabase } from "../../supabase";
+import { collectionAgingBucket, collectionStatus, dateCollectedFor, withCollectionTotals } from "../../domain/collections";
+import { useRepositories } from "../../app/RepositoriesProvider";
+import { notificationServiceNotifier } from "../../adapters/notifications/notifier";
+import {
+  recordPayment as recordPaymentUseCase,
+  saveReceivable as saveReceivableUseCase,
+  toggleArchive as toggleArchiveUseCase,
+  type CollectionDeps,
+} from "./useCases";
 import { MoneyField } from "../../shared/components/MoneyField";
 import { PageHeader } from "../../shared/components/PageLayout";
 import type { QueueOfflineMutation } from "../../shared/types";
@@ -17,13 +23,6 @@ import type {
   CollectionReminder,
   CollectionStatus,
 } from "../../types";
-import {
-  archiveReceivable,
-  receivablePayload,
-  recordReceivablePayment,
-  restoreReceivable,
-  saveReceivable,
-} from "./collectionRepository";
 
 type StatusFilter = "all" | CollectionStatus;
 type AgingFilter = "all" | "current" | "days1To30" | "days31To60" | "days61To90" | "daysOver90";
@@ -101,6 +100,20 @@ function CollectionWorkspace({
   const [formOpen, setFormOpen] = useState(false);
   const [payingCollection, setPayingCollection] = useState<CollectionReminder | null>(null);
   const [viewing, setViewing] = useState<CollectionReminder | null>(null);
+  const repos = useRepositories();
+
+  // Everything the use-cases reach outside themselves, assembled once. The use-cases hold the
+  // orchestration and are unit-tested against fakes; this component only renders and delegates.
+  const useCaseDeps: CollectionDeps = useMemo(() => ({
+    repos,
+    queue: onQueueOfflineMutation,
+    notify: notificationServiceNotifier,
+    isOnline: () => navigator.onLine,
+    reload: onChange,
+    applyLocal: onLocalCollectionsChange,
+    newId: () => crypto.randomUUID(),
+    now: () => new Date().toISOString(),
+  }), [repos, onQueueOfflineMutation, onChange, onLocalCollectionsChange]);
 
   const visible = useMemo(() => collections.filter((collection) => {
     const status = collectionStatus(collection);
@@ -140,60 +153,9 @@ function CollectionWorkspace({
     };
   }, [collections]);
 
-  function replaceLocal(next: CollectionReminder) {
-    onLocalCollectionsChange(collections.map((item) => item.id === next.id ? next : item));
-  }
-
   async function submitReceivable(values: CollectionFormValues) {
-    if (!supabase) return;
-    if (Number(values.amount) <= 0 || values.issue_date > values.due_date || (editing && Number(values.amount) < editing.amount_paid)) {
-      NotificationService.showError("Enter a positive amount, keep it at least equal to payments already received, and use a due date on or after the issue date.");
-      return;
-    }
-    const id = editing?.id ?? crypto.randomUUID();
-    const payload = receivablePayload(values, userId);
-    const optimistic = withCollectionTotals({
-      ...(editing ?? {} as CollectionReminder),
-      ...payload,
-      id,
-      collection_no: editing?.collection_no ?? null,
-      archived_at: editing?.archived_at ?? null,
-      payments: editing?.payments ?? [],
-      amount_paid: editing?.amount_paid ?? 0,
-      outstanding_balance: editing ? Math.max(0, Number(values.amount) - editing.amount_paid) : Number(values.amount),
-      created_at: editing?.created_at ?? new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    });
-
-    if (!navigator.onLine) {
-      onLocalCollectionsChange(editing ? collections.map((item) => item.id === id ? optimistic : item) : [optimistic, ...collections]);
-      await onQueueOfflineMutation({
-        resource: "collections", affectedResources: ["collections", "dashboardSummary"],
-        operation: editing ? "update" : "insert", table: "collection_reminders", recordId: id,
-        payload: editing ? payload : { ...payload, id },
-      });
-      closeForm();
-      return;
-    }
-
-    const result = await saveReceivable(supabase, values, userId, editing?.id);
-    if (result.error) {
-      if (isOfflineLikeError(result.error)) {
-        onLocalCollectionsChange(editing ? collections.map((item) => item.id === id ? optimistic : item) : [optimistic, ...collections]);
-        await onQueueOfflineMutation({
-          resource: "collections", affectedResources: ["collections", "dashboardSummary"],
-          operation: editing ? "update" : "insert", table: "collection_reminders", recordId: id,
-          payload: editing ? payload : { ...payload, id },
-        });
-        closeForm();
-        return;
-      }
-      NotificationService.showError(errorText(result.error));
-      return;
-    }
-    NotificationService.showSuccess("Receivable saved.");
-    closeForm();
-    await onChange();
+    const saved = await saveReceivableUseCase(useCaseDeps, { values, editing, collections, userId });
+    if (saved) closeForm();
   }
 
   function closeForm() {
@@ -202,76 +164,12 @@ function CollectionWorkspace({
   }
 
   async function toggleArchive(collection: CollectionReminder) {
-    if (!supabase) return;
-    const restoring = Boolean(collection.archived_at);
-    const confirmed = await NotificationService.showConfirm({
-      title: restoring ? "Restore receivable" : "Archive receivable",
-      message: restoring
-        ? `Restore ${collection.client_name}'s receivable to active status?`
-        : `Archive ${collection.client_name}'s receivable? It will move out of the active list.`,
-    });
-    if (!confirmed) return;
-    const archivedAt = restoring ? null : new Date().toISOString();
-    const optimistic = withCollectionTotals({ ...collection, archived_at: archivedAt, updated_at: new Date().toISOString() });
-    if (!navigator.onLine) {
-      replaceLocal(optimistic);
-      await onQueueOfflineMutation({
-        resource: "collections", affectedResources: ["collections", "dashboardSummary"], operation: "update",
-        table: "collection_reminders", recordId: collection.id, payload: { archived_at: archivedAt },
-      });
-      return;
-    }
-    const result = restoring ? await restoreReceivable(supabase, collection.id) : await archiveReceivable(supabase, collection.id);
-    if (result.error) {
-      NotificationService.showError(errorText(result.error));
-      return;
-    }
-    NotificationService.showSuccess(restoring ? "Receivable restored." : "Receivable archived.");
-    await onChange();
+    await toggleArchiveUseCase(useCaseDeps, { collection, collections });
   }
 
   async function recordPayment(collection: CollectionReminder, values: CollectionPaymentFormValues) {
-    if (!supabase) return;
-    const amount = Number(values.amount);
-    const validationError = validateCollectionPayment({
-      amount,
-      archived: Boolean(collection.archived_at),
-      balance: collection.outstanding_balance,
-      paymentDate: values.payment_date,
-    });
-    if (validationError) {
-      NotificationService.showError(validationError);
-      return;
-    }
-    const id = crypto.randomUUID();
-    const rpcPayload = {
-      collection_record_id: collection.id,
-      payment_record_id: id,
-      payment_amount: amount,
-      paid_on: values.payment_date,
-      method: values.payment_method,
-      payment_reference: values.reference_number.trim(),
-      payment_notes: values.notes.trim(),
-    };
-    const optimisticPayment: CollectionPayment = {
-      id, user_id: collection.user_id, collection_id: collection.id, amount,
-      payment_date: values.payment_date, payment_method: values.payment_method,
-      reference_number: values.reference_number.trim(), notes: values.notes.trim(), is_void: false,
-      void_reason: "", voided_at: null,
-      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
-    };
-    const optimistic = withCollectionTotals({ ...collection, payments: [optimisticPayment, ...collection.payments] });
-    if (!navigator.onLine) {
-      replaceLocal(optimistic);
-      await onQueueOfflineMutation({ resource: "collections", affectedResources: ["collections", "dashboardSummary"], operation: "collection_payment", table: "record_collection_payment", recordId: id, payload: rpcPayload });
-      setPayingCollection(null);
-      return;
-    }
-    const result = await recordReceivablePayment(supabase, collection.id, id, values);
-    if (result.error) { NotificationService.showError(errorText(result.error)); return; }
-    NotificationService.showSuccess(amount >= collection.outstanding_balance ? "Marked as collected." : "Payment recorded.");
-    setPayingCollection(null);
-    await onChange();
+    const recorded = await recordPaymentUseCase(useCaseDeps, { collection, collections, values });
+    if (recorded) setPayingCollection(null);
   }
 
   return (
