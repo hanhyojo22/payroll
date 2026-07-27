@@ -21,6 +21,7 @@ import {
   markAllItemsPaid,
   type DeductionDeps,
 } from "./deductionUseCases";
+import { savePayrollRun, validatePayrollGeneration } from "./generationUseCases";
 import { salaryBondDeductionsForEmployee, salaryBondHasDeductionForItem } from "../../domain/salaryBonds";
 import { netPay, normalizeTicketCount, ticketGrossPay } from "../../domain/tickets";
 import { isOfflineLikeError } from "../../lib/offlineSync";
@@ -454,32 +455,15 @@ export function PayrollFeature({
       return;
     }
     const activeTeamEmployees = employees.filter((employee) => employee.status === "active");
-    if (activeTeamEmployees.length === 0) {
-      NotificationService.showError("Add at least one active employee first.");
-      return;
-    }
-    const invalidEmployees = activeTeamEmployees.filter((employee) => {
-      const position = positions.find((item) => item.id === employee.position_id);
-      return !position || position.status !== "active";
-    });
-    if (invalidEmployees.length > 0) {
-      NotificationService.showError(`Assign an active position to: ${invalidEmployees.map((employee) => employee.full_name).join(", ")}.`);
-      return;
-    }
-
     const periodMonth = Number(values.period_month);
     const periodYear = Number(values.period_year);
     const payPeriod = values.pay_period;
 
-    const missingAttendanceEmployees = activeTeamEmployees.filter((emp) => {
-      const pos = positions.find((p) => p.id === emp.position_id);
-      if (pos?.pay_mode !== "daily") return false;
-      const totals = attendanceTotalsForEmployee(attendanceEntries, emp.id, periodMonth, periodYear, payPeriod);
-      return totals.presentDays + totals.halfDays + totals.absentDays === 0;
+    const validationError = validatePayrollGeneration({
+      employees, positions, attendanceEntries, periodMonth, periodYear, payPeriod,
     });
-
-    if (missingAttendanceEmployees.length > 0) {
-      NotificationService.showError(`Attendance not recorded for: ${missingAttendanceEmployees.map((e) => e.full_name).join(", ")}. Please log attendance before generating payroll.`);
+    if (validationError) {
+      NotificationService.showError(validationError);
       return;
     }
 
@@ -639,56 +623,34 @@ export function PayrollFeature({
       completed: 2,
       total: 4,
     });
-    const runResult = await repos.payroll.saveBundle({
-      runPayload: newRun,
-      itemPayloads,
-      detailPayloads,
-      employeeAdvanceUpdates,
-      salaryBondTransactionPayloads,
-    });
-    if (runResult.error) {
-      if (isOfflineLikeError(runResult.error)) {
-        await onQueueOfflineMutation({
-          resource: "payrollRuns",
-          affectedResources: ["payrollRuns", "payrollHistory", "employeeAdvances", "salaryBonds", "dashboardSummary"],
-          operation: "payroll_group",
-          table: "payroll_runs",
-          payload: {
-            runPayload: newRun,
-            itemPayloads,
-            detailPayloads,
-            employeeAdvanceUpdates,
-            salaryBondTransactionPayloads,
-          },
-        });
-        onLocalPayrollRunsChange([{ ...newRun, items: savedItems }, ...payrollRuns]);
-        setFormOpen(false);
-        setSelectedRunId(newRun.id);
-        reportProgress(null);
-        return;
-      }
-      const errMsg = `${runResult.error.message ?? ""} ${runResult.error.details ?? ""}`.toLowerCase();
-      if (errMsg.includes("duplicate key") || errMsg.includes("payroll_runs_user_id_period")) {
-        await onChange();
-        const existing = await repos.payroll.findRunId(
-          runPayload.period_month,
-          runPayload.period_year,
-          runPayload.pay_period,
-        );
-        if (existing.data) {
-          setSelectedRunId(existing.data);
-          setFormOpen(false);
-          NotificationService.showSuccess("Payroll for this pay period already exists and has been selected.");
-        } else {
-          NotificationService.showError(friendlyError(runResult.error));
-        }
-        return;
-      }
-      NotificationService.showError(friendlyError(runResult.error));
+    const saveResult = await savePayrollRun(
+      { repos, queue: onQueueOfflineMutation, notify: notificationServiceNotifier, isOnline: () => navigator.onLine, reload: onChange },
+      {
+        run: newRun,
+        bundle: { runPayload: newRun, itemPayloads, detailPayloads, employeeAdvanceUpdates, salaryBondTransactionPayloads },
+      },
+    );
+
+    if (saveResult.outcome === "failed") {
+      reportProgress(null);
       return;
     }
 
-    NotificationService.showSuccess("Payroll run generated.");
+    if (saveResult.outcome === "queued") {
+      onLocalPayrollRunsChange([{ ...newRun, items: savedItems }, ...payrollRuns]);
+      setFormOpen(false);
+      setSelectedRunId(newRun.id);
+      reportProgress(null);
+      return;
+    }
+
+    if (saveResult.outcome === "existing") {
+      setSelectedRunId(saveResult.runId ?? "");
+      setFormOpen(false);
+      reportProgress(null);
+      return;
+    }
+
     setFormOpen(false);
     setSelectedRunId(newRun.id);
     reportProgress({

@@ -325,10 +325,13 @@ export type FakePayrollRepository = PayrollRepository & {
   failNext(error: AppError): void;
   seedItems(items: PayrollRunItem[]): void;
   itemsFor(runId: string): PayrollRunItem[];
+  /** What findRunId should resolve to, for the duplicate-period recovery path. */
+  seedRunId(id: string | null): void;
 };
 
 export function fakePayrollRepository(): FakePayrollRepository {
   let items: PayrollRunItem[] = [];
+  let existingRunId: string | null = null;
   let pendingFailure: AppError | null = null;
 
   function takeFailure<T>(): Result<T> | null {
@@ -345,6 +348,10 @@ export function fakePayrollRepository(): FakePayrollRepository {
 
     seedItems(next) {
       items = [...next];
+    },
+
+    seedRunId(id) {
+      existingRunId = id;
     },
 
     itemsFor(runId) {
@@ -397,7 +404,7 @@ export function fakePayrollRepository(): FakePayrollRepository {
     },
 
     async findRunId() {
-      return takeFailure<string | null>() ?? ok(null);
+      return takeFailure<string | null>() ?? ok(existingRunId);
     },
   };
 }
