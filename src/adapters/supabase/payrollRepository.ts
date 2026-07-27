@@ -170,9 +170,5 @@ export function supabasePayrollRepository(supabase: SupabaseClient): PayrollRepo
         ? err<string | null>(raw.error as AppError)
         : ok((raw.data as { id: string } | null)?.id ?? null);
     },
-
-    async insertSalaryBondTransactions(payloads) {
-      return settle(await supabase.from("employee_salary_bond_transactions").insert(payloads));
-    },
   };
 }

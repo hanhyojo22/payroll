@@ -45,5 +45,4 @@ export interface PayrollRepository {
   /** Used to recover the existing run when generation collides with the period unique key. */
   findRunId(periodMonth: number, periodYear: number, payPeriod: string): Promise<Result<string | null>>;
 
-  insertSalaryBondTransactions(payloads: Record<string, unknown>[]): Promise<Result<void>>;
 }

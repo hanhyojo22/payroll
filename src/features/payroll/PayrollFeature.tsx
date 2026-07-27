@@ -16,6 +16,11 @@ import {
   updatePayrollItem as updatePayrollItemUseCase,
   type PayrollDeps,
 } from "./useCases";
+import {
+  applyMissingDeductions,
+  markAllItemsPaid,
+  type DeductionDeps,
+} from "./deductionUseCases";
 import { salaryBondDeductionsForEmployee, salaryBondHasDeductionForItem } from "../../domain/salaryBonds";
 import { netPay, normalizeTicketCount, ticketGrossPay } from "../../domain/tickets";
 import { isOfflineLikeError } from "../../lib/offlineSync";
@@ -160,18 +165,6 @@ function payrollItemPayloadForEmployeeWithEmployeeAdvances(
   };
 }
 
-async function applyEmployeeAdvancePayrollDeductions(
-  employeeAdvances: EmployeeAdvanceRepository,
-  deductions: EmployeeAdvancePayrollDeduction[],
-) {
-  if (deductions.length === 0) return null;
-  const result = await employeeAdvances.applyBalances(deductions.map(({ amount, advance }) => {
-    const balance = Math.max(0, toNumber(advance.balance) - amount);
-    return { id: advance.id, balance, status: balance === 0 ? "completed" : advance.status };
-  }));
-  return result.error ?? null;
-}
-
 function employeeAdvanceUpdatesForDeductions(deductions: EmployeeAdvancePayrollDeduction[]) {
   return deductions.map(({ amount, advance }) => {
     const balance = Math.max(0, toNumber(advance.balance) - amount);
@@ -202,24 +195,6 @@ function salaryBondTransactionPayloadsForDeductions(
   }));
 }
 
-async function insertSalaryBondTransactionPayloads(
-  payroll: PayrollRepository,
-  payloads: Array<Record<string, unknown>>,
-) {
-  if (payloads.length === 0) return null;
-  const result = await payroll.insertSalaryBondTransactions(payloads);
-  return result.error ?? null;
-}
-
-async function applySalaryBondPayrollDeductions(
-  payroll: PayrollRepository,
-  deductions: SalaryBondPayrollDeduction[],
-  payrollRunId: string,
-  paidDate: string,
-) {
-  return insertSalaryBondTransactionPayloads(payroll, salaryBondTransactionPayloadsForDeductions(deductions, payrollRunId, paidDate));
-}
-
 // Item-linked variant: records which payroll_run_item a deduction belongs to and skips
 // any bond that already has a non-void deduction transaction for that item, so retrying
 // after a partial failure (item patched but ledger write failed, or vice versa) can't
@@ -244,23 +219,6 @@ function salaryBondTransactionPayloadsForItemDeductions(
         payroll_run_item_id: itemId,
       })),
   );
-}
-
-// Applies both deduction ledgers in parallel (they touch independent tables with no
-// data dependency), and is called BEFORE the corresponding payroll_run_items write at
-// every call site, so an item is only ever created/patched to show a deduction once the
-// ledger write it depends on has actually succeeded.
-async function applyPayrollDeductionLedger(
-  payroll: PayrollRepository,
-  employeeAdvances: EmployeeAdvanceRepository,
-  advanceDeductions: EmployeeAdvancePayrollDeduction[],
-  bondTransactionPayloads: Array<Record<string, unknown>>,
-) {
-  const [advanceError, bondError] = await Promise.all([
-    applyEmployeeAdvancePayrollDeductions(employeeAdvances, advanceDeductions),
-    insertSalaryBondTransactionPayloads(payroll, bondTransactionPayloads),
-  ]);
-  return advanceError ?? bondError ?? null;
 }
 
 function payrollItemAdvanceDeductionPatch(
@@ -922,102 +880,46 @@ export function PayrollFeature({
     (sum, item) => ({ net: sum.net + toNumber(item.net_pay) }),
     { net: 0 },
   );
+  const deductionDeps: DeductionDeps = useMemo(() => ({
+    repos,
+    notify: notificationServiceNotifier,
+    isOnline: () => navigator.onLine,
+    reload: onChange,
+    today: () => todayKey(),
+    onProgress: (completed, total) => setPayAllProgress({ completed, total }),
+  }), [repos, onChange]);
+
+  const buildBondPayloadsForItems = (paidDate: string) =>
+    salaryBondTransactionPayloadsForItemDeductions(
+      itemsNeedingPayrollDeductions.map(({ item, patch }) => ({ itemId: item.id, deductions: patch.bondDeductions })),
+      selectedRun?.id ?? "",
+      paidDate,
+    );
 
   async function applyMissingPayrollDeductions() {
-    if (!selectedRun || itemsNeedingPayrollDeductions.length === 0) return;
-    if (!navigator.onLine) {
-      NotificationService.showError("Connect to the internet to apply payroll deductions to this payroll run.");
-      return;
-    }
-    const confirmed = await NotificationService.showConfirm({
-      title: "Apply deductions",
-      message: `Apply advance deductions to ${itemsNeedingPayrollDeductions.length} payroll item${itemsNeedingPayrollDeductions.length === 1 ? "" : "s"}?`,
+    if (!selectedRun) return;
+    const applied = await applyMissingDeductions(deductionDeps, {
+      run: selectedRun,
+      itemsNeedingDeductions: itemsNeedingPayrollDeductions,
+      buildBondPayloads: buildBondPayloadsForItems,
     });
-    if (!confirmed) return;
-
-    // Apply the deduction ledger first, item-linked and idempotent (skips any bond that
-    // already has a deduction transaction recorded for a given item), before patching
-    // payroll_run_items. This way a retry after a partial failure — in either order —
-    // can't double-deduct a bond balance or leave an item's notes claiming a deduction
-    // that was never actually applied to the ledger.
-    const ledgerError = await applyPayrollDeductionLedger(repos.payroll, repos.employeeAdvances,
-      itemsNeedingPayrollDeductions.flatMap((entry) => entry.patch.advanceDeductions),
-      salaryBondTransactionPayloadsForItemDeductions(
-        itemsNeedingPayrollDeductions.map(({ item, patch }) => ({ itemId: item.id, deductions: patch.bondDeductions })),
-        selectedRun.id,
-        todayKey(),
-      ),
-    );
-    if (ledgerError) {
-      NotificationService.showError(friendlyError(ledgerError));
-      return;
-    }
-
-    for (const { item, patch } of itemsNeedingPayrollDeductions) {
-      const { error } = await repos.payroll.updateItem(item.id, patch.payload);
-      if (error) {
-        NotificationService.showError(friendlyError(error));
-        return;
-      }
-    }
-
-    NotificationService.showSuccess(`Applied payroll deductions to ${itemsNeedingPayrollDeductions.length} payroll item${itemsNeedingPayrollDeductions.length === 1 ? "" : "s"}.`);
-    await syncPayrollExpense(selectedRun, allItems);
-    await onChange();
+    if (applied) await syncPayrollExpense(selectedRun, allItems);
   }
 
   async function markAllPaid() {
-    if (!selectedRun || pendingItems.length === 0) return;
-    if (!navigator.onLine) {
-      NotificationService.showError("Connect to the internet to mark all payroll items as paid.");
-      return;
-    }
-    const confirmed = await NotificationService.showConfirm({
-      title: "Pay all",
-      message: `Mark all ${pendingItems.length} pending payroll item${pendingItems.length === 1 ? "" : "s"} as paid?`,
-    });
-    if (!confirmed) return;
-
+    if (!selectedRun) return;
     const paidDate = todayKey();
-    setPayAllProgress({ completed: 0, total: pendingItems.length });
     try {
-      // Apply the deduction ledger first, item-linked and idempotent, before marking any
-      // item paid — so an item is never marked paid with a deduction note that was never
-      // actually applied to the advance balance / salary bond ledger.
-      if (itemsNeedingPayrollDeductions.length > 0) {
-        const ledgerError = await applyPayrollDeductionLedger(repos.payroll, repos.employeeAdvances,
-          itemsNeedingPayrollDeductions.flatMap((entry) => entry.patch.advanceDeductions),
-          salaryBondTransactionPayloadsForItemDeductions(
-            itemsNeedingPayrollDeductions.map(({ item, patch }) => ({ itemId: item.id, deductions: patch.bondDeductions })),
-            selectedRun.id,
-            paidDate,
-          ),
-        );
-        if (ledgerError) {
-          NotificationService.showError(friendlyError(ledgerError));
-          return;
-        }
-      }
-
-      for (let index = 0; index < pendingItems.length; index += 1) {
-        const item = pendingItems[index];
-        const deductionPatch = deductionPatchByItemId.get(item.id);
-        const { error } = await repos.payroll.updateItem(item.id, {
-          ...(deductionPatch ?? {}),
-          status: "paid",
-          paid_date: paidDate,
-        });
-        if (error) {
-          NotificationService.showError(friendlyError(error));
-          return;
-        }
-        setPayAllProgress({ completed: index + 1, total: pendingItems.length });
-      }
-
-      NotificationService.showSuccess(`Marked ${pendingItems.length} payroll item${pendingItems.length === 1 ? "" : "s"} as paid.`);
+      const paid = await markAllItemsPaid(deductionDeps, {
+        run: selectedRun,
+        pendingItems,
+        itemsNeedingDeductions: itemsNeedingPayrollDeductions,
+        deductionPatchById: deductionPatchByItemId,
+        buildBondPayloads: buildBondPayloadsForItems,
+      });
+      if (!paid) return;
       const paidItemsForSync = allItems.map((item) => item.status !== "paid" ? { ...item, status: "paid" as const, paid_date: paidDate } : item);
       await syncPayrollExpense(selectedRun, paidItemsForSync);
-      await onChange();
     } finally {
       setPayAllProgress(null);
     }

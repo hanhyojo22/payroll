@@ -399,10 +399,6 @@ export function fakePayrollRepository(): FakePayrollRepository {
     async findRunId() {
       return takeFailure<string | null>() ?? ok(null);
     },
-
-    async insertSalaryBondTransactions() {
-      return takeFailure<void>() ?? ok(undefined);
-    },
   };
 }
 
