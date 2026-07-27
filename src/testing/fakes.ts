@@ -1,8 +1,9 @@
 import type { CollectionRepository, RecordCollectionPaymentInput, SaveCollectionInput } from "../core/ports/collections";
 import type { ExpenseCategoryRepository, ExpenseRepository } from "../core/ports/expenses";
+import type { PayrollRepository } from "../core/ports/payroll";
 import { err, ok, type Result } from "../core/ports/result";
 import { withCollectionTotals } from "../domain/collections";
-import type { CollectionPayment, CollectionReminder, Expense, ExpenseCategory } from "../types";
+import type { CollectionPayment, CollectionReminder, Expense, ExpenseCategory, PayrollHistoryRow, PayrollRunItem, PayrollRunWithItems, PayrollSettings } from "../types";
 import type { AppError } from "../shared/types";
 
 export type FakeCollectionRepository = CollectionRepository & {
@@ -311,6 +312,95 @@ export function fakeExpenseCategoryRepository(): FakeExpenseCategoryRepository {
       };
       rows = [...rows, created];
       return ok(created);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Payroll
+// ---------------------------------------------------------------------------
+
+export type FakePayrollRepository = PayrollRepository & {
+  failNext(error: AppError): void;
+  seedItems(items: PayrollRunItem[]): void;
+  itemsFor(runId: string): PayrollRunItem[];
+};
+
+export function fakePayrollRepository(): FakePayrollRepository {
+  let items: PayrollRunItem[] = [];
+  let pendingFailure: AppError | null = null;
+
+  function takeFailure<T>(): Result<T> | null {
+    if (!pendingFailure) return null;
+    const failure = pendingFailure;
+    pendingFailure = null;
+    return err<T>(failure);
+  }
+
+  return {
+    failNext(error) {
+      pendingFailure = error;
+    },
+
+    seedItems(next) {
+      items = [...next];
+    },
+
+    itemsFor(runId) {
+      return items.filter((item) => item.payroll_run_id === runId);
+    },
+
+    async listRuns() {
+      return takeFailure<PayrollRunWithItems[]>() ?? ok([]);
+    },
+
+    async listRunItems(runId) {
+      return takeFailure<PayrollRunItem[]>() ?? ok(items.filter((item) => item.payroll_run_id === runId));
+    },
+
+    async listHistory() {
+      return takeFailure<PayrollHistoryRow[]>() ?? ok([]);
+    },
+
+    async getSettings() {
+      return takeFailure<PayrollSettings | null>() ?? ok(null);
+    },
+
+    async ensureSettings(userId) {
+      const failure = takeFailure<PayrollSettings>();
+      if (failure) return failure;
+      return ok({
+        id: "settings-1", user_id: userId,
+        government_deduction_enabled: true, government_deduction_cutoff: "second_half",
+        created_at: "", updated_at: "",
+      } as PayrollSettings);
+    },
+
+    async saveSettings() {
+      return takeFailure<void>() ?? ok(undefined);
+    },
+
+    async updateItem(id, patch) {
+      const failure = takeFailure<void>();
+      if (failure) return failure;
+      items = items.map((item) => item.id === id ? { ...item, ...patch } : item);
+      return ok(undefined);
+    },
+
+    async saveBundle() {
+      return takeFailure<void>() ?? ok(undefined);
+    },
+
+    async saveItemsBundle() {
+      return takeFailure<void>() ?? ok(undefined);
+    },
+
+    async findRunId() {
+      return takeFailure<string | null>() ?? ok(null);
+    },
+
+    async insertSalaryBondTransactions() {
+      return takeFailure<void>() ?? ok(undefined);
     },
   };
 }

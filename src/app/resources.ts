@@ -31,7 +31,7 @@ import { fetchSubcontractors } from "../features/billing/billingRepository";
 import { fetchSubconDailyTickets } from "../features/billing/subconTicketRepository";
 import { supabaseExpenseCategoryRepository, supabaseExpenseRepository } from "../adapters/supabase/expenseRepository";
 import { fetchEmployeeAdvances } from "../features/payroll/employeeAdvanceRepository";
-import { fetchPayrollHistoryRows, fetchPayrollRunItems, fetchPayrollRuns, fetchPayrollSettings } from "../features/payroll/payrollRepository";
+import { supabasePayrollRepository } from "../adapters/supabase/payrollRepository";
 import { fetchSalaryBonds } from "../features/salaryBonds/salaryBondRepository";
 import { fetchSubcontractorAdvances } from "../features/subcontractors/subcontractorAdvanceRepository";
 import { todayKey } from "../shared/utils/dates";
@@ -402,8 +402,8 @@ export async function loadEmployees(supabase: SupabaseClient) {
 
 export async function loadPayrollRuns(supabase: SupabaseClient) {
   try {
-    const result = await withTimeout(fetchPayrollRuns(supabase), "Payroll runs");
-    return { data: result.data, error: result.error, label: "Payroll" };
+    const result = await withTimeout(supabasePayrollRepository(supabase).listRuns(), "Payroll runs");
+    return { data: result.data ?? [], error: result.error, label: "Payroll" };
   } catch (error) {
     return { data: [] as PayrollRunWithItems[], error: error as AppErrorLike, label: "Payroll" };
   }
@@ -411,8 +411,8 @@ export async function loadPayrollRuns(supabase: SupabaseClient) {
 
 export async function loadPayrollRunItems(supabase: SupabaseClient, payrollRunId: string) {
   try {
-    const result = await withTimeout(fetchPayrollRunItems(supabase, payrollRunId), "Payroll items");
-    return { data: result.data, error: result.error, label: "Payroll items" };
+    const result = await withTimeout(supabasePayrollRepository(supabase).listRunItems(payrollRunId), "Payroll items");
+    return { data: result.data ?? [], error: result.error, label: "Payroll items" };
   } catch (error) {
     return { data: [] as PayrollRunItem[], error: error as AppErrorLike, label: "Payroll items" };
   }
@@ -420,15 +420,15 @@ export async function loadPayrollRunItems(supabase: SupabaseClient, payrollRunId
 
 export async function loadPayrollHistoryRows(supabase: SupabaseClient, page = 0, pageSize = 100) {
   try {
-    const result = await withTimeout(fetchPayrollHistoryRows(supabase, page, pageSize), "Payroll history");
-    return { data: result.data, error: result.error, label: "Payroll history" };
+    const result = await withTimeout(supabasePayrollRepository(supabase).listHistory(page, pageSize), "Payroll history");
+    return { data: result.data ?? [], error: result.error, label: "Payroll history" };
   } catch (error) {
     return { data: [] as PayrollHistoryRow[], error: error as AppErrorLike, label: "Payroll history" };
   }
 }
 
 export async function loadPayrollSettings(supabase: SupabaseClient) {
-  const result = await fetchPayrollSettings(supabase);
+  const result = await supabasePayrollRepository(supabase).getSettings();
   return { data: result.data as PayrollSettings | null, error: result.error, label: "Payroll settings" };
 }
 

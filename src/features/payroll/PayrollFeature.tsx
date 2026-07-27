@@ -11,14 +11,19 @@ import {
   payrollItemPayloadForEmployee,
 } from "../../domain/payroll";
 import { payrollItemPayBasis } from "./payBasis";
+import { notificationServiceNotifier } from "../../adapters/notifications/notifier";
+import {
+  updatePayrollItem as updatePayrollItemUseCase,
+  type PayrollDeps,
+} from "./useCases";
 import { salaryBondDeductionsForEmployee, salaryBondHasDeductionForItem } from "../../domain/salaryBonds";
 import { netPay, normalizeTicketCount, ticketGrossPay } from "../../domain/tickets";
 import { isOfflineLikeError } from "../../lib/offlineSync";
 import { supabase } from "../../supabase";
+import type { PayrollRepository } from "../../core/ports/payroll";
 import { Modal, TextField } from "../../shared/components/FormLayout";
 import { DataTable } from "../../shared/components/DataTable";
 import { PageHeader, RecordTitle, Toolbar } from "../../shared/components/PageLayout";
-import { ensurePayrollSettings, savePayrollSettings } from "./payrollRepository";
 import { useRepositories } from "../../app/RepositoriesProvider";
 import type { QueueOfflineMutation } from "../../shared/types";
 import { NotificationService } from "../../shared/notifications/NotificationService";
@@ -203,18 +208,22 @@ function salaryBondTransactionPayloadsForDeductions(
   }));
 }
 
-async function insertSalaryBondTransactionPayloads(payloads: Array<Record<string, unknown>>) {
-  if (!supabase || payloads.length === 0) return null;
-  const result = await supabase.from("employee_salary_bond_transactions").insert(payloads);
+async function insertSalaryBondTransactionPayloads(
+  payroll: PayrollRepository,
+  payloads: Array<Record<string, unknown>>,
+) {
+  if (payloads.length === 0) return null;
+  const result = await payroll.insertSalaryBondTransactions(payloads);
   return result.error ?? null;
 }
 
 async function applySalaryBondPayrollDeductions(
+  payroll: PayrollRepository,
   deductions: SalaryBondPayrollDeduction[],
   payrollRunId: string,
   paidDate: string,
 ) {
-  return insertSalaryBondTransactionPayloads(salaryBondTransactionPayloadsForDeductions(deductions, payrollRunId, paidDate));
+  return insertSalaryBondTransactionPayloads(payroll, salaryBondTransactionPayloadsForDeductions(deductions, payrollRunId, paidDate));
 }
 
 // Item-linked variant: records which payroll_run_item a deduction belongs to and skips
@@ -248,12 +257,13 @@ function salaryBondTransactionPayloadsForItemDeductions(
 // every call site, so an item is only ever created/patched to show a deduction once the
 // ledger write it depends on has actually succeeded.
 async function applyPayrollDeductionLedger(
+  payroll: PayrollRepository,
   advanceDeductions: EmployeeAdvancePayrollDeduction[],
   bondTransactionPayloads: Array<Record<string, unknown>>,
 ) {
   const [advanceError, bondError] = await Promise.all([
     applyEmployeeAdvancePayrollDeductions(advanceDeductions),
-    insertSalaryBondTransactionPayloads(bondTransactionPayloads),
+    insertSalaryBondTransactionPayloads(payroll, bondTransactionPayloads),
   ]);
   return advanceError ?? bondError ?? null;
 }
@@ -358,12 +368,21 @@ export function PayrollFeature({
 
   useEffect(() => {
     if (!supabase || activePayrollSettings) return;
-    void ensurePayrollSettings(supabase, userId).then(({ data }) => {
+    void repos.payroll.ensureSettings(userId).then(({ data }) => {
       if (data) setActivePayrollSettings(data);
     });
   }, [activePayrollSettings, userId]);
 
   const repos = useRepositories();
+  const useCaseDeps: PayrollDeps = useMemo(() => ({
+    repos,
+    queue: onQueueOfflineMutation,
+    notify: notificationServiceNotifier,
+    isOnline: () => navigator.onLine,
+    reload: onChange,
+    applyLocalRuns: onLocalPayrollRunsChange,
+    today: () => todayKey(),
+  }), [repos, onQueueOfflineMutation, onChange, onLocalPayrollRunsChange]);
   const [payrollExpenseCategoryId, setPayrollExpenseCategoryId] = useState<string | null>(
     expenseCategories.find((category) => category.type === "company" && category.name === "Payroll")?.id ?? null,
   );
@@ -423,7 +442,7 @@ export function PayrollFeature({
     if (activePayrollSettings) return activePayrollSettings;
     if (!supabase) return null;
 
-    const result = await ensurePayrollSettings(supabase, userId);
+    const result = await repos.payroll.ensureSettings(userId);
     if (result.error) {
       NotificationService.showError(friendlyError(result.error));
       return null;
@@ -431,31 +450,6 @@ export function PayrollFeature({
 
     setActivePayrollSettings(result.data);
     return result.data;
-  }
-
-  async function insertPayrollItems(
-    payloads: Array<Omit<PayrollRunItem, "id" | "created_at" | "updated_at">>,
-    onProgress?: (completed: number, total: number) => void,
-  ) {
-    if (!supabase) return { error: null };
-    for (let index = 0; index < payloads.length; index += 1) {
-      const payload = payloads[index];
-      const { ticket_details: ticketDetails, ...itemPayload } = payload;
-      const itemResult = await supabase.from("payroll_run_items").insert(itemPayload).select("id").single();
-      if (itemResult.error) return { error: itemResult.error };
-      if (ticketDetails.length > 0) {
-        const detailResult = await supabase.from("payroll_run_item_ticket_details").insert(
-          ticketDetails.map(({ id: _id, created_at: _createdAt, ...detail }) => ({
-            ...detail,
-            id: crypto.randomUUID(),
-            payroll_run_item_id: itemResult.data.id,
-          })),
-        );
-        if (detailResult.error) return { error: detailResult.error };
-      }
-      onProgress?.(index + 1, payloads.length);
-    }
-    return { error: null };
   }
 
   async function syncPayrollExpense(
@@ -694,12 +688,12 @@ export function PayrollFeature({
       completed: 2,
       total: 4,
     });
-    const runResult = await supabase.rpc("save_payroll_bundle", {
-      run_payload: newRun,
-      item_payloads: itemPayloads,
-      detail_payloads: detailPayloads,
-      advance_updates: employeeAdvanceUpdates,
-      bond_payloads: salaryBondTransactionPayloads,
+    const runResult = await repos.payroll.saveBundle({
+      runPayload: newRun,
+      itemPayloads,
+      detailPayloads,
+      employeeAdvanceUpdates,
+      salaryBondTransactionPayloads,
     });
     if (runResult.error) {
       if (isOfflineLikeError(runResult.error)) {
@@ -725,15 +719,13 @@ export function PayrollFeature({
       const errMsg = `${runResult.error.message ?? ""} ${runResult.error.details ?? ""}`.toLowerCase();
       if (errMsg.includes("duplicate key") || errMsg.includes("payroll_runs_user_id_period")) {
         await onChange();
-        const existing = await supabase
-          .from("payroll_runs")
-          .select("id")
-          .eq("period_month", runPayload.period_month)
-          .eq("period_year", runPayload.period_year)
-          .eq("pay_period", runPayload.pay_period)
-          .single();
+        const existing = await repos.payroll.findRunId(
+          runPayload.period_month,
+          runPayload.period_year,
+          runPayload.pay_period,
+        );
         if (existing.data) {
-          setSelectedRunId(existing.data.id);
+          setSelectedRunId(existing.data);
           setFormOpen(false);
           NotificationService.showSuccess("Payroll for this pay period already exists and has been selected.");
         } else {
@@ -794,46 +786,12 @@ export function PayrollFeature({
     const itemsForSync = runForSync
       ? runForSync.items.map((runItem) => runItem.id === item.id ? { ...runItem, ...payload } : runItem)
       : [];
-    if (!navigator.onLine) {
-      onLocalPayrollRunsChange(payrollRuns.map((run) => ({
-        ...run,
-        items: run.items.map((runItem) => runItem.id === item.id ? { ...runItem, ...payload } : runItem),
-      })));
-      await onQueueOfflineMutation({
-        resource: "payrollRuns",
-        affectedResources: ["payrollRuns", "payrollHistory", "dashboardSummary"],
-        operation: "update",
-        table: "payroll_run_items",
-        recordId: item.id,
-        payload,
-      });
-      if (runForSync) await syncPayrollExpense(runForSync, itemsForSync);
-      return;
-    }
-    const { error } = await supabase.from("payroll_run_items").update(payload).eq("id", item.id);
-    if (error && isOfflineLikeError(error)) {
-      onLocalPayrollRunsChange(payrollRuns.map((run) => ({
-        ...run,
-        items: run.items.map((runItem) => runItem.id === item.id ? { ...runItem, ...payload } : runItem),
-      })));
-      await onQueueOfflineMutation({
-        resource: "payrollRuns",
-        affectedResources: ["payrollRuns", "payrollHistory", "dashboardSummary"],
-        operation: "update",
-        table: "payroll_run_items",
-        recordId: item.id,
-        payload,
-      });
-      if (runForSync) await syncPayrollExpense(runForSync, itemsForSync);
-      return;
-    }
-    if (error) {
-      NotificationService.showError(friendlyError(error));
-    } else {
-      NotificationService.showSuccess("Payroll item updated.");
-    }
+
+    const outcome = await updatePayrollItemUseCase(useCaseDeps, { item, patch: payload, runs: payrollRuns });
     if (runForSync) await syncPayrollExpense(runForSync, itemsForSync);
-    await onChange();
+    // Preserves the original behaviour of refreshing after a failed write too; the use-case
+    // only reloads on success.
+    if (outcome === "failed") await onChange();
   }
 
   async function addMissingEmployees() {
@@ -899,11 +857,11 @@ export function PayrollFeature({
       await syncPayrollExpense(selectedRun, [...selectedRun.items, ...itemPayloads]);
       return;
     }
-    const { error } = await supabase.rpc("save_payroll_items_bundle", {
-      item_payloads: savedItemPayloads,
-      detail_payloads: detailPayloads,
-      advance_updates: employeeAdvanceUpdates,
-      bond_payloads: salaryBondTransactionPayloads,
+    const { error } = await repos.payroll.saveItemsBundle({
+      itemPayloads: savedItemPayloads,
+      detailPayloads,
+      employeeAdvanceUpdates,
+      salaryBondTransactionPayloads,
     });
     if (error) {
       if (isOfflineLikeError(error)) {
@@ -990,7 +948,7 @@ export function PayrollFeature({
     // payroll_run_items. This way a retry after a partial failure — in either order —
     // can't double-deduct a bond balance or leave an item's notes claiming a deduction
     // that was never actually applied to the ledger.
-    const ledgerError = await applyPayrollDeductionLedger(
+    const ledgerError = await applyPayrollDeductionLedger(repos.payroll,
       itemsNeedingPayrollDeductions.flatMap((entry) => entry.patch.advanceDeductions),
       salaryBondTransactionPayloadsForItemDeductions(
         itemsNeedingPayrollDeductions.map(({ item, patch }) => ({ itemId: item.id, deductions: patch.bondDeductions })),
@@ -1004,7 +962,7 @@ export function PayrollFeature({
     }
 
     for (const { item, patch } of itemsNeedingPayrollDeductions) {
-      const { error } = await supabase.from("payroll_run_items").update(patch.payload).eq("id", item.id);
+      const { error } = await repos.payroll.updateItem(item.id, patch.payload);
       if (error) {
         NotificationService.showError(friendlyError(error));
         return;
@@ -1035,7 +993,7 @@ export function PayrollFeature({
       // item paid — so an item is never marked paid with a deduction note that was never
       // actually applied to the advance balance / salary bond ledger.
       if (itemsNeedingPayrollDeductions.length > 0) {
-        const ledgerError = await applyPayrollDeductionLedger(
+        const ledgerError = await applyPayrollDeductionLedger(repos.payroll,
           itemsNeedingPayrollDeductions.flatMap((entry) => entry.patch.advanceDeductions),
           salaryBondTransactionPayloadsForItemDeductions(
             itemsNeedingPayrollDeductions.map(({ item, patch }) => ({ itemId: item.id, deductions: patch.bondDeductions })),
@@ -1052,11 +1010,11 @@ export function PayrollFeature({
       for (let index = 0; index < pendingItems.length; index += 1) {
         const item = pendingItems[index];
         const deductionPatch = deductionPatchByItemId.get(item.id);
-        const { error } = await supabase.from("payroll_run_items").update({
+        const { error } = await repos.payroll.updateItem(item.id, {
           ...(deductionPatch ?? {}),
           status: "paid",
           paid_date: paidDate,
-        }).eq("id", item.id);
+        });
         if (error) {
           NotificationService.showError(friendlyError(error));
           return;
@@ -1371,6 +1329,7 @@ export function PayrollSettingsManager({
   onChange: () => Promise<void>;
   userId: string;
 }) {
+  const repos = useRepositories();
   const [settings, setSettings] = useState<PayrollSettings | null>(payrollSettings);
   const [cutoff, setCutoff] = useState<PayrollSettings["government_deduction_cutoff"]>(payrollSettings?.government_deduction_cutoff ?? "second_half");
   const [enabled, setEnabled] = useState(payrollSettings?.government_deduction_enabled ?? true);
@@ -1384,7 +1343,7 @@ export function PayrollSettingsManager({
 
   useEffect(() => {
     if (!supabase || settings) return;
-    void ensurePayrollSettings(supabase, userId).then(({ data }) => {
+    void repos.payroll.ensureSettings(userId).then(({ data }) => {
       if (data) {
         setSettings(data);
         setCutoff(data.government_deduction_cutoff);
@@ -1424,7 +1383,7 @@ export function PayrollSettingsManager({
     event.preventDefault();
     if (!supabase) return;
     setBusy(true);
-    const result = await savePayrollSettings(supabase, userId, { government_deduction_enabled: enabled, government_deduction_cutoff: cutoff });
+    const result = await repos.payroll.saveSettings(userId, { government_deduction_enabled: enabled, government_deduction_cutoff: cutoff });
     setBusy(false);
     if (result.error) {
       NotificationService.showError("Failed to save payroll settings.");
