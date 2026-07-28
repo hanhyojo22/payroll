@@ -2069,45 +2069,6 @@ function BillingForm({
                     </tbody>
                   </table>
                 </div>
-                <div className="cbf-employee-disputes">
-                  <div>
-                    <strong>Employee disputes</strong>
-                    <span>Only tickets rejected by the client</span>
-                  </div>
-                  <label>
-                    <span>Install</span>
-                    <input
-                      disabled={employeeInstallTickets === 0}
-                      max={employeeInstallTickets}
-                      min="0"
-                      onChange={(event) => setValues({ ...values, disputed_install: String(Math.max(0, Math.min(employeeInstallTickets, Number(event.target.value) || 0))) })}
-                      type="number"
-                      value={String(employeeDisputedInstall)}
-                    />
-                  </label>
-                  <label>
-                    <span>Repair</span>
-                    <input
-                      disabled={employeeRepairTickets === 0}
-                      max={employeeRepairTickets}
-                      min="0"
-                      onChange={(event) => setValues({ ...values, disputed_repair: String(Math.max(0, Math.min(employeeRepairTickets, Number(event.target.value) || 0))) })}
-                      type="number"
-                      value={String(employeeDisputedRepair)}
-                    />
-                  </label>
-                  <label>
-                    <span>Nap Rehab</span>
-                    <input
-                      disabled={employeeNapRehabTickets === 0}
-                      max={employeeNapRehabTickets}
-                      min="0"
-                      onChange={(event) => setValues({ ...values, disputed_nap_rehab: String(Math.max(0, Math.min(employeeNapRehabTickets, Number(event.target.value) || 0))) })}
-                      type="number"
-                      value={String(employeeDisputedNapRehab)}
-                    />
-                  </label>
-                </div>
               </section>
             </div>
           )}
