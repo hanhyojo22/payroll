@@ -187,6 +187,22 @@ describe("deleteExpense", () => {
   });
 });
 
+describe("listActive", () => {
+  // The dashboard and the expenses page only ever need this set; paid history lives in
+  // Payments History and should not force a full-table load here.
+  it("excludes paid and cancelled expenses", async () => {
+    const d = deps();
+    d.repos.expenses.seed([
+      expense({ id: "x1", status: "pending" }),
+      expense({ id: "x2", status: "paid" }),
+      expense({ id: "x3", status: "cancelled" }),
+    ]);
+
+    const active = await d.repos.expenses.listActive();
+    expect(active.data!.map((row) => row.id)).toEqual(["x1"]);
+  });
+});
+
 describe("cancelExpense", () => {
   it("does nothing when the confirmation is declined", async () => {
     const d = deps({ confirmed: false });

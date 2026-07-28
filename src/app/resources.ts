@@ -26,6 +26,7 @@ import type {
 } from "../types";
 import { collectionAgingBucket } from "../domain/collections";
 import { isExpenseOverdue, isExpensePeriodDueToday } from "../domain/expenses";
+import type { Repositories } from "../core/ports";
 import { supabaseCollectionRepository } from "../adapters/supabase/collectionRepository";
 import { fetchSubcontractors } from "../features/billing/billingRepository";
 import { fetchSubconDailyTickets } from "../features/billing/subconTicketRepository";
@@ -124,7 +125,37 @@ export async function loadWorkspaceData(supabase: SupabaseClient) {
   };
 }
 
-export async function loadDashboardSummary(supabase: SupabaseClient) {
+async function loadOpenCollectionsForDashboard(repos: Pick<Repositories, "collections">) {
+  try {
+    const result = await withTimeout(repos.collections.listOpen(), "Open collections");
+    return { data: result.data ?? [], error: result.error, label: "Open collections" };
+  } catch (error) {
+    return { data: [] as CollectionReminder[], error: error as AppErrorLike, label: "Open collections" };
+  }
+}
+
+async function loadActiveExpensesForDashboard(repos: Pick<Repositories, "expenses">) {
+  try {
+    const result = await withTimeout(repos.expenses.listActive(), "Active expenses");
+    return { data: result.data ?? [], error: result.error, label: "Active expenses" };
+  } catch (error) {
+    return { data: [] as Expense[], error: error as AppErrorLike, label: "Active expenses" };
+  }
+}
+
+async function loadCollectedTotalsForDashboard(repos: Pick<Repositories, "collections">, monthStart: string) {
+  try {
+    const result = await withTimeout(repos.collections.collectedTotals(monthStart), "Collected totals");
+    return { data: result.data, error: result.error, label: "Collected totals" };
+  } catch (error) {
+    return { data: null, error: error as AppErrorLike, label: "Collected totals" };
+  }
+}
+
+export async function loadDashboardSummary(
+  supabase: SupabaseClient,
+  repos: Pick<Repositories, "collections" | "expenses">,
+) {
   const today = todayKey();
   const month = currentMonth();
   const year = currentYear();
@@ -168,9 +199,16 @@ export async function loadDashboardSummary(supabase: SupabaseClient) {
         .lte("due_date", today)
         .order("due_date"),
     ),
-    loadCollections(supabase),
-    loadExpenses(supabase),
+    // Only the currently-open pipeline, not every collection/expense ever recorded -- the
+    // dashboard never needs the full history, and loading it here was the actual scale
+    // bottleneck (years of archived receivables and paid expenses pulled into the browser
+    // just to compute a handful of numbers).
+    loadOpenCollectionsForDashboard(repos),
+    loadActiveExpensesForDashboard(repos),
   ]);
+
+  const monthStart = `${year}-${String(month).padStart(2, "0")}-01`;
+  const collectedTotalsResult = await loadCollectedTotalsForDashboard(repos, monthStart);
 
   const currentRunIds = currentRunsResult.data.map((run) => run.id);
   const currentItemsResult = currentRunIds.length > 0
@@ -192,8 +230,9 @@ export async function loadDashboardSummary(supabase: SupabaseClient) {
     : { count: 0, error: null, label: "Latest payroll item count" };
 
   const currentItems = currentItemsResult.data;
-  const openCollections = collectionsResult.data.filter((item) => !item.archived_at && item.outstanding_balance > 0);
-  const monthKey = `${year}-${String(month).padStart(2, "0")}`;
+  // collectionsResult is already scoped to the open pipeline (listOpen), so only the balance
+  // check is still needed here -- archived rows never appear in it.
+  const openCollections = collectionsResult.data.filter((item) => item.outstanding_balance > 0);
   const collectionAging = {
     current: 0,
     days1To30: 0,
@@ -213,7 +252,9 @@ export async function loadDashboardSummary(supabase: SupabaseClient) {
     : item.frequency === "monthly" && item.payment_date
       ? isExpensePeriodDueToday(item.payment_date, today)
       : false;
-  const openExpenses = expensesResult.data.filter((item) => item.status !== "paid" && item.status !== "cancelled" && expenseNotifyDate(item));
+  // expensesResult is already scoped to non-paid/non-cancelled (listActive), so only the
+  // notify-date check is still needed here.
+  const openExpenses = expensesResult.data.filter((item) => expenseNotifyDate(item));
   const summary: DashboardSummary = {
     activeEmployeeCount: activeEmployees.count,
     currentPayrollItemCount: currentItems.length,
@@ -224,15 +265,11 @@ export async function loadDashboardSummary(supabase: SupabaseClient) {
       .filter((item) => item.status === "paid")
       .reduce((sum, item) => sum + toNumber(item.net_pay), 0),
     pendingCollections: openCollections.reduce((sum, item) => sum + toNumber(item.outstanding_balance), 0),
-    collectedTotal: collectionsResult.data.flatMap((item) => item.payments)
-      .filter((payment) => !payment.is_void)
-      .reduce((sum, payment) => sum + toNumber(payment.amount), 0),
+    collectedTotal: collectedTotalsResult.data?.lifetimeTotal ?? 0,
     overdueCollectionBalance: openCollections
       .filter((item) => item.due_date < today)
       .reduce((sum, item) => sum + toNumber(item.outstanding_balance), 0),
-    collectedThisMonth: collectionsResult.data.flatMap((item) => item.payments)
-      .filter((payment) => !payment.is_void && payment.payment_date.startsWith(monthKey))
-      .reduce((sum, payment) => sum + toNumber(payment.amount), 0),
+    collectedThisMonth: collectedTotalsResult.data?.monthTotal ?? 0,
     collectionAging,
     latestRun: latestRun ? { ...latestRun, item_count: latestItemCount.count } : null,
     dueTodayPayments: paymentsResult.data.filter((item) => item.due_date === today),
@@ -251,6 +288,7 @@ export async function loadDashboardSummary(supabase: SupabaseClient) {
       paymentsResult.error ??
       collectionsResult.error ??
       expensesResult.error ??
+      collectedTotalsResult.error ??
       currentItemsResult.error ??
       latestItemCount.error,
     label: "Dashboard",

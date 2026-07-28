@@ -30,6 +30,12 @@ export type PayInstallmentInput = {
 
 export interface ExpenseRepository {
   list(): Promise<Result<Expense[]>>;
+  /**
+   * Excludes paid and cancelled expenses. Callers that only need the current actionable set
+   * (the expenses page, the dashboard) should use this instead of list(), which returns every
+   * expense ever recorded including years of settled history.
+   */
+  listActive(): Promise<Result<Expense[]>>;
   save(payload: ExpensePayload): Promise<Result<void>>;
   remove(id: string): Promise<Result<void>>;
   cancel(id: string): Promise<Result<void>>;

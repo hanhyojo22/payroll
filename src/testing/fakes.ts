@@ -45,6 +45,24 @@ export function fakeCollectionRepository(): FakeCollectionRepository {
       return takeFailure<CollectionReminder[]>() ?? ok(rows.map(totalled));
     },
 
+    async listOpen() {
+      const failure = takeFailure<CollectionReminder[]>();
+      if (failure) return failure;
+      return ok(rows.map(totalled).filter((row) => !row.archived_at));
+    },
+
+    async collectedTotals(monthStart: string) {
+      const failure = takeFailure<{ lifetimeTotal: number; monthTotal: number }>();
+      if (failure) return failure;
+      const payments = rows.flatMap((row) => row.payments ?? []).filter((payment) => !payment.is_void);
+      return ok({
+        lifetimeTotal: payments.reduce((sum, payment) => sum + Number(payment.amount), 0),
+        monthTotal: payments
+          .filter((payment) => payment.payment_date >= monthStart)
+          .reduce((sum, payment) => sum + Number(payment.amount), 0),
+      });
+    },
+
     async save({ id, userId, values }: SaveCollectionInput) {
       const failure = takeFailure<void>();
       if (failure) return failure;
@@ -165,6 +183,12 @@ export function fakeExpenseRepository(): FakeExpenseRepository {
 
     async list() {
       return takeFailure<Expense[]>() ?? ok(rows);
+    },
+
+    async listActive() {
+      const failure = takeFailure<Expense[]>();
+      if (failure) return failure;
+      return ok(rows.filter((row) => row.status !== "paid" && row.status !== "cancelled"));
     },
 
     async save(payload) {

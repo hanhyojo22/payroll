@@ -103,4 +103,49 @@ describe("fakeCollectionRepository", () => {
     expect(second.error).toBeNull();
     expect((await repo.list()).data).toHaveLength(1);
   });
+
+  // listOpen exists so the dashboard never has to load a business's full receivable history
+  // just to find out what's currently open.
+  it("listOpen excludes archived receivables that list() still returns", async () => {
+    const repo = fakeCollectionRepository();
+    await repo.save({ id: "c1", userId: "u1", values: values({ title: "Open" }) });
+    await repo.save({ id: "c2", userId: "u1", values: values({ title: "Closed" }) });
+    await repo.archive("c2");
+
+    const open = await repo.listOpen();
+    expect(open.data).toHaveLength(1);
+    expect(open.data![0].title).toBe("Open");
+    expect((await repo.list()).data).toHaveLength(2);
+  });
+
+  describe("collectedTotals", () => {
+    it("sums non-void payments across every receivable, including archived ones", async () => {
+      const repo = fakeCollectionRepository();
+      await repo.save({ id: "c1", userId: "u1", values: values({ amount: "1000" }) });
+      await repo.recordPayment({ collectionId: "c1", paymentId: "p1", values: {
+        amount: "400", payment_date: "2026-06-05", payment_method: "cash", reference_number: "", notes: "",
+      } });
+      await repo.archive("c1");
+      await repo.save({ id: "c2", userId: "u1", values: values({ amount: "1000" }) });
+      await repo.recordPayment({ collectionId: "c2", paymentId: "p2", values: {
+        amount: "300", payment_date: "2026-05-01", payment_method: "cash", reference_number: "", notes: "",
+      } });
+
+      const totals = await repo.collectedTotals("2026-06-01");
+      expect(totals.data!.lifetimeTotal).toBe(700);
+      expect(totals.data!.monthTotal).toBe(400);
+    });
+
+    it("excludes voided payments", async () => {
+      const repo = fakeCollectionRepository();
+      await repo.save({ id: "c1", userId: "u1", values: values({ amount: "1000" }) });
+      await repo.recordPayment({ collectionId: "c1", paymentId: "p1", values: {
+        amount: "400", payment_date: "2026-06-05", payment_method: "cash", reference_number: "", notes: "",
+      } });
+      await repo.voidPayment("p1", "Duplicate");
+
+      const totals = await repo.collectedTotals("2026-06-01");
+      expect(totals.data!.lifetimeTotal).toBe(0);
+    });
+  });
 });

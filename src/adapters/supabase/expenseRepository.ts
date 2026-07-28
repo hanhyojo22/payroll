@@ -32,6 +32,19 @@ export function supabaseExpenseRepository(supabase: SupabaseClient): ExpenseRepo
         : ok((raw.data ?? []) as unknown as Expense[]);
     },
 
+    async listActive() {
+      const raw = await supabase
+        .from("expenses")
+        .select(EXPENSE_SELECT)
+        .not("status", "in", "(paid,cancelled)")
+        .order("expense_date", { ascending: false })
+        .order("created_at", { ascending: false });
+
+      return raw.error
+        ? err<Expense[]>(raw.error as AppError)
+        : ok((raw.data ?? []) as unknown as Expense[]);
+    },
+
     async save(payload: ExpensePayload) {
       // Only paid/cancelled are persisted verbatim; anything else normalises to pending so a
       // derived display status never leaks into the column.

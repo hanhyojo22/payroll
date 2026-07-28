@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
+  CollectionPaymentTotals,
   CollectionRepository,
   RecordCollectionPaymentInput,
   SaveCollectionInput,
@@ -27,6 +28,30 @@ export function supabaseCollectionRepository(supabase: SupabaseClient): Collecti
       return raw.error
         ? err<CollectionReminder[]>(raw.error as AppError)
         : ok(((raw.data ?? []) as unknown as CollectionReminder[]).map(normalizeReceivable));
+    },
+
+    async listOpen() {
+      const raw = await supabase
+        .from("collection_reminders")
+        .select(COLLECTION_SELECT)
+        .is("archived_at", null)
+        .order("due_date")
+        .order("created_at", { ascending: false });
+
+      return raw.error
+        ? err<CollectionReminder[]>(raw.error as AppError)
+        : ok(((raw.data ?? []) as unknown as CollectionReminder[]).map(normalizeReceivable));
+    },
+
+    async collectedTotals(monthStart: string) {
+      const raw = await supabase.rpc("dashboard_collection_totals", { month_start: monthStart });
+      if (raw.error) return err<CollectionPaymentTotals>(raw.error as AppError);
+      const row = (Array.isArray(raw.data) ? raw.data[0] : raw.data) as
+        { lifetime_total: number; month_total: number } | null;
+      return ok({
+        lifetimeTotal: Number(row?.lifetime_total ?? 0),
+        monthTotal: Number(row?.month_total ?? 0),
+      });
     },
 
     async save({ id, userId, values }: SaveCollectionInput) {

@@ -1,4 +1,4 @@
-import { RepositoriesProvider } from "./app/RepositoriesProvider";
+import { RepositoriesProvider, useRepositories } from "./app/RepositoriesProvider";
 import { useDialog } from "./shared/components/useDialog";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
@@ -749,6 +749,7 @@ function ChangePasswordModal({ onClose, userEmail }: { onClose: () => void; user
 const MOBILE_NAV_BREAKPOINT = 900;
 
 function Workspace({ session }: { session: Session }) {
+  const repos = useRepositories();
   const [view, setView] = useState<View>(() => viewFromPath(window.location.pathname));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => typeof window !== "undefined" && window.innerWidth <= MOBILE_NAV_BREAKPOINT);
@@ -823,7 +824,7 @@ function Workspace({ session }: { session: Session }) {
     billingRecords: async () => loadBillingRecords(supabase!),
     billingSettings: async () => loadBillingSettings(supabase!),
     collections: async () => loadCollections(supabase!),
-    dashboardSummary: async () => loadDashboardSummary(supabase!),
+    dashboardSummary: async () => loadDashboardSummary(supabase!, repos),
     dailyTicketEntries: async () => loadDailyTicketEntries(supabase!),
     employees: async () => loadEmployees(supabase!),
     expenseCategories: async () => loadExpenseCategories(supabase!),

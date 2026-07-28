@@ -2946,3 +2946,28 @@ execute function public.enforce_same_owner_references(
   'payroll_runs', 'payroll_run_id',
   'payroll_run_items', 'payroll_run_item_id'
 );
+
+-- Dashboard needs lifetime and this-month collected totals across every collection payment
+-- ever recorded, including archived/fully-collected receivables. Computing that client-side
+-- would require loading every collection row into the browser just to sum two numbers, which
+-- is exactly the full-table pull the dashboard should not need. This aggregates server-side
+-- instead; the dashboard's own collection fetch can then stay scoped to just the open pipeline.
+create or replace function public.dashboard_collection_totals(month_start date)
+returns table (lifetime_total numeric, month_total numeric)
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is null then raise exception 'Authentication required.'; end if;
+  return query
+  select
+    coalesce(sum(amount), 0) as lifetime_total,
+    coalesce(sum(amount) filter (where payment_date >= month_start), 0) as month_total
+  from public.collection_payments
+  where user_id = auth.uid() and is_void = false;
+end;
+$$;
+
+revoke all on function public.dashboard_collection_totals(date) from public;
+grant execute on function public.dashboard_collection_totals(date) to authenticated;
