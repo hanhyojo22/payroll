@@ -2423,13 +2423,10 @@ declare
 begin
   if auth.uid() is null then raise exception 'Authentication required.'; end if;
   if (run_payload->>'user_id')::uuid <> auth.uid() then raise exception 'Payroll owner mismatch.'; end if;
-  if exists (
-    select 1 from public.payroll_runs
-    where id = (run_payload->>'id')::uuid and user_id = auth.uid()
-  ) then
-    return;
-  end if;
 
+  -- Idempotency is per row, not "the run already exists so stop". An offline replay after a
+  -- partial write (run inserted, items not) must still fill in the missing children, so every
+  -- insert below no-ops individually on its own id.
   select * into run_row
   from jsonb_populate_record(
     null::public.payroll_runs,
@@ -2438,7 +2435,7 @@ begin
       'updated_at', coalesce(run_payload->>'updated_at', now()::text)
     )
   );
-  insert into public.payroll_runs select (run_row).*;
+  insert into public.payroll_runs select (run_row).* on conflict (id) do nothing;
 
   for entry in select value from jsonb_array_elements(coalesce(item_payloads, '[]'::jsonb))
   loop
@@ -2453,7 +2450,7 @@ begin
         'updated_at', coalesce(entry->>'updated_at', now()::text)
       )
     );
-    insert into public.payroll_run_items select (item_row).*;
+    insert into public.payroll_run_items select (item_row).* on conflict (id) do nothing;
   end loop;
 
   for entry in select value from jsonb_array_elements(coalesce(detail_payloads, '[]'::jsonb))
@@ -2464,7 +2461,7 @@ begin
       null::public.payroll_run_item_ticket_details,
       entry || jsonb_build_object('created_at', coalesce(entry->>'created_at', now()::text))
     );
-    insert into public.payroll_run_item_ticket_details select (detail_row).*;
+    insert into public.payroll_run_item_ticket_details select (detail_row).* on conflict (id) do nothing;
   end loop;
 
   for entry in select value from jsonb_array_elements(coalesce(advance_updates, '[]'::jsonb))
@@ -2492,7 +2489,7 @@ begin
         'updated_at', coalesce(entry->>'updated_at', now()::text)
       )
     );
-    insert into public.employee_salary_bond_transactions select (bond_row).*;
+    insert into public.employee_salary_bond_transactions select (bond_row).* on conflict (id) do nothing;
   end loop;
 end;
 $$;
@@ -2516,18 +2513,12 @@ declare
   bond_row public.employee_salary_bond_transactions%rowtype;
   entry jsonb;
   affected integer;
-  first_item_id uuid;
 begin
   if auth.uid() is null then raise exception 'Authentication required.'; end if;
-  select (value->>'id')::uuid into first_item_id
-  from jsonb_array_elements(coalesce(item_payloads, '[]'::jsonb))
-  limit 1;
-  if first_item_id is not null and exists (
-    select 1 from public.payroll_run_items where id = first_item_id and user_id = auth.uid()
-  ) then
-    return;
-  end if;
 
+  -- Idempotency is per row. Keying it on the first item's id meant a replay after a partial
+  -- write returned early and silently skipped every remaining item, leaving the rest of the
+  -- payroll missing; each insert below no-ops on its own id instead.
   for entry in select value from jsonb_array_elements(coalesce(item_payloads, '[]'::jsonb))
   loop
     if (entry->>'user_id')::uuid <> auth.uid() then raise exception 'Payroll item owner mismatch.'; end if;
@@ -2539,7 +2530,7 @@ begin
         'updated_at', coalesce(nullif(entry->>'updated_at', ''), now()::text)
       )
     );
-    insert into public.payroll_run_items select (item_row).*;
+    insert into public.payroll_run_items select (item_row).* on conflict (id) do nothing;
   end loop;
 
   for entry in select value from jsonb_array_elements(coalesce(detail_payloads, '[]'::jsonb))
@@ -2550,7 +2541,7 @@ begin
       null::public.payroll_run_item_ticket_details,
       entry || jsonb_build_object('created_at', coalesce(nullif(entry->>'created_at', ''), now()::text))
     );
-    insert into public.payroll_run_item_ticket_details select (detail_row).*;
+    insert into public.payroll_run_item_ticket_details select (detail_row).* on conflict (id) do nothing;
   end loop;
 
   for entry in select value from jsonb_array_elements(coalesce(advance_updates, '[]'::jsonb))
@@ -2576,7 +2567,7 @@ begin
         'updated_at', coalesce(nullif(entry->>'updated_at', ''), now()::text)
       )
     );
-    insert into public.employee_salary_bond_transactions select (bond_row).*;
+    insert into public.employee_salary_bond_transactions select (bond_row).* on conflict (id) do nothing;
   end loop;
 end;
 $$;
@@ -2955,3 +2946,28 @@ execute function public.enforce_same_owner_references(
   'payroll_runs', 'payroll_run_id',
   'payroll_run_items', 'payroll_run_item_id'
 );
+
+-- Dashboard needs lifetime and this-month collected totals across every collection payment
+-- ever recorded, including archived/fully-collected receivables. Computing that client-side
+-- would require loading every collection row into the browser just to sum two numbers, which
+-- is exactly the full-table pull the dashboard should not need. This aggregates server-side
+-- instead; the dashboard's own collection fetch can then stay scoped to just the open pipeline.
+create or replace function public.dashboard_collection_totals(month_start date)
+returns table (lifetime_total numeric, month_total numeric)
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is null then raise exception 'Authentication required.'; end if;
+  return query
+  select
+    coalesce(sum(amount), 0) as lifetime_total,
+    coalesce(sum(amount) filter (where payment_date >= month_start), 0) as month_total
+  from public.collection_payments
+  where user_id = auth.uid() and is_void = false;
+end;
+$$;
+
+revoke all on function public.dashboard_collection_totals(date) from public;
+grant execute on function public.dashboard_collection_totals(date) to authenticated;

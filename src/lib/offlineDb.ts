@@ -135,6 +135,12 @@ export async function writeSyncMeta(
   await withStore(SYNC_META_STORE, "readwrite", (store) => store.put(record));
 }
 
+// Bulk upserts queue an array payload rather than a single row patch; those must be carried
+// over whole instead of being spread-merged field by field.
+function isMergeablePayload(payload: unknown): payload is Record<string, unknown> {
+  return typeof payload === "object" && payload !== null && !Array.isArray(payload);
+}
+
 export async function queueMutation(mutation: Omit<PendingMutation, "id" | "createdAt" | "status" | "attempts">) {
   const record: PendingMutation = {
     ...mutation,
@@ -156,14 +162,30 @@ export async function queueMutation(mutation: Omit<PendingMutation, "id" | "crea
   );
 
   const pendingInsert = sameRecordMutations.find((item) => item.operation === "insert");
-  if (pendingInsert && (record.operation === "update" || record.operation === "upsert")) {
+  if (sameRecordMutations.length > 0 && (record.operation === "update" || record.operation === "upsert")) {
+    // Queued update/upsert payloads are partial patches ({ status }, { allowances, net_pay }),
+    // so a later mutation has to be merged onto the earlier one. Replacing it would silently
+    // drop the earlier field edits even though the optimistic UI and the resource cache have
+    // already applied them, leaving the server permanently diverged. An earlier insert stays
+    // an insert -- the row still needs creating -- otherwise the newer operation wins.
+    const ordered = [...sameRecordMutations].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const base = pendingInsert ?? ordered[ordered.length - 1];
     const merged: PendingMutation = {
-      ...pendingInsert,
-      affectedResources: Array.from(new Set([...pendingInsert.affectedResources, ...record.affectedResources])),
-      payload: {
-        ...((pendingInsert.payload ?? {}) as Record<string, unknown>),
-        ...((record.payload ?? {}) as Record<string, unknown>),
-      },
+      ...base,
+      resource: pendingInsert ? base.resource : record.resource,
+      operation: pendingInsert ? base.operation : record.operation,
+      match: record.match ?? base.match,
+      options: record.options ?? base.options,
+      affectedResources: Array.from(new Set(
+        [...ordered, record].flatMap((item) => item.affectedResources),
+      )),
+      payload: [...ordered, record].reduce<unknown>(
+        (accumulated, item) =>
+          isMergeablePayload(accumulated) && isMergeablePayload(item.payload)
+            ? { ...accumulated, ...item.payload }
+            : item.payload,
+        undefined,
+      ),
     };
     for (const item of sameRecordMutations) store.delete(item.id);
     await promisifyRequest(store.put(merged));
@@ -221,6 +243,25 @@ export async function discardFailedMutations(userId: string) {
   const failed = records.filter((record) => record.userId === userId && record.status === "failed");
   await Promise.all(failed.map((record) => promisifyRequest(store.delete(record.id))));
   return failed.length;
+}
+
+// Sign-out has to leave nothing behind: cached resources hold employee names, salaries and
+// government ID numbers, and the queue holds unsent payroll writes. Scoped to one user so a
+// second account signing out cannot wipe the first account's unsynced work.
+export async function clearOfflineDataForUser(userId: string) {
+  const db = await openOfflineDb();
+  const stores = [RESOURCE_CACHE_STORE, PENDING_MUTATIONS_STORE, SYNC_META_STORE];
+  const transaction = db.transaction(stores, "readwrite");
+
+  await Promise.all(stores.map(async (storeName) => {
+    const store = transaction.objectStore(storeName);
+    const records = await promisifyRequest<Array<{ id?: string; key?: string; userId: string }>>(store.getAll());
+    await Promise.all(
+      records
+        .filter((record) => record.userId === userId)
+        .map((record) => promisifyRequest(store.delete((record.key ?? record.id)!))),
+    );
+  }));
 }
 
 export async function deleteMutation(id: string) {

@@ -26,14 +26,16 @@ import type {
 } from "../types";
 import { collectionAgingBucket } from "../domain/collections";
 import { isExpenseOverdue, isExpensePeriodDueToday } from "../domain/expenses";
-import { fetchReceivables } from "../features/collections/collectionRepository";
-import { fetchSubcontractors } from "../features/billing/billingRepository";
-import { fetchSubconDailyTickets } from "../features/billing/subconTicketRepository";
-import { fetchExpenseCategories, fetchExpenses } from "../features/expenses/expenseRepository";
-import { fetchEmployeeAdvances } from "../features/payroll/employeeAdvanceRepository";
-import { fetchPayrollHistoryRows, fetchPayrollRunItems, fetchPayrollRuns, fetchPayrollSettings } from "../features/payroll/payrollRepository";
-import { fetchSalaryBonds } from "../features/salaryBonds/salaryBondRepository";
-import { fetchSubcontractorAdvances } from "../features/subcontractors/subcontractorAdvanceRepository";
+import type { Repositories } from "../core/ports";
+import { supabaseCollectionRepository } from "../adapters/supabase/collectionRepository";
+import {
+  supabaseSubconDailyTicketRepository,
+  supabaseSubcontractorAdvanceRepository,
+  supabaseSubcontractorRepository,
+} from "../adapters/supabase/billingRepository";
+import { supabaseExpenseCategoryRepository, supabaseExpenseRepository } from "../adapters/supabase/expenseRepository";
+import { supabaseEmployeeAdvanceRepository, supabaseSalaryBondRepository } from "../adapters/supabase/salaryBondRepository";
+import { supabasePayrollRepository } from "../adapters/supabase/payrollRepository";
 import { todayKey } from "../shared/utils/dates";
 
 type AppErrorLike = { message?: string; details?: string | null; code?: string };
@@ -125,7 +127,37 @@ export async function loadWorkspaceData(supabase: SupabaseClient) {
   };
 }
 
-export async function loadDashboardSummary(supabase: SupabaseClient) {
+async function loadOpenCollectionsForDashboard(repos: Pick<Repositories, "collections">) {
+  try {
+    const result = await withTimeout(repos.collections.listOpen(), "Open collections");
+    return { data: result.data ?? [], error: result.error, label: "Open collections" };
+  } catch (error) {
+    return { data: [] as CollectionReminder[], error: error as AppErrorLike, label: "Open collections" };
+  }
+}
+
+async function loadActiveExpensesForDashboard(repos: Pick<Repositories, "expenses">) {
+  try {
+    const result = await withTimeout(repos.expenses.listActive(), "Active expenses");
+    return { data: result.data ?? [], error: result.error, label: "Active expenses" };
+  } catch (error) {
+    return { data: [] as Expense[], error: error as AppErrorLike, label: "Active expenses" };
+  }
+}
+
+async function loadCollectedTotalsForDashboard(repos: Pick<Repositories, "collections">, monthStart: string) {
+  try {
+    const result = await withTimeout(repos.collections.collectedTotals(monthStart), "Collected totals");
+    return { data: result.data, error: result.error, label: "Collected totals" };
+  } catch (error) {
+    return { data: null, error: error as AppErrorLike, label: "Collected totals" };
+  }
+}
+
+export async function loadDashboardSummary(
+  supabase: SupabaseClient,
+  repos: Pick<Repositories, "collections" | "expenses">,
+) {
   const today = todayKey();
   const month = currentMonth();
   const year = currentYear();
@@ -169,9 +201,16 @@ export async function loadDashboardSummary(supabase: SupabaseClient) {
         .lte("due_date", today)
         .order("due_date"),
     ),
-    loadCollections(supabase),
-    loadExpenses(supabase),
+    // Only the currently-open pipeline, not every collection/expense ever recorded -- the
+    // dashboard never needs the full history, and loading it here was the actual scale
+    // bottleneck (years of archived receivables and paid expenses pulled into the browser
+    // just to compute a handful of numbers).
+    loadOpenCollectionsForDashboard(repos),
+    loadActiveExpensesForDashboard(repos),
   ]);
+
+  const monthStart = `${year}-${String(month).padStart(2, "0")}-01`;
+  const collectedTotalsResult = await loadCollectedTotalsForDashboard(repos, monthStart);
 
   const currentRunIds = currentRunsResult.data.map((run) => run.id);
   const currentItemsResult = currentRunIds.length > 0
@@ -193,8 +232,9 @@ export async function loadDashboardSummary(supabase: SupabaseClient) {
     : { count: 0, error: null, label: "Latest payroll item count" };
 
   const currentItems = currentItemsResult.data;
-  const openCollections = collectionsResult.data.filter((item) => !item.archived_at && item.outstanding_balance > 0);
-  const monthKey = `${year}-${String(month).padStart(2, "0")}`;
+  // collectionsResult is already scoped to the open pipeline (listOpen), so only the balance
+  // check is still needed here -- archived rows never appear in it.
+  const openCollections = collectionsResult.data.filter((item) => item.outstanding_balance > 0);
   const collectionAging = {
     current: 0,
     days1To30: 0,
@@ -214,7 +254,9 @@ export async function loadDashboardSummary(supabase: SupabaseClient) {
     : item.frequency === "monthly" && item.payment_date
       ? isExpensePeriodDueToday(item.payment_date, today)
       : false;
-  const openExpenses = expensesResult.data.filter((item) => item.status !== "paid" && item.status !== "cancelled" && expenseNotifyDate(item));
+  // expensesResult is already scoped to non-paid/non-cancelled (listActive), so only the
+  // notify-date check is still needed here.
+  const openExpenses = expensesResult.data.filter((item) => expenseNotifyDate(item));
   const summary: DashboardSummary = {
     activeEmployeeCount: activeEmployees.count,
     currentPayrollItemCount: currentItems.length,
@@ -225,15 +267,11 @@ export async function loadDashboardSummary(supabase: SupabaseClient) {
       .filter((item) => item.status === "paid")
       .reduce((sum, item) => sum + toNumber(item.net_pay), 0),
     pendingCollections: openCollections.reduce((sum, item) => sum + toNumber(item.outstanding_balance), 0),
-    collectedTotal: collectionsResult.data.flatMap((item) => item.payments)
-      .filter((payment) => !payment.is_void)
-      .reduce((sum, payment) => sum + toNumber(payment.amount), 0),
+    collectedTotal: collectedTotalsResult.data?.lifetimeTotal ?? 0,
     overdueCollectionBalance: openCollections
       .filter((item) => item.due_date < today)
       .reduce((sum, item) => sum + toNumber(item.outstanding_balance), 0),
-    collectedThisMonth: collectionsResult.data.flatMap((item) => item.payments)
-      .filter((payment) => !payment.is_void && payment.payment_date.startsWith(monthKey))
-      .reduce((sum, payment) => sum + toNumber(payment.amount), 0),
+    collectedThisMonth: collectedTotalsResult.data?.monthTotal ?? 0,
     collectionAging,
     latestRun: latestRun ? { ...latestRun, item_count: latestItemCount.count } : null,
     dueTodayPayments: paymentsResult.data.filter((item) => item.due_date === today),
@@ -252,6 +290,7 @@ export async function loadDashboardSummary(supabase: SupabaseClient) {
       paymentsResult.error ??
       collectionsResult.error ??
       expensesResult.error ??
+      collectedTotalsResult.error ??
       currentItemsResult.error ??
       latestItemCount.error,
     label: "Dashboard",
@@ -269,12 +308,12 @@ export async function loadPayments(supabase: SupabaseClient) {
 }
 
 export async function loadExpenseCategories(supabase: SupabaseClient) {
-  const result = await fetchExpenseCategories(supabase);
+  const result = await supabaseExpenseCategoryRepository(supabase).list();
   return { data: result.data as ExpenseCategory[], error: result.error, label: "Expense categories" };
 }
 
 export async function loadExpenses(supabase: SupabaseClient) {
-  const result = await fetchExpenses(supabase);
+  const result = await supabaseExpenseRepository(supabase).list();
   return { data: result.data as Expense[], error: result.error, label: "Expenses" };
 }
 
@@ -326,8 +365,8 @@ export function buildPaymentLedger(
 
 export async function loadCollections(supabase: SupabaseClient) {
   try {
-    const result = await withTimeout(fetchReceivables(supabase), "Collections");
-    return { data: result.data, error: result.error, label: "Collections" };
+    const result = await withTimeout(supabaseCollectionRepository(supabase).list(), "Collections");
+    return { data: result.data ?? [], error: result.error, label: "Collections" };
   } catch (error) {
     return { data: [] as CollectionReminder[], error: error as AppErrorLike, label: "Collections" };
   }
@@ -335,8 +374,8 @@ export async function loadCollections(supabase: SupabaseClient) {
 
 export async function loadEmployeeAdvances(supabase: SupabaseClient) {
   try {
-    const result = await withTimeout(fetchEmployeeAdvances(supabase), "Employee advances");
-    return { data: result.data, error: result.error, label: "Employee advances" };
+    const result = await withTimeout(supabaseEmployeeAdvanceRepository(supabase).list(), "Employee advances");
+    return { data: result.data ?? [], error: result.error, label: "Employee advances" };
   } catch (error) {
     return { data: [] as EmployeeAdvance[], error: error as AppErrorLike, label: "Employee advances" };
   }
@@ -344,8 +383,8 @@ export async function loadEmployeeAdvances(supabase: SupabaseClient) {
 
 export async function loadSalaryBonds(supabase: SupabaseClient) {
   try {
-    const result = await withTimeout(fetchSalaryBonds(supabase), "Salary bonds");
-    return { data: result.data, error: result.error, label: "Salary bonds" };
+    const result = await withTimeout(supabaseSalaryBondRepository(supabase).list(), "Salary bonds");
+    return { data: result.data ?? [], error: result.error, label: "Salary bonds" };
   } catch (error) {
     return { data: [] as SalaryBond[], error: error as AppErrorLike, label: "Salary bonds" };
   }
@@ -353,8 +392,8 @@ export async function loadSalaryBonds(supabase: SupabaseClient) {
 
 export async function loadSubcontractorAdvances(supabase: SupabaseClient) {
   try {
-    const result = await withTimeout(fetchSubcontractorAdvances(supabase), "Subcontractor advances");
-    return { data: result.data, error: result.error, label: "Subcontractor advances" };
+    const result = await withTimeout(supabaseSubcontractorAdvanceRepository(supabase).list(), "Subcontractor advances");
+    return { data: result.data ?? [], error: result.error, label: "Subcontractor advances" };
   } catch (error) {
     return { data: [] as SubcontractorAdvance[], error: error as AppErrorLike, label: "Subcontractor advances" };
   }
@@ -402,8 +441,8 @@ export async function loadEmployees(supabase: SupabaseClient) {
 
 export async function loadPayrollRuns(supabase: SupabaseClient) {
   try {
-    const result = await withTimeout(fetchPayrollRuns(supabase), "Payroll runs");
-    return { data: result.data, error: result.error, label: "Payroll" };
+    const result = await withTimeout(supabasePayrollRepository(supabase).listRuns(), "Payroll runs");
+    return { data: result.data ?? [], error: result.error, label: "Payroll" };
   } catch (error) {
     return { data: [] as PayrollRunWithItems[], error: error as AppErrorLike, label: "Payroll" };
   }
@@ -411,8 +450,8 @@ export async function loadPayrollRuns(supabase: SupabaseClient) {
 
 export async function loadPayrollRunItems(supabase: SupabaseClient, payrollRunId: string) {
   try {
-    const result = await withTimeout(fetchPayrollRunItems(supabase, payrollRunId), "Payroll items");
-    return { data: result.data, error: result.error, label: "Payroll items" };
+    const result = await withTimeout(supabasePayrollRepository(supabase).listRunItems(payrollRunId), "Payroll items");
+    return { data: result.data ?? [], error: result.error, label: "Payroll items" };
   } catch (error) {
     return { data: [] as PayrollRunItem[], error: error as AppErrorLike, label: "Payroll items" };
   }
@@ -420,15 +459,15 @@ export async function loadPayrollRunItems(supabase: SupabaseClient, payrollRunId
 
 export async function loadPayrollHistoryRows(supabase: SupabaseClient, page = 0, pageSize = 100) {
   try {
-    const result = await withTimeout(fetchPayrollHistoryRows(supabase, page, pageSize), "Payroll history");
-    return { data: result.data, error: result.error, label: "Payroll history" };
+    const result = await withTimeout(supabasePayrollRepository(supabase).listHistory(page, pageSize), "Payroll history");
+    return { data: result.data ?? [], error: result.error, label: "Payroll history" };
   } catch (error) {
     return { data: [] as PayrollHistoryRow[], error: error as AppErrorLike, label: "Payroll history" };
   }
 }
 
 export async function loadPayrollSettings(supabase: SupabaseClient) {
-  const result = await fetchPayrollSettings(supabase);
+  const result = await supabasePayrollRepository(supabase).getSettings();
   return { data: result.data as PayrollSettings | null, error: result.error, label: "Payroll settings" };
 }
 
@@ -553,11 +592,11 @@ export async function loadBillingSettings(supabase: SupabaseClient) {
 }
 
 export async function loadSubcontractors(supabase: SupabaseClient) {
-  const result = await fetchSubcontractors(supabase);
-  return { data: result.data, error: result.error, label: "Subcontractors" };
+  const result = await supabaseSubcontractorRepository(supabase).list();
+  return { data: result.data ?? [], error: result.error, label: "Subcontractors" };
 }
 
 export async function loadSubconDailyTickets(supabase: SupabaseClient) {
-  const result = await fetchSubconDailyTickets(supabase);
-  return { data: result.data as SubconDailyTicket[], error: result.error, label: "Subcon daily tickets" };
+  const result = await supabaseSubconDailyTicketRepository(supabase).list();
+  return { data: result.data ?? [], error: result.error, label: "Subcon daily tickets" };
 }

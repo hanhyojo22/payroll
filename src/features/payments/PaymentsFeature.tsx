@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
+import { useDialog } from "../../shared/components/useDialog";
 import { CheckCircle2, Eye, Receipt, Wallet, X } from "lucide-react";
-import { buildPaymentLedger } from "../../lib/supabaseData";
+import { buildPaymentLedger } from "../../app/resources";
 import { paymentMethodLabel } from "../../domain/expenses";
 import { DataTable } from "../../shared/components/DataTable";
 import { PageHeader, RecordTitle } from "../../shared/components/PageLayout";
@@ -89,9 +90,11 @@ export function PaymentsFeature({
 }
 
 function PaymentLedgerDetailsModal({ onClose, row }: { onClose: () => void; row: PaymentLedgerRow }) {
+  const { backdropProps, dialogProps } = useDialog({ label: `Payment details: ${row.label}`, onClose });
+
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(event) => event.stopPropagation()}>
+    <div className="modal-backdrop" {...backdropProps}>
+      <div className="modal" {...dialogProps}>
         <div className="modal-header">
           <div>
             <h3>{row.label}</h3>

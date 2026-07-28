@@ -1,9 +1,10 @@
+import { useRepositories } from "../../app/RepositoriesProvider";
 import { useState, type FormEvent } from "react";
 import { CreditCard, Pencil, Save, X } from "lucide-react";
 import { isOfflineLikeError } from "../../lib/offlineSync";
-import { supabase } from "../../supabase";
 import { DataTable } from "../../shared/components/DataTable";
 import { MoneyField } from "../../shared/components/MoneyField";
+import { RequiredMark } from "../../shared/components/FormLayout";
 import { StatusBadge } from "../../shared/components/StatusBadge";
 import type { QueueOfflineMutation } from "../../shared/types";
 import { NotificationService } from "../../shared/notifications/NotificationService";
@@ -62,6 +63,7 @@ export function EmployeeAdvancesFeature({
   userId: string;
 }) {
   const [advanceForm, setAdvanceForm] = useState<EmployeeAdvanceFormValues>(() => emptyEmployeeAdvance(employee.id));
+  const repos = useRepositories();
   const [editingAdvance, setEditingAdvance] = useState<EmployeeAdvance | null>(null);
   const amount = toNumber(advanceForm.amount);
   const deductionPerPayroll = toNumber(advanceForm.deduction_per_payroll);
@@ -73,7 +75,6 @@ export function EmployeeAdvancesFeature({
 
   async function saveEmployeeAdvance(event: FormEvent) {
     event.preventDefault();
-    if (!supabase) return;
 
     const balance = advanceForm.balance ? toNumber(advanceForm.balance) : amount;
     const generatedAdvanceId = `EA-${Date.now().toString(36).toUpperCase()}`;
@@ -109,9 +110,7 @@ export function EmployeeAdvancesFeature({
       return;
     }
 
-    const result = editingAdvance
-      ? await supabase.from("employee_advances").update(payload).eq("id", editingAdvance.id)
-      : await supabase.from("employee_advances").insert(payload);
+    const result = await repos.employeeAdvances.save(payload, editingAdvance?.id);
     if (result.error) {
       if (isOfflineLikeError(result.error)) {
         await onQueueOfflineMutation({
@@ -173,7 +172,7 @@ export function EmployeeAdvancesFeature({
             </div>
 
             <label>
-              Advance Type <span>*</span>
+              Advance Type<RequiredMark />
               <select value={advanceForm.advance_type} onChange={(event) => setAdvanceForm({ ...advanceForm, advance_type: event.target.value as EmployeeAdvanceType })}>
                 {advanceTypeOptions.map((option) => (
                   <option key={option} value={option}>{option}</option>
@@ -181,13 +180,13 @@ export function EmployeeAdvancesFeature({
               </select>
             </label>
             <label>
-              Date Granted <span>*</span>
+              Date Granted<RequiredMark />
               <input required type="date" value={advanceForm.date_granted} onChange={(event) => setAdvanceForm({ ...advanceForm, date_granted: event.target.value })} />
             </label>
             <MoneyField label="Amount *" onChange={(amountValue) => setAdvanceForm({ ...advanceForm, amount: amountValue, balance: amountValue })} required value={advanceForm.amount} />
             <MoneyField label="Deduction Per Payroll *" onChange={(value) => setAdvanceForm({ ...advanceForm, deduction_per_payroll: value })} required value={advanceForm.deduction_per_payroll} />
             <label>
-              Start Deduction <span>*</span>
+              Start Deduction<RequiredMark />
               <input required type="date" value={advanceForm.start_deduction} onChange={(event) => setAdvanceForm({ ...advanceForm, start_deduction: event.target.value })} />
               <small>The deduction will begin on this date.</small>
             </label>

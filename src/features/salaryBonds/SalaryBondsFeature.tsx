@@ -1,10 +1,10 @@
 import { useState, type FormEvent } from "react";
+import { useDialog } from "../../shared/components/useDialog";
 import { Archive, History, Pencil, Plus, RotateCcw, Wallet, X } from "lucide-react";
 import { validateSalaryBondWithdrawal } from "../../domain/salaryBonds";
 import { isOfflineLikeError } from "../../lib/offlineSync";
-import { supabase } from "../../supabase";
 import { DataTable } from "../../shared/components/DataTable";
-import { Modal } from "../../shared/components/FormLayout";
+import { Modal, RequiredMark } from "../../shared/components/FormLayout";
 import { MoneyField } from "../../shared/components/MoneyField";
 import { PageHeader } from "../../shared/components/PageLayout";
 import { StatusBadge } from "../../shared/components/StatusBadge";
@@ -19,12 +19,8 @@ import type {
   SalaryBondFormValues,
   SalaryBondWithdrawalFormValues,
 } from "../../types";
-import {
-  archiveSalaryBond,
-  reactivateSalaryBond,
-  recordSalaryBondWithdrawal,
-  saveSalaryBond,
-} from "./salaryBondRepository";
+import { useRepositories } from "../../app/RepositoriesProvider";
+import { salaryBondPayload } from "./mapping";
 
 const emptyBondForm = (employeeId: string): SalaryBondFormValues => ({
   employee_id: employeeId,
@@ -58,6 +54,12 @@ export function SalaryBondsFeature({
   const [bondForm, setBondForm] = useState<SalaryBondFormValues>(() => emptyBondForm(employee?.id ?? ""));
   const [editingBond, setEditingBond] = useState<SalaryBond | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  const repos = useRepositories();
+  const bondFormDialog = useDialog({
+    label: `${editingBond ? "Edit" : "Add"} salary bond`,
+    onClose: () => setFormOpen(false),
+    open: formOpen,
+  });
   const [withdrawingBond, setWithdrawingBond] = useState<SalaryBond | null>(null);
   const [withdrawalForm, setWithdrawalForm] = useState<SalaryBondWithdrawalFormValues>(emptyWithdrawalForm);
   const [withdrawalBusy, setWithdrawalBusy] = useState(false);
@@ -88,7 +90,6 @@ export function SalaryBondsFeature({
 
   async function saveBond(event: FormEvent) {
     event.preventDefault();
-    if (!supabase) return;
     const targetEmployee = employee ?? employeesById.get(bondForm.employee_id);
     if (!targetEmployee) {
       NotificationService.showError("Select an employee for this salary bond.");
@@ -98,7 +99,7 @@ export function SalaryBondsFeature({
       NotificationService.showError("Connect to the internet to save a salary bond.");
       return;
     }
-    const result = await saveSalaryBond(supabase, bondForm, userId, targetEmployee, editingBond?.id);
+    const result = await repos.salaryBonds.save(salaryBondPayload(bondForm, userId, targetEmployee), editingBond?.id);
     if (result.error) {
       NotificationService.showError(friendlyError(result.error));
       return;
@@ -110,13 +111,13 @@ export function SalaryBondsFeature({
   }
 
   async function toggleArchiveBond(bond: SalaryBond) {
-    if (!supabase || !navigator.onLine) {
+    if (!navigator.onLine) {
       NotificationService.showError("Connect to the internet to update this salary bond.");
       return;
     }
     const result = bond.status === "archived"
-      ? await reactivateSalaryBond(supabase, bond.id)
-      : await archiveSalaryBond(supabase, bond.id);
+      ? await repos.salaryBonds.reactivate(bond.id)
+      : await repos.salaryBonds.archive(bond.id);
     if (result.error) {
       NotificationService.showError(friendlyError(result.error));
       return;
@@ -132,7 +133,7 @@ export function SalaryBondsFeature({
 
   async function submitWithdrawal(event: FormEvent) {
     event.preventDefault();
-    if (!supabase || !withdrawingBond) return;
+    if (!withdrawingBond) return;
     if (!navigator.onLine) {
       NotificationService.showError("Connect to the internet to record an emergency withdrawal.");
       return;
@@ -153,7 +154,13 @@ export function SalaryBondsFeature({
     setWithdrawalBusy(true);
     try {
       const transactionId = crypto.randomUUID();
-      const result = await recordSalaryBondWithdrawal(supabase, withdrawingBond.id, transactionId, withdrawalForm);
+      const result = await repos.salaryBonds.recordWithdrawal({
+        bondId: withdrawingBond.id,
+        transactionId,
+        amount: toNumber(withdrawalForm.amount),
+        transactionDate: withdrawalForm.transaction_date,
+        note: withdrawalForm.note.trim(),
+      });
       if (result.error) {
         NotificationService.showError(isOfflineLikeError(result.error) ? "Connect to the internet to record an emergency withdrawal." : friendlyError(result.error));
         return;
@@ -214,8 +221,8 @@ export function SalaryBondsFeature({
       />
 
       {formOpen && (
-        <div className="modal-backdrop" onClick={() => setFormOpen(false)}>
-          <div className="modal billing-form-modal subcon-form-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-backdrop" {...bondFormDialog.backdropProps}>
+          <div className="modal billing-form-modal subcon-form-modal" {...bondFormDialog.dialogProps}>
             <div className="modal-header">
               <h3>{editingBond ? "Edit" : "Add"} Salary Bond</h3>
               <button aria-label="Close" onClick={() => setFormOpen(false)} type="button"><X size={18} /></button>
@@ -232,7 +239,7 @@ export function SalaryBondsFeature({
                   </div>
                 ) : (
                   <label className="full">
-                    Employee
+                    Employee<RequiredMark />
                     <select disabled={Boolean(editingBond)} required value={bondForm.employee_id} onChange={(event) => setBondForm({ ...bondForm, employee_id: event.target.value })}>
                       <option value="">Select employee</option>
                       {employees.map((item) => (
@@ -241,10 +248,10 @@ export function SalaryBondsFeature({
                     </select>
                   </label>
                 )}
-                <MoneyField label="Target Amount *" onChange={(value) => setBondForm({ ...bondForm, target_amount: value })} required value={bondForm.target_amount} />
-                <MoneyField label="Deduction Per Payroll *" onChange={(value) => setBondForm({ ...bondForm, deduction_per_payroll: value })} required value={bondForm.deduction_per_payroll} />
+                <MoneyField label="Target Amount" onChange={(value) => setBondForm({ ...bondForm, target_amount: value })} required value={bondForm.target_amount} />
+                <MoneyField label="Deduction Per Payroll" onChange={(value) => setBondForm({ ...bondForm, deduction_per_payroll: value })} required value={bondForm.deduction_per_payroll} />
                 <label>
-                  Start Deduction
+                  Start Deduction<RequiredMark />
                   <input required type="date" value={bondForm.start_deduction} onChange={(event) => setBondForm({ ...bondForm, start_deduction: event.target.value })} />
                 </label>
                 <label className="full">
@@ -265,13 +272,13 @@ export function SalaryBondsFeature({
         <Modal onClose={() => setWithdrawingBond(null)} title={`Emergency withdrawal — ${withdrawingBond.employee_name}`}>
           <form className="form-grid" onSubmit={submitWithdrawal}>
             <p>Current balance: <strong>{currency.format(withdrawingBond.balance)}</strong></p>
-            <MoneyField label="Amount *" onChange={(value) => setWithdrawalForm({ ...withdrawalForm, amount: value })} required value={withdrawalForm.amount} />
+            <MoneyField label="Amount" onChange={(value) => setWithdrawalForm({ ...withdrawalForm, amount: value })} required value={withdrawalForm.amount} />
             <label>
-              Withdrawal Date <span>*</span>
+              Withdrawal Date<RequiredMark />
               <input required type="date" value={withdrawalForm.transaction_date} onChange={(event) => setWithdrawalForm({ ...withdrawalForm, transaction_date: event.target.value })} />
             </label>
             <label className="employee-advance-form-wide">
-              Reason <span>*</span>
+              Reason<RequiredMark />
               <textarea placeholder="e.g. medical emergency, requested by employee" required value={withdrawalForm.note} onChange={(event) => setWithdrawalForm({ ...withdrawalForm, note: event.target.value })} />
             </label>
             <div className="form-actions full">

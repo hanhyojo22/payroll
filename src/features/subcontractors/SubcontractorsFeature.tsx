@@ -1,3 +1,4 @@
+import { useDialog } from "../../shared/components/useDialog";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { AlertTriangle, ArrowLeft, CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, Eye, Pencil, Plus, ReceiptText, Ticket, Trash2, Users, WalletCards, X } from "lucide-react";
 import {
@@ -15,10 +16,9 @@ import {
   SUBCONTRACTOR_PAYOUT_EXPENSE_CATEGORY_NAME,
   validatePaymentReminderPayment,
 } from "../../domain/paymentReminders";
-import { deletePaymentReminderPayment, saveSubcontractor, updatePaymentReminderCompletion } from "../billing/billingRepository";
 import { supabase } from "../../supabase";
 import { DataTable } from "../../shared/components/DataTable";
-import { TextField } from "../../shared/components/FormLayout";
+import { RequiredMark, TextField } from "../../shared/components/FormLayout";
 import { MoneyField } from "../../shared/components/MoneyField";
 import { PageHeader, RecordTitle, Toolbar } from "../../shared/components/PageLayout";
 import { StatusBadge } from "../../shared/components/StatusBadge";
@@ -28,13 +28,7 @@ import { currency, toNumber } from "../../shared/utils/currency";
 import { monthNames, todayKey } from "../../shared/utils/dates";
 import { formatPhoneNumber, normalizePhoneDigits } from "../../shared/utils/phone";
 import type { BillingPeriod, BillingRecord, CollectionPaymentMethod, ExpenseCategory, PaymentReminder, PaymentReminderPayment, SubconDailyTicket, Subcontractor, SubcontractorAdvance, SubcontractorAdvanceFormValues } from "../../types";
-import {
-  deleteExpenseInstallmentPayment,
-  ensureSubcontractorPayoutExpenseCategory,
-  payExpenseInstallment,
-  saveExpense,
-  updateExpenseCompletion,
-} from "../expenses/expenseRepository";
+import { useRepositories } from "../../app/RepositoriesProvider";
 
 type AccountTab = "daily" | "billing" | "payouts" | "advances";
 
@@ -89,6 +83,7 @@ export function SubcontractorsFeature({
   subcontractors: Subcontractor[];
   userId: string;
 }) {
+  const repos = useRepositories();
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState<AccountTab>(initialTab ?? "daily");
   const [editing, setEditing] = useState<Subcontractor | null>(null);
@@ -101,6 +96,11 @@ export function SubcontractorsFeature({
     billing_year: number;
     billing_period: BillingPeriod;
   }) | null>(null);
+  const drawerDialog = useDialog<HTMLElement>({
+    label: `Billing breakdown${drawerRow ? `: ${drawerRow.subcon_name}` : ""}`,
+    onClose: () => setDrawerRow(null),
+    open: Boolean(drawerRow),
+  });
 
   useEffect(() => {
     if (initialTab) setTab(initialTab);
@@ -153,7 +153,6 @@ export function SubcontractorsFeature({
   }, [summaries]);
 
   async function toggleArchive(subcontractor: Subcontractor) {
-    if (!supabase) return;
     const nextStatus = subcontractor.status === "active" ? "archived" : "active";
     const confirmed = await NotificationService.showConfirm({
       title: nextStatus === "archived" ? "Archive subcontractor" : "Restore subcontractor",
@@ -162,7 +161,7 @@ export function SubcontractorsFeature({
         : `Restore ${subcontractor.name} to active status?`,
     });
     if (!confirmed) return;
-    const result = await saveSubcontractor(supabase, userId, {
+    const result = await repos.subcontractors.save(userId, {
       id: subcontractor.id,
       name: subcontractor.name,
       installation_rate: subcontractor.installation_rate,
@@ -186,7 +185,7 @@ export function SubcontractorsFeature({
     if (subcontractorExpenseCategoryId) return subcontractorExpenseCategoryId;
     if (!supabase || !navigator.onLine) return null;
 
-    const result = await ensureSubcontractorPayoutExpenseCategory(supabase, userId);
+    const result = await repos.expenseCategories.ensureCompanyCategory(userId, SUBCONTRACTOR_PAYOUT_EXPENSE_CATEGORY_NAME);
     if (result.error || !result.data) return null;
     setSubcontractorExpenseCategoryId(result.data.id);
     return result.data.id;
@@ -236,8 +235,8 @@ export function SubcontractorsFeature({
       )}
 
       {drawerRow && (
-        <div className="modal-backdrop" onClick={() => setDrawerRow(null)}>
-          <aside className="subcon-billing-drawer" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-backdrop" {...drawerDialog.backdropProps}>
+          <aside className="subcon-billing-drawer" {...drawerDialog.dialogProps}>
             <div className="modal-header">
               <h3>{drawerRow.subcon_name}</h3>
               <button onClick={() => setDrawerRow(null)} type="button" aria-label="Close"><X size={18} /></button>
@@ -380,6 +379,7 @@ function SubcontractorDetailsView({
   tab: AccountTab;
   userId: string;
 }) {
+  const repos = useRepositories();
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [periodFilter, setPeriodFilter] = useState<"all" | BillingPeriod>("all");
@@ -466,13 +466,12 @@ function SubcontractorDetailsView({
     }
 
     if (!supabase) return false;
-    const result = await saveExpense(supabase, payload);
+    const result = await repos.expenses.save(payload);
     return !result.error;
   }
 
   async function saveAdvance(event: FormEvent) {
     event.preventDefault();
-    if (!supabase) return;
     const amount = Number(advanceForm.amount) || 0;
     const balance = editingAdvance ? Number(editingAdvance.balance) || 0 : amount;
     const deductionPerBilling = advanceForm.deduction_mode === "per_billing"
@@ -516,9 +515,7 @@ function SubcontractorDetailsView({
       return;
     }
 
-    const result = editingAdvance
-      ? await supabase.from("subcontractor_advances").update(payload).eq("id", editingAdvance.id)
-      : await supabase.from("subcontractor_advances").insert(payload);
+    const result = await repos.subcontractorAdvances.save(payload, editingAdvance?.id);
     setAdvanceBusy(false);
     if (result.error) {
       NotificationService.showError((result.error as { message?: string }).message ?? "Failed to save cash advance.");
@@ -607,13 +604,13 @@ function SubcontractorDetailsView({
     }
     const expenseSyncOk = await syncPayoutExpense(payment, payment.payments ?? []);
     if (expenseSyncOk) {
-      const expensePaymentResult = await payExpenseInstallment(supabase, userId, payment.id, paymentPayload);
+      const expensePaymentResult = await repos.expenses.addInstallmentPayment(userId, payment.id, paymentPayload);
       if (expensePaymentResult.error) {
         NotificationService.showError((expensePaymentResult.error as { message?: string }).message ?? "Payment recorded, but couldn't sync it to Expenses.");
         await onChange();
         return;
       }
-      const expenseCompletionResult = await updateExpenseCompletion(supabase, payment.id, expenseCompletionPayload);
+      const expenseCompletionResult = await repos.expenses.updateCompletion(payment.id, expenseCompletionPayload);
       if (expenseCompletionResult.error) {
         NotificationService.showError((expenseCompletionResult.error as { message?: string }).message ?? "Payment recorded, but couldn't update the linked expense.");
         await onChange();
@@ -629,7 +626,6 @@ function SubcontractorDetailsView({
   }
 
   async function handleDeletePayoutPayment(payment: PaymentReminder, paymentRecord: PaymentReminderPayment) {
-    if (!supabase) return;
     const confirmed = await NotificationService.showConfirm({
       message: "Delete this recorded payment?",
       danger: true,
@@ -680,20 +676,20 @@ function SubcontractorDetailsView({
       return;
     }
 
-    const deleteResult = await deletePaymentReminderPayment(supabase, paymentRecord.id);
+    const deleteResult = await repos.paymentReminders.deletePayment(paymentRecord.id);
     if (deleteResult.error) {
       NotificationService.showError((deleteResult.error as { message?: string }).message ?? "Failed to delete that payment.");
       return;
     }
     const expenseSyncOk = await syncPayoutExpense(payment, payment.payments ?? []);
     if (expenseSyncOk) {
-      const expenseDeleteResult = await deleteExpenseInstallmentPayment(supabase, paymentRecord.id);
+      const expenseDeleteResult = await repos.expenses.deleteInstallmentPayment(paymentRecord.id);
       if (expenseDeleteResult.error) {
         NotificationService.showError((expenseDeleteResult.error as { message?: string }).message ?? "Payment deleted, but couldn't update the linked expense.");
         await onChange();
         return;
       }
-      const expenseCompletionResult = await updateExpenseCompletion(supabase, payment.id, {
+      const expenseCompletionResult = await repos.expenses.updateCompletion(payment.id, {
         status: shouldRevert ? "pending" : "paid",
         paid_date: shouldRevert
           ? null
@@ -707,7 +703,7 @@ function SubcontractorDetailsView({
       }
     }
     if (shouldRevert) {
-      const completionResult = await updatePaymentReminderCompletion(supabase, payment.id, "pending");
+      const completionResult = await repos.paymentReminders.updateCompletion(payment.id, "pending");
       if (completionResult.error) {
         NotificationService.showError((completionResult.error as { message?: string }).message ?? "Deleted, but failed to revert the payout status.");
         await onChange();
@@ -1239,10 +1235,10 @@ function SubcontractorDetailsView({
                   )}
                 </div>
                 <label>
-                  Date Granted *
+                  Date Granted<RequiredMark />
                   <input required type="date" value={advanceForm.date_granted} onChange={(event) => setAdvanceForm({ ...advanceForm, date_granted: event.target.value })} />
                 </label>
-                <MoneyField label="Amount *" onChange={(amountValue) => setAdvanceForm({ ...advanceForm, amount: amountValue })} required value={advanceForm.amount} />
+                <MoneyField label="Amount" onChange={(amountValue) => setAdvanceForm({ ...advanceForm, amount: amountValue })} required value={advanceForm.amount} />
                 <label>
                   Deduction Method
                   <select value={advanceForm.deduction_mode} onChange={(event) => setAdvanceForm({ ...advanceForm, deduction_mode: event.target.value as SubcontractorAdvance["deduction_mode"] })}>
@@ -1337,12 +1333,14 @@ function SubcontractorProfileModal({
     address: initial?.address ?? "",
   });
   const [busy, setBusy] = useState(false);
+  const { backdropProps, dialogProps } = useDialog({ label: `${initial ? "Edit" : "Add"} subcontractor`, onClose });
+  const repos = useRepositories();
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if (!supabase || !values.name.trim()) return;
+    if (!values.name.trim()) return;
     setBusy(true);
-    const result = await saveSubcontractor(supabase, userId, {
+    const result = await repos.subcontractors.save(userId, {
       id: initial?.id,
       name: values.name.trim(),
       installation_rate: Number(values.installation_rate) || 0,
@@ -1364,8 +1362,8 @@ function SubcontractorProfileModal({
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal billing-form-modal subcon-form-modal" onClick={(event) => event.stopPropagation()}>
+    <div className="modal-backdrop" {...backdropProps}>
+      <div className="modal billing-form-modal subcon-form-modal" {...dialogProps}>
         <div className="modal-header">
           <h3>{initial ? "Edit" : "Add"} Subcontractor</h3>
           <button onClick={onClose} type="button" aria-label="Close"><X size={18} /></button>
@@ -1376,14 +1374,14 @@ function SubcontractorProfileModal({
         >
           <div className="billing-form-fields subcon-form-fields">
             <label>
-              Name
+              Name<RequiredMark />
               <input value={values.name} onChange={(event) => setValues((current) => ({ ...current, name: event.target.value }))} required />
             </label>
             <MoneyField label="Installation rate (PHP)" value={values.installation_rate} onChange={(value) => setValues((current) => ({ ...current, installation_rate: value }))} required />
             <MoneyField label="Repair rate (PHP)" value={values.repair_rate} onChange={(value) => setValues((current) => ({ ...current, repair_rate: value }))} required />
             <MoneyField label="Nap Rehab rate (PHP)" value={values.nap_rehab_rate} onChange={(value) => setValues((current) => ({ ...current, nap_rehab_rate: value }))} required />
             <label>
-              1st payout % (default 30)
+              1st payout % (default 30)<RequiredMark />
               <input max="100" min="0" type="number" value={values.payable_pct} onChange={(event) => setValues((current) => ({ ...current, payable_pct: event.target.value }))} required />
             </label>
             <label>
@@ -1431,10 +1429,11 @@ function PayoutPaymentForm({
     notes: "",
   });
   const [busy, setBusy] = useState(false);
+  const { backdropProps, dialogProps } = useDialog({ label: "Record payout payment", onClose });
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal billing-form-modal expense-payment-modal company-expense-modal" onClick={(event) => event.stopPropagation()}>
+    <div className="modal-backdrop" {...backdropProps}>
+      <div className="modal billing-form-modal expense-payment-modal company-expense-modal" {...dialogProps}>
         <div className="modal-header">
           <div>
             <h3>Record Payment</h3>
@@ -1454,7 +1453,7 @@ function PayoutPaymentForm({
           <div className="billing-form-fields company-expense-form-fields">
             <MoneyField label="Amount" onChange={(amount) => setValues((current) => ({ ...current, amount }))} required value={values.amount} />
             <label>
-              Payment date
+              Payment date<RequiredMark />
               <input
                 max={todayKey()}
                 onChange={(event) => setValues((current) => ({ ...current, payment_date: event.target.value }))}
@@ -1513,10 +1512,11 @@ function PayoutDetailsModal({
   const displayStatus = paymentReminderDisplayStatus(payment, payment.payments);
   const paidAmount = paymentReminderPaymentsTotal(payment.payments);
   const remainingBalance = paymentReminderRemainingBalance(payment, payment.payments);
+  const { backdropProps, dialogProps } = useDialog({ label: `Payout details: ${payment.title}`, onClose });
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal expense-details-modal" onClick={(event) => event.stopPropagation()}>
+    <div className="modal-backdrop" {...backdropProps}>
+      <div className="modal expense-details-modal" {...dialogProps}>
         <div className="modal-header">
           <div>
             <h3>{payment.title}</h3>

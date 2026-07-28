@@ -1,3 +1,4 @@
+import { useDialog } from "../../shared/components/useDialog";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { ArrowLeft, ArrowRight, BadgeDollarSign, CalendarDays, CheckCircle2, ChevronDown, Eye, FileText, MoreVertical, Pencil, Plus, ReceiptText, Send, Trash2, X } from "lucide-react";
 import {
@@ -16,6 +17,7 @@ import {
 import { isOfflineLikeError } from "../../lib/offlineSync";
 import { supabase } from "../../supabase";
 import { MoneyField } from "../../shared/components/MoneyField";
+import { RequiredMark } from "../../shared/components/FormLayout";
 import { ActionProgress, type ActionProgressState } from "../../shared/components/ActionProgress";
 import { PageHeader } from "../../shared/components/PageLayout";
 import { NotificationService } from "../../shared/notifications/NotificationService";
@@ -37,15 +39,8 @@ import type {
   SubconDailyTicket,
   Subcontractor,
 } from "../../types";
-import {
-  deleteBillingRecord,
-  ensureBillingSettings,
-  recordPaymentReminderPayment,
-  saveBillingSettings,
-  updatePaymentReminderCompletion,
-} from "./billingRepository";
-import { recordReceivablePayment } from "../collections/collectionRepository";
-import { ensureSubcontractorPayoutExpenseCategory, saveExpense } from "../expenses/expenseRepository";
+import { useRepositories } from "../../app/RepositoriesProvider";
+import type { Repositories } from "../../core/ports";
 
 function collectionStatusForRecord(record: BillingRecord, collections: CollectionReminder[], collectionId: string | null): string {
   if (!collectionId) return "-";
@@ -92,6 +87,9 @@ export function BillingFeature({
   const [editingRecord, setEditingRecord] = useState<BillingRecord | null>(null);
   const [settings, setSettings] = useState<BillingSettings | null>(billingSettings);
   const [quickCollecting, setQuickCollecting] = useState<{ record: BillingRecord; collection: CollectionReminder } | null>(null);
+  // Billing settles receivables through the collections port rather than reaching into that
+  // feature's repository, so the two features share a contract instead of an implementation.
+  const repos = useRepositories();
   const [expandedRecordId, setExpandedRecordId] = useState<string | null>(null);
   const [detailsRecord, setDetailsRecord] = useState<BillingRecord | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -105,10 +103,10 @@ export function BillingFeature({
 
   useEffect(() => {
     if (!supabase || settings) return;
-    void ensureBillingSettings(supabase, userId).then(({ data }) => {
+    void repos.billingSettings.ensure(userId).then(({ data }) => {
       if (data) setSettings(data);
     });
-  }, [settings, userId]);
+  }, [settings, userId, repos]);
 
   useEffect(() => {
     const found = expenseCategories.find((category) => category.type === "company" && category.name === SUBCONTRACTOR_PAYOUT_EXPENSE_CATEGORY_NAME);
@@ -134,7 +132,7 @@ export function BillingFeature({
     if (subcontractorExpenseCategoryId) return subcontractorExpenseCategoryId;
     if (!supabase || !navigator.onLine) return null;
 
-    const result = await ensureSubcontractorPayoutExpenseCategory(supabase, userId);
+    const result = await repos.expenseCategories.ensureCompanyCategory(userId, SUBCONTRACTOR_PAYOUT_EXPENSE_CATEGORY_NAME);
     if (result.error || !result.data) return null;
     setSubcontractorExpenseCategoryId(result.data.id);
     return result.data.id;
@@ -175,7 +173,7 @@ export function BillingFeature({
       }
 
       if (!supabase) return false;
-      const result = await saveExpense(supabase, payload);
+      const result = await repos.expenses.save(payload);
       if (result.error && isOfflineLikeError(result.error)) {
         await onQueueOfflineMutation({
           resource: "expenses",
@@ -247,9 +245,9 @@ export function BillingFeature({
       reference_number: "",
       notes: "",
     };
-    const result = await recordReceivablePayment(supabase, collection.id, id, values);
+    const result = await repos.collections.recordPayment({ collectionId: collection.id, paymentId: id, values });
     if (result.error) {
-      NotificationService.showError((result.error as { message?: string }).message ?? "Failed to record collection.");
+      NotificationService.showError(result.error.message ?? "Failed to record collection.");
       return;
     }
     setQuickCollecting(null);
@@ -708,15 +706,13 @@ export function BillingFeature({
   }
 
   async function removeBilling(record: BillingRecord) {
-    if (!supabase) return;
     const confirmed = await NotificationService.showConfirm({
       title: "Delete billing record",
       message: "Delete this billing record? This also removes its linked collections. This action cannot be undone.",
       danger: true,
     });
     if (!confirmed) return;
-    const result = await deleteBillingRecord(
-      supabase,
+    const result = await repos.billingRecords.delete(
       record.id,
       record.collection_id,
       record.collectibles_collection_id ?? null,
@@ -941,7 +937,7 @@ export function BillingFeature({
                                               View account
                                             </button>
                                             {itemPayments.filter((payment) => payment.status === "pending").map((payment) => (
-                                              <button key={payment.id} onClick={() => void markPayoutPaid(payment, userId, onChange)} type="button">
+                                              <button key={payment.id} onClick={() => void markPayoutPaid(payment, userId, repos, onChange)} type="button">
                                                 {payment.payout_leg === "remainder" ? "Mark 2nd paid" : "Mark paid"}
                                               </button>
                                             ))}
@@ -1161,16 +1157,16 @@ function billingPaidState(status: string): "paid" | "pending" {
 async function markPayoutPaid(
   payment: PaymentReminder,
   userId: string,
+  repos: Pick<Repositories, "paymentReminders">,
   onChange: () => Promise<void>,
 ) {
-  if (!supabase) return;
   const remainingBalance = paymentReminderRemainingBalance(payment, payment.payments);
   const confirmed = await NotificationService.showConfirm({
     title: "Mark payout as paid",
     message: `Record a full payment of ${currency.format(remainingBalance)} for ${payment.title}?`,
   });
   if (!confirmed) return;
-  const paymentResult = await recordPaymentReminderPayment(supabase, userId, payment.id, {
+  const paymentResult = await repos.paymentReminders.recordPayment(userId, payment.id, {
     amount: remainingBalance,
     payment_date: todayKey(),
     payment_method: "cash",
@@ -1181,7 +1177,7 @@ async function markPayoutPaid(
     NotificationService.showError((paymentResult.error as { message?: string }).message ?? "Failed to record the payment.");
     return;
   }
-  const completionResult = await updatePaymentReminderCompletion(supabase, payment.id, "paid");
+  const completionResult = await repos.paymentReminders.updateCompletion(payment.id, "paid");
   if (completionResult.error) {
     NotificationService.showError((completionResult.error as { message?: string }).message ?? "Payment recorded, but failed to mark the payout complete.");
     await onChange();
@@ -1204,6 +1200,7 @@ function BillingDetailsModal({
   record: BillingRecord;
   settings: BillingSettings;
 }) {
+  const { backdropProps, dialogProps } = useDialog({ label: `Billing details ${record.invoice_no ?? ""}`.trim(), onClose });
   // Use the rate actually snapshotted onto this record, not live settings -- otherwise
   // viewing an old record's details after rates have changed would show a gross total
   // that doesn't match what was actually billed. Records saved before the snapshot
@@ -1261,8 +1258,8 @@ function BillingDetailsModal({
   const subcontractorDisputes = subconTotals.disputedInstall + subconTotals.disputedRepair + subconTotals.disputedNapRehab;
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal billing-details-modal" onClick={(event) => event.stopPropagation()}>
+    <div className="modal-backdrop" {...backdropProps}>
+      <div className="modal billing-details-modal" {...dialogProps}>
         <div className="modal-header">
           <div>
             <p className="eyebrow">Billing details · {record.invoice_no}</p>
@@ -1491,10 +1488,11 @@ function BillingQuickCollectModal({
 }) {
   const [method, setMethod] = useState<CollectionPayment["payment_method"]>("cash");
   const [busy, setBusy] = useState(false);
+  const { backdropProps, dialogProps } = useDialog({ label: "Record collection", onClose });
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal billing-form-modal" onClick={(event) => event.stopPropagation()} style={{ maxWidth: 440 }}>
+    <div className="modal-backdrop" {...backdropProps}>
+      <div className="modal billing-form-modal" {...dialogProps} style={{ maxWidth: 440 }}>
         <div className="modal-header">
           <h3>Mark as Collected</h3>
           <button onClick={onClose} type="button" aria-label="Close"><X size={18} /></button>
@@ -1579,6 +1577,7 @@ function BillingForm({
   onClose: () => void;
   onSubmit: (values: BillingFormValues, onProgress?: (progress: ActionProgressState | null) => void) => Promise<void>;
 }) {
+  const { backdropProps, dialogProps } = useDialog({ labelledBy: "billing-modal-title", onClose });
   const today = new Date();
   const defaultPeriod = (today.getDate() <= 15 ? "first_half" : "second_half") as BillingFormValues["billing_period"];
 
@@ -1893,13 +1892,10 @@ function BillingForm({
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop" {...backdropProps}>
       <div
-        aria-labelledby="billing-modal-title"
-        aria-modal="true"
         className="modal cbf-modal cbf-modal--compact"
-        onClick={(event) => event.stopPropagation()}
-        role="dialog"
+        {...dialogProps}
       >
         <div className="cbf-header">
           <div className="cbf-header-main">
@@ -1960,7 +1956,7 @@ function BillingForm({
                 <section className="cbf-section cbf-section-card">
                   <div className="cbf-section-heading">
                     <p className="cbf-section-label">
-                      Billing Period
+                      Billing Period<RequiredMark />
                       {initial && <span className="cbf-section-sub">locked — delete and recreate to change</span>}
                     </p>
                   </div>
@@ -2072,45 +2068,6 @@ function BillingForm({
                       ))}
                     </tbody>
                   </table>
-                </div>
-                <div className="cbf-employee-disputes">
-                  <div>
-                    <strong>Employee disputes</strong>
-                    <span>Only tickets rejected by the client</span>
-                  </div>
-                  <label>
-                    <span>Install</span>
-                    <input
-                      disabled={employeeInstallTickets === 0}
-                      max={employeeInstallTickets}
-                      min="0"
-                      onChange={(event) => setValues({ ...values, disputed_install: String(Math.max(0, Math.min(employeeInstallTickets, Number(event.target.value) || 0))) })}
-                      type="number"
-                      value={String(employeeDisputedInstall)}
-                    />
-                  </label>
-                  <label>
-                    <span>Repair</span>
-                    <input
-                      disabled={employeeRepairTickets === 0}
-                      max={employeeRepairTickets}
-                      min="0"
-                      onChange={(event) => setValues({ ...values, disputed_repair: String(Math.max(0, Math.min(employeeRepairTickets, Number(event.target.value) || 0))) })}
-                      type="number"
-                      value={String(employeeDisputedRepair)}
-                    />
-                  </label>
-                  <label>
-                    <span>Nap Rehab</span>
-                    <input
-                      disabled={employeeNapRehabTickets === 0}
-                      max={employeeNapRehabTickets}
-                      min="0"
-                      onChange={(event) => setValues({ ...values, disputed_nap_rehab: String(Math.max(0, Math.min(employeeNapRehabTickets, Number(event.target.value) || 0))) })}
-                      type="number"
-                      value={String(employeeDisputedNapRehab)}
-                    />
-                  </label>
                 </div>
               </section>
             </div>
@@ -2474,17 +2431,18 @@ export function BillingSettingsManager({
   userId: string;
 }) {
   const [settings, setSettings] = useState<BillingSettings | null>(billingSettings);
+  const repos = useRepositories();
 
   useEffect(() => {
     setSettings(billingSettings);
   }, [billingSettings]);
 
   useEffect(() => {
-    if (!supabase || settings) return;
-    void ensureBillingSettings(supabase, userId).then(({ data }) => {
+    if (settings) return;
+    void repos.billingSettings.ensure(userId).then(({ data }) => {
       if (data) setSettings(data);
     });
-  }, [settings, userId]);
+  }, [settings, userId, repos]);
 
   async function updateSettings(payload: {
     installation_rate: number;
@@ -2493,8 +2451,7 @@ export function BillingSettingsManager({
     collections_pct: number;
     client_name: string;
   }) {
-    if (!supabase) return;
-    const result = await saveBillingSettings(supabase, userId, payload);
+    const result = await repos.billingSettings.save(userId, payload);
     if (result.error) {
       NotificationService.showError("Failed to save settings.");
       return;
@@ -2572,7 +2529,7 @@ function BillingSettingsContent({
           <MoneyField label="Repair rate (PHP per ticket)" value={repairRate} onChange={setRepairRate} required />
           <MoneyField label="Nap Rehab rate (PHP per ticket)" value={napRehabRate} onChange={setNapRehabRate} required />
           <label>
-            Collections %
+            Collections %<RequiredMark />
             <input max="100" min="0" type="number" value={pct} onChange={(event) => setPct(event.target.value)} required />
           </label>
           <label className="full">

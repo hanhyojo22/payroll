@@ -5,6 +5,7 @@ import {
   collectionStatus,
   dateCollectedFor,
   validateCollectionPayment,
+  withCollectionTotals,
 } from "./collections";
 import type { CollectionPayment, CollectionReminder } from "../types";
 
@@ -69,6 +70,32 @@ describe("receivable collection rules", () => {
       payment(1000, { payment_date: "2026-06-20", is_void: true, void_reason: "Duplicate", voided_at: "2026-06-21T00:00:00Z" }),
     ];
     expect(dateCollectedFor(receivable({ payments }))).toBe("2026-06-10");
+  });
+
+  // 333.33 + 333.33 + 333.44 leaves a ~1.1e-13 float remainder against 1000.10, so an
+  // exact `balance === 0` check would leave a settled receivable sitting in the open pile.
+  it("settles a receivable paid off in centavo instalments that do not sum cleanly in binary float", () => {
+    const payments = [
+      payment(333.33, { payment_date: "2026-06-05" }),
+      payment(333.33, { payment_date: "2026-06-06" }),
+      payment(333.44, { payment_date: "2026-06-07" }),
+    ];
+    expect(collectionBalance(1000.10, payments)).toBe(0);
+    expect(collectionStatus(receivable({ amount: 1000.10, due_date: "2026-05-31", payments }), "2026-06-15")).toBe("collected");
+    expect(dateCollectedFor(receivable({ amount: 1000.10, payments }), "2026-06-15")).toBe("2026-06-07");
+  });
+
+  it("reports a zero outstanding balance for a float-imprecise full settlement", () => {
+    const payments = [payment(333.33), payment(333.33), payment(333.44)];
+    const totals = withCollectionTotals(receivable({ amount: 1000.10, payments }));
+    expect(totals.outstanding_balance).toBe(0);
+    expect(totals.amount_paid).toBe(1000.10);
+  });
+
+  it("still treats a genuine one-centavo shortfall as unpaid", () => {
+    const payments = [payment(333.33), payment(333.33), payment(333.43)];
+    expect(collectionBalance(1000.10, payments)).toBe(0.01);
+    expect(collectionStatus(receivable({ amount: 1000.10, payments }), "2026-06-15")).toBe("partial");
   });
 
   it("rejects invalid, future, archived, and over-balance payments", () => {

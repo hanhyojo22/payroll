@@ -260,7 +260,10 @@ export function payrollItemPayloadForEmployee(
   payPeriod: PayrollPayPeriod = "first_half",
 ): Omit<PayrollRunItem, "id" | "created_at" | "updated_at"> {
   const dailyTotals = dailyTicketTotalsForEmployee(dailyTicketEntries, employee);
-  const payMode = position?.pay_mode ?? "ticket";
+  // No position means the payout came from the employee's own installation_rate/repair_rate
+  // columns. That earns the same as a ticket position, but payroll_run_items snapshots
+  // pay_mode for history, so it has to stay distinguishable from a real ticket position.
+  const payMode = position?.pay_mode ?? "legacy";
   let basePay: number;
   let ticketPay: number;
   let dailyRate = 0;

@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { InputHTMLAttributes, ReactNode } from "react";
 import { CalendarClock, CheckCircle2, Eye, EyeOff, Pencil, Trash2, X } from "lucide-react";
 import { Spinner } from "./Spinner";
+import { useDialog } from "./useDialog";
 
 export function Modal({
   children,
@@ -14,9 +15,11 @@ export function Modal({
   onClose: () => void;
   title: string;
 }) {
+  const { backdropProps, dialogProps } = useDialog<HTMLElement>({ label: title, onClose });
+
   return (
-    <div className="modal-backdrop" role="presentation">
-      <section aria-label={title} aria-modal="true" className={`modal${className ? ` ${className}` : ""}`} role="dialog">
+    <div className="modal-backdrop" {...backdropProps}>
+      <section className={`modal${className ? ` ${className}` : ""}`} {...dialogProps}>
         <header>
           <h2>{title}</h2>
           <button aria-label="Close" onClick={onClose} type="button">
@@ -26,6 +29,22 @@ export function Modal({
         {children}
       </section>
     </div>
+  );
+}
+
+/**
+ * A bare "*" conveys nothing to a screen reader (no announced meaning), so every required
+ * field across the app was invisible-until-submit for required-ness to assistive tech even
+ * on the few forms that showed an asterisk visually. This pairs the visual mark with text a
+ * screen reader will actually announce, and is the one place that decides what "required"
+ * looks like -- TextField/MoneyField/PasswordField render it automatically.
+ */
+export function RequiredMark() {
+  return (
+    <>
+      <span aria-hidden="true" className="required-mark"> *</span>
+      <span className="sr-only"> (required)</span>
+    </>
   );
 }
 
@@ -57,6 +76,7 @@ export function TextField({
   return (
     <label>
       {label}
+      {props.required && <RequiredMark />}
       <input
         {...props}
         onChange={(event) => onChange(event.target.value)}
@@ -80,6 +100,7 @@ export function PasswordField({
   return (
     <label>
       {label}
+      {props.required && <RequiredMark />}
       <div className="password-field">
         <input
           {...props}

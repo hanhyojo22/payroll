@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { RepositoriesProvider, useRepositories } from "./app/RepositoriesProvider";
+import { useDialog } from "./shared/components/useDialog";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import {
   BadgeDollarSign,
   ArrowLeft,
-  BadgeInfo,
   Bell,
   Briefcase,
   CalendarClock,
@@ -16,43 +17,29 @@ import {
   Download,
   Eye,
   FileText,
-  Heart,
   HelpCircle,
-  History,
   KeyRound,
-  LayoutDashboard,
   LogOut,
   Mail,
-  MapPin,
   Maximize2,
   Menu,
   MoreVertical,
   Pencil,
-  Phone,
-  Plus,
   Printer,
   RotateCw,
   Save,
   Search,
   Settings,
   Trash2,
-  Upload,
   UserCheck,
   UserRound,
   Users,
   UserX,
-  Wallet,
   Wrench,
   X,
 } from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
 import { emailRedirectUrl, hasSupabaseConfig, supabase } from "./supabase";
-import {
-  attendanceTotalsForEmployee,
-  dailyTicketEntriesForPayrollPeriod,
-  payPeriodLabel,
-  payrollItemPayloadForEmployee,
-} from "./domain/payroll";
 import {
   netPay,
   normalizeTicketCount,
@@ -60,6 +47,7 @@ import {
 } from "./domain/tickets";
 import { computeSubconItem, countSubconTickets, countTicketsByType } from "./domain/billing";
 import { expenseCyclesElapsedSince, expenseOverdueReferenceDate, expensePeriodDueDates } from "./domain/expenses";
+import { computeDailyEarnings } from "./domain/attendance";
 import {
   loadAttendanceEntries,
   loadBillingRecords,
@@ -70,7 +58,6 @@ import {
   loadDashboardSummary,
   loadCollections,
   loadDailyTicketEntries,
-  loadEmployeePayrollRuns,
   loadEmployees,
   loadExpenseCategories,
   loadExpenses,
@@ -82,35 +69,34 @@ import {
   loadPositions,
   loadEmployeeAdvances,
   loadSalaryBonds,
-} from "./lib/supabaseData";
-import { discardFailedMutations, queueMutation, readCachedResource, retryFailedMutations, writeCachedResource } from "./lib/offlineDb";
+} from "./app/resources";
+import { clearOfflineDataForUser, discardFailedMutations, getPendingMutations, queueMutation, readCachedResource, retryFailedMutations, writeCachedResource } from "./lib/offlineDb";
 import { flushPendingMutations, isOfflineLikeError } from "./lib/offlineSync";
 import { BillingFeature, BillingSettingsManager } from "./features/billing/BillingFeature";
-import { saveSubcontractor } from "./features/billing/billingRepository";
-import { saveSubconDailyTicket } from "./features/billing/subconTicketRepository";
 import { CollectionHistoryFeature, CollectionsFeature } from "./features/collections/CollectionsFeature";
-import { normalizeReceivable } from "./features/collections/collectionRepository";
+import { normalizeReceivable } from "./features/collections/mapping";
 import { ExpenseCategoriesManager, ExpensesFeature } from "./features/expenses/ExpensesFeature";
 import { PaymentsFeature } from "./features/payments/PaymentsFeature";
-import { EmployeeAdvancesFeature } from "./features/payroll/EmployeeAdvancesFeature";
 import { PayrollFeature, PayrollHistoryFeature, PayrollSettingsManager } from "./features/payroll/PayrollFeature";
 import { ReportsFeature } from "./features/reports/ReportsFeature";
 import { SalaryBondsFeature } from "./features/salaryBonds/SalaryBondsFeature";
-import { normalizeSalaryBond } from "./features/salaryBonds/salaryBondRepository";
+import { normalizeSalaryBond } from "./features/salaryBonds/mapping";
 import { SubcontractorsFeature } from "./features/subcontractors/SubcontractorsFeature";
 import { Sidebar } from "./Sidebar";
-import { MoneyField as MoneyInput } from "./shared/components/MoneyField";
 import { NotificationService } from "./shared/notifications/NotificationService";
 import { Spinner, SyncIndicator, PageSkeleton } from "./shared/components/Spinner";
-import { StatusBadge as StatusPill } from "./shared/components/StatusBadge";
+// Lazy so the dashboard's own chart/icon code splits into its own chunk instead of shipping
+// in the main bundle regardless of which view loads first.
+const DashboardModern = lazy(() => import("./features/dashboard/DashboardFeature"));
+const PositionsView = lazy(() => import("./features/positions/PositionsFeature"));
+const EmployeesView = lazy(() => import("./features/employees/EmployeesFeature"));
 import { DataTable } from "./shared/components/DataTable";
 import { PageHeader, RecordTitle, Toolbar } from "./shared/components/PageLayout";
-import { FormActions, Modal, PasswordField, RowActions, TextField } from "./shared/components/FormLayout";
+import { FormActions, Modal, PasswordField, RequiredMark, RowActions, TextField } from "./shared/components/FormLayout";
 import type { QueueOfflineMutation } from "./shared/types";
 import { currency, formatMoney, toNumber } from "./shared/utils/currency";
 import { addDays, currentMonth, currentYear, isBeforeToday, isToday, monthNames, todayKey } from "./shared/utils/dates";
-import { friendlyError } from "./shared/utils/errors";
-import { formatPhoneNumber, normalizePhoneDigits } from "./shared/utils/phone";
+import { friendlyError, isConnectivityFailure, isInvalidCredentialsError } from "./shared/utils/errors";
 import type {
   AttendanceEntry,
   AttendanceStatus,
@@ -137,7 +123,6 @@ import type {
   PayrollRunWithItems,
   PayrollSettings,
   Position,
-  PositionFormValues,
   ResourceKey,
   SalaryBond,
 } from "./types";
@@ -209,30 +194,6 @@ const initialResourceHydration: Record<ResourceKey, boolean> = {
   subcontractorAdvances: false,
   subcontractors: false,
 };
-
-function formatTime(hhmm: string): string {
-  const [h, m] = hhmm.split(":").map(Number);
-  const period = h >= 12 ? "PM" : "AM";
-  const hour = h % 12 || 12;
-  return `${hour}:${String(m).padStart(2, "0")} ${period}`;
-}
-
-const STANDARD_WORK_HOURS = 8;
-
-function hoursBetween(timeIn: string, timeOut: string): number {
-  if (!timeIn || !timeOut) return 0;
-  const [inH, inM] = timeIn.split(":").map(Number);
-  const [outH, outM] = timeOut.split(":").map(Number);
-  const minutes = (outH * 60 + outM) - (inH * 60 + inM);
-  return minutes > 0 ? minutes / 60 : 0;
-}
-
-function computeDailyEarnings(dailyRate: number, status: AttendanceStatus | "", timeIn: string, timeOut: string): number {
-  if (status !== "present" && status !== "half_day") return 0;
-  const hoursWorked = hoursBetween(timeIn, timeOut);
-  if (hoursWorked <= 0) return 0;
-  return dailyRate * Math.min(hoursWorked / STANDARD_WORK_HOURS, 1);
-}
 
 const viewPaths: Record<View, string> = {
   attendance: "/attendance",
@@ -410,40 +371,14 @@ const emptyPayment: PaymentFormValues = {
   notes: "",
 };
 
-const emptyEmployee: EmployeeFormValues = {
-  full_name: "",
-  role: "",
-  position_id: "",
-  department: "",
-  contact_number: "",
-  email: "",
-  address: "",
-  profile_photo_url: "",
-  hire_date: todayKey(),
-  date_of_birth: "",
-  status: "active",
-  wage_category: "new",
-  gender: "",
-  civil_status: "",
-  monthly_salary: "",
-  sss_number: "",
-  philhealth_number: "",
-  pagibig_number: "",
-  sss_deduction: "",
-  philhealth_deduction: "",
-  pagibig_deduction: "",
-  withholding_tax: "",
-  tin_number: "",
-  emergency_contact_name: "",
-  emergency_contact_number: "",
-  emergency_contact_relation: "",
-  notes: "",
-};
-
-
 export function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [loadingSession, setLoadingSession] = useState(true);
+  // A password-recovery link logs the browser into a session scoped only to setting a new
+  // password. Routing that straight into Workspace (as onAuthStateChange's session update
+  // would otherwise do) would let a possibly-shared-computer recovery click land the visitor
+  // in the full app with the previous owner's data, before the new password is even set.
+  const [passwordRecovery, setPasswordRecovery] = useState(false);
 
   useEffect(() => {
     if (!supabase) {
@@ -458,7 +393,8 @@ export function App() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (event === "PASSWORD_RECOVERY") setPasswordRecovery(true);
       setSession(nextSession);
     });
 
@@ -478,11 +414,19 @@ export function App() {
     return <FullPageMessage title="Loading workspace" text="Checking session..." />;
   }
 
+  if (passwordRecovery && session) {
+    return <ResetPassword onDone={() => setPasswordRecovery(false)} />;
+  }
+
   if (!session) {
     return <Login />;
   }
 
-  return <Workspace session={session} />;
+  return (
+    <RepositoriesProvider>
+      <Workspace session={session} />
+    </RepositoriesProvider>
+  );
 }
 function FullPageMessage({ title, text }: { title: string; text: string }) {
   return (
@@ -502,18 +446,39 @@ function FullPageMessage({ title, text }: { title: string; text: string }) {
 function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in");
+  const [mode, setMode] = useState<"sign-in" | "sign-up" | "forgot-password">("sign-in");
+  const [resetEmailSent, setResetEmailSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [credentialsInvalid, setCredentialsInvalid] = useState(false);
-  const [rememberMe, setRememberMe] = useState(true);
-  const authRedirectTo = emailRedirectUrl ?? (typeof window !== "undefined" ? window.location.origin : undefined);
   const rememberedEmailKey = "jms-login-email";
+  // Defaults off for a fresh browser/first-time sign-in, which is the more privacy-conscious
+  // choice on a shared computer -- but if an email was already remembered from a prior
+  // session, keep the checkbox checked to match, so unchecking it reads as the deliberate
+  // "forget this" action it actually is rather than a spontaneous mismatch with the prefilled field.
+  const [rememberMe, setRememberMe] = useState(() =>
+    typeof window !== "undefined" && Boolean(window.localStorage.getItem(rememberedEmailKey)));
+  const authRedirectTo = emailRedirectUrl ?? (typeof window !== "undefined" ? window.location.origin : undefined);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const rememberedEmail = window.localStorage.getItem(rememberedEmailKey);
     if (rememberedEmail) setEmail(rememberedEmail);
   }, []);
+
+  async function handleForgotPassword(event: FormEvent) {
+    event.preventDefault();
+    if (!supabase) return;
+    setBusy(true);
+    const result = await supabase.auth.resetPasswordForEmail(email, { redirectTo: authRedirectTo });
+    setBusy(false);
+    // Neutral outcome regardless of whether the address is registered -- confirming or
+    // denying that would let this form be used to check who has an account here.
+    if (result.error && !isConnectivityFailure(result.error)) {
+      NotificationService.showError(friendlyError(result.error));
+      return;
+    }
+    setResetEmailSent(true);
+  }
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -534,10 +499,17 @@ function Login() {
           });
 
     if (result.error) {
-      NotificationService.showError(friendlyError(result.error));
-      if (mode === "sign-in") {
+      // The invalid-credentials case gets its own dedicated inline message and red field
+      // borders right where the user is looking, so it doesn't also need a toast repeating
+      // the same thing. Every other sign-in failure (network, timeout, unconfirmed email)
+      // has no such inline message, so it still needs the toast -- and previously always
+      // showing "Incorrect email or password" here mislabeled those as a wrong password.
+      if (mode === "sign-in" && isInvalidCredentialsError(result.error)) {
         setCredentialsInvalid(true);
         setPassword("");
+      } else {
+        NotificationService.showError(friendlyError(result.error));
+        if (mode === "sign-in") setPassword("");
       }
     } else if (mode === "sign-up" && !result.data.session) {
       NotificationService.showSuccess("Account created. Please confirm your email before signing in.");
@@ -552,6 +524,64 @@ function Login() {
       }
     }
     setBusy(false);
+  }
+
+  if (mode === "forgot-password") {
+    return (
+      <main className="center-screen login-screen">
+        <section className="auth-shell">
+          <section className="auth-panel">
+            <div className="auth-icon-badge" aria-hidden="true">
+              <KeyRound size={28} />
+            </div>
+            <div className="auth-panel-copy">
+              <p className="eyebrow">Payroll workspace</p>
+              <h1>Reset Password</h1>
+              <p>
+                {resetEmailSent
+                  ? "If an account exists for that email, a password reset link is on its way."
+                  : "Enter your email and we'll send you a link to set a new password."}
+              </p>
+            </div>
+            {resetEmailSent ? (
+              <button
+                className="primary-button auth-submit-button"
+                onClick={() => { setMode("sign-in"); setResetEmailSent(false); }}
+                type="button"
+              >
+                Back to sign in
+              </button>
+            ) : (
+              <form onSubmit={handleForgotPassword} className="stack auth-form-stack">
+                <div className="auth-input-shell">
+                  <span className="auth-input-icon" aria-hidden="true"><Mail size={16} /></span>
+                  <label>
+                    Email Address<RequiredMark />
+                    <input
+                      autoComplete="email"
+                      onChange={(event) => setEmail(event.target.value)}
+                      placeholder="Enter your email"
+                      required
+                      type="email"
+                      value={email}
+                    />
+                  </label>
+                </div>
+                <button className="primary-button auth-submit-button" disabled={busy} type="submit">
+                  {busy && <Spinner size="small" />}
+                  {busy ? "Please wait..." : "Send reset link"}
+                </button>
+                <p className="auth-footer-copy">
+                  <button className="text-button auth-switch-button" onClick={() => setMode("sign-in")} type="button">
+                    Back to sign in
+                  </button>
+                </p>
+              </form>
+            )}
+          </section>
+        </section>
+      </main>
+    );
   }
 
   return (
@@ -574,7 +604,7 @@ function Login() {
             <div className="auth-input-shell">
               <span className="auth-input-icon" aria-hidden="true"><Mail size={16} /></span>
               <label>
-                Email Address
+                Email Address<RequiredMark />
                 <input
                   autoComplete="email"
                   className={credentialsInvalid ? "field-invalid" : undefined}
@@ -617,7 +647,7 @@ function Login() {
                 </label>
                 <button
                   className="text-button auth-forgot-button"
-                  onClick={() => NotificationService.showError("Please contact the administrator to reset your password.")}
+                  onClick={() => { setMode("forgot-password"); setCredentialsInvalid(false); }}
                   type="button"
                 >
                   Forgot password?
@@ -654,11 +684,97 @@ function Login() {
   );
 }
 
+/**
+ * Shown after clicking a password-recovery link. The recovery click already produced a valid
+ * (recovery-scoped) session, so this only asks for the new password -- there is no "current
+ * password" to verify, unlike ChangePasswordModal's voluntary change from inside the app.
+ */
+function ResetPassword({ onDone }: { onDone: () => void }) {
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (!supabase) return;
+    if (password.length < 6) {
+      NotificationService.showError("Password must be at least 6 characters.");
+      return;
+    }
+    if (password !== confirmPassword) {
+      NotificationService.showError("Passwords do not match.");
+      return;
+    }
+    setBusy(true);
+    const result = await supabase.auth.updateUser({ password });
+    if (result.error) {
+      setBusy(false);
+      NotificationService.showError(friendlyError(result.error));
+      return;
+    }
+    // The recovery-scoped session has done its job; sign out so the admin signs back in
+    // normally with the new password rather than staying in on the recovery token.
+    await supabase.auth.signOut();
+    setBusy(false);
+    NotificationService.showSuccess("Password updated. Please sign in with your new password.");
+    onDone();
+  }
+
+  return (
+    <main className="center-screen login-screen">
+      <section className="auth-shell">
+        <section className="auth-panel">
+          <div className="auth-icon-badge" aria-hidden="true">
+            <KeyRound size={28} />
+          </div>
+          <div className="auth-panel-copy">
+            <p className="eyebrow">Payroll workspace</p>
+            <h1>Set a New Password</h1>
+            <p>Choose a new password for your account.</p>
+          </div>
+          <form onSubmit={handleSubmit} className="stack auth-form-stack">
+            <div className="auth-input-shell auth-password-shell">
+              <span className="auth-input-icon" aria-hidden="true"><KeyRound size={16} /></span>
+              <PasswordField
+                autoComplete="new-password"
+                autoFocus
+                label="New Password"
+                minLength={6}
+                onChange={setPassword}
+                placeholder="Enter your new password"
+                required
+                value={password}
+              />
+            </div>
+            <div className="auth-input-shell auth-password-shell">
+              <span className="auth-input-icon" aria-hidden="true"><KeyRound size={16} /></span>
+              <PasswordField
+                autoComplete="new-password"
+                label="Confirm Password"
+                minLength={6}
+                onChange={setConfirmPassword}
+                placeholder="Re-enter your new password"
+                required
+                value={confirmPassword}
+              />
+            </div>
+            <button className="primary-button auth-submit-button" disabled={busy} type="submit">
+              {busy && <Spinner size="small" />}
+              {busy ? "Please wait..." : "Set new password"}
+            </button>
+          </form>
+        </section>
+      </section>
+    </main>
+  );
+}
+
 function ChangePasswordModal({ onClose, userEmail }: { onClose: () => void; userEmail: string }) {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const { backdropProps, dialogProps } = useDialog({ label: "Change password", onClose });
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -689,8 +805,8 @@ function ChangePasswordModal({ onClose, userEmail }: { onClose: () => void; user
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal billing-form-modal subcon-form-modal" onClick={(event) => event.stopPropagation()}>
+    <div className="modal-backdrop" {...backdropProps}>
+      <div className="modal billing-form-modal subcon-form-modal" {...dialogProps}>
         <div className="modal-header">
           <h3>Change Password</h3>
           <button aria-label="Close" onClick={onClose} type="button"><X size={18} /></button>
@@ -742,6 +858,7 @@ function ChangePasswordModal({ onClose, userEmail }: { onClose: () => void; user
 const MOBILE_NAV_BREAKPOINT = 900;
 
 function Workspace({ session }: { session: Session }) {
+  const repos = useRepositories();
   const [view, setView] = useState<View>(() => viewFromPath(window.location.pathname));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => typeof window !== "undefined" && window.innerWidth <= MOBILE_NAV_BREAKPOINT);
@@ -816,7 +933,7 @@ function Workspace({ session }: { session: Session }) {
     billingRecords: async () => loadBillingRecords(supabase!),
     billingSettings: async () => loadBillingSettings(supabase!),
     collections: async () => loadCollections(supabase!),
-    dashboardSummary: async () => loadDashboardSummary(supabase!),
+    dashboardSummary: async () => loadDashboardSummary(supabase!, repos),
     dailyTicketEntries: async () => loadDailyTicketEntries(supabase!),
     employees: async () => loadEmployees(supabase!),
     expenseCategories: async () => loadExpenseCategories(supabase!),
@@ -1145,6 +1262,18 @@ function Workspace({ session }: { session: Session }) {
   }, []);
 
   async function signOut() {
+    // The offline cache holds employee names, salaries and government ID numbers, so it must
+    // not outlive the session on a shared machine. Unsent writes die with it, so confirm first.
+    const pending = await getPendingMutations(session.user.id);
+    if (pending.length > 0) {
+      const confirmed = await NotificationService.showConfirm({
+        title: "Sign out with unsynced changes?",
+        message: `${pending.length} offline change${pending.length === 1 ? "" : "s"} ${pending.length === 1 ? "has" : "have"} not reached the server yet. Signing out discards ${pending.length === 1 ? "it" : "them"}.`,
+        danger: true,
+      });
+      if (!confirmed) return;
+    }
+    await clearOfflineDataForUser(session.user.id);
     await supabase?.auth.signOut();
   }
 
@@ -1646,23 +1775,46 @@ function Workspace({ session }: { session: Session }) {
           ) : (
           <>
               {view === "dashboard" && (
-                <DashboardModern
-                  dailyTicketEntries={dailyTicketEntries}
-                  employees={employees}
-                  onOpenLeaderboard={() => navigate("daily-tickets")}
-                  onOpenSubcontractorLeaderboard={() => navigate("subcontractors")}
-                  subconDailyTickets={subconDailyTickets}
-                  summary={dashboardSummary}
-                />
+                <Suspense fallback={<Spinner />}>
+                  <DashboardModern
+                    dailyTicketEntries={dailyTicketEntries}
+                    employees={employees}
+                    onOpenLeaderboard={() => navigate("daily-tickets")}
+                    onOpenSubcontractorLeaderboard={() => navigate("subcontractors")}
+                    subconDailyTickets={subconDailyTickets}
+                    summary={dashboardSummary}
+                  />
+                </Suspense>
               )}
               {view === "employees" && (
+                <Suspense fallback={<Spinner />}>
+                  <EmployeesView
+                    employees={employees}
+                    initialDetailsEmployeeId={selectedEmployeeDetailId}
+                    initialDetailsEmployeeNonce={selectedEmployeeDetailNonce}
+                    onChange={refreshEmployeesPage}
+                    onClearInitialDetailsEmployee={() => setSelectedEmployeeDetailId(null)}
+                    onDetailsOpenChange={setEmployeeDetailOpen}
+                    onLocalEmployeesChange={setEmployees}
+                    onQueueOfflineMutation={queueOfflineMutation}
+                    payrollRuns={payrollRuns}
+                    positions={positions}
+                    employeeAdvances={employeeAdvances}
+                    salaryBonds={salaryBonds}
+                    userId={session.user.id}
+                  />
+                </Suspense>
+            )}
+            {view === "employee-add" && (
+              <Suspense fallback={<Spinner />}>
                 <EmployeesView
                   employees={employees}
                   initialDetailsEmployeeId={selectedEmployeeDetailId}
                   initialDetailsEmployeeNonce={selectedEmployeeDetailNonce}
+                  mode="add"
                   onChange={refreshEmployeesPage}
                   onClearInitialDetailsEmployee={() => setSelectedEmployeeDetailId(null)}
-                  onDetailsOpenChange={setEmployeeDetailOpen}
+                  onExitForm={() => navigate("employees")}
                   onLocalEmployeesChange={setEmployees}
                   onQueueOfflineMutation={queueOfflineMutation}
                   payrollRuns={payrollRuns}
@@ -1671,34 +1823,19 @@ function Workspace({ session }: { session: Session }) {
                   salaryBonds={salaryBonds}
                   userId={session.user.id}
                 />
-            )}
-            {view === "employee-add" && (
-              <EmployeesView
-                employees={employees}
-                initialDetailsEmployeeId={selectedEmployeeDetailId}
-                initialDetailsEmployeeNonce={selectedEmployeeDetailNonce}
-                mode="add"
-                onChange={refreshEmployeesPage}
-                onClearInitialDetailsEmployee={() => setSelectedEmployeeDetailId(null)}
-                onExitForm={() => navigate("employees")}
-                onLocalEmployeesChange={setEmployees}
-                onQueueOfflineMutation={queueOfflineMutation}
-                payrollRuns={payrollRuns}
-                positions={positions}
-                employeeAdvances={employeeAdvances}
-                salaryBonds={salaryBonds}
-                userId={session.user.id}
-              />
+              </Suspense>
             )}
               {view === "compensation" && (
-                <PositionsView
-                  employees={employees}
-                  onChange={refreshPositionsPage}
-                  onLocalPositionsChange={setPositions}
-                  onQueueOfflineMutation={queueOfflineMutation}
-                  positions={positions}
-                  userId={session.user.id}
-                />
+                <Suspense fallback={<Spinner />}>
+                  <PositionsView
+                    employees={employees}
+                    onChange={refreshPositionsPage}
+                    onLocalPositionsChange={setPositions}
+                    onQueueOfflineMutation={queueOfflineMutation}
+                    positions={positions}
+                    userId={session.user.id}
+                  />
+                </Suspense>
               )}
               {(view === "daily-tickets" || view === "daily-tickets-subcon") && (
                 <>
@@ -1935,760 +2072,6 @@ function Workspace({ session }: { session: Session }) {
   );
 }
 
-function DashboardModern({
-  dailyTicketEntries,
-  employees,
-  onOpenLeaderboard,
-  onOpenSubcontractorLeaderboard,
-  subconDailyTickets,
-  summary,
-}: {
-  dailyTicketEntries: DailyTicketEntry[];
-  employees: Employee[];
-  onOpenLeaderboard: () => void;
-  onOpenSubcontractorLeaderboard: () => void;
-  subconDailyTickets: SubconDailyTicket[];
-  summary: DashboardSummary;
-}) {
-  const now = new Date();
-  const hour = now.getHours();
-  const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
-  const dateStr = now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
-
-  const latestRun = summary.latestRun;
-  const latestRunDate = latestRun
-    ? new Date(`${latestRun.generated_date}T00:00:00`).toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" })
-    : "None";
-
-  const actionItems: Array<{ id: string; title: string; amount: number; urgency: "overdue" | "today"; daysInfo: string; kind: "collection" | "bill" | "expense" }> = [];
-  const actionKindLabels: Record<"collection" | "bill" | "expense", string> = {
-    collection: "Collection",
-    bill: "Bill",
-    expense: "Expense",
-  };
-
-  for (const collection of summary.overdueCollections) {
-    const days = Math.max(1, Math.floor((now.getTime() - new Date(collection.due_date).getTime()) / 86400000));
-    actionItems.push({ id: collection.id, title: collection.title, amount: toNumber(collection.outstanding_balance), urgency: "overdue", daysInfo: `${days}d overdue`, kind: "collection" });
-  }
-  for (const payment of summary.overduePayments) {
-    const days = Math.max(1, Math.floor((now.getTime() - new Date(payment.due_date).getTime()) / 86400000));
-    actionItems.push({ id: payment.id, title: payment.title, amount: toNumber(payment.amount), urgency: "overdue", daysInfo: `${days}d overdue`, kind: "bill" });
-  }
-  for (const expense of summary.overdueExpenses) {
-    const referenceDate = expenseOverdueReferenceDate(expense, todayKey());
-    const days = referenceDate ? Math.max(1, Math.floor((now.getTime() - new Date(`${referenceDate}T00:00:00`).getTime()) / 86400000)) : 1;
-    actionItems.push({ id: expense.id, title: `${expense.category_name} - ${expense.employee_name}`, amount: toNumber(expense.amount), urgency: "overdue", daysInfo: `${days}d overdue`, kind: "expense" });
-  }
-  for (const collection of summary.dueTodayCollections) {
-    actionItems.push({ id: collection.id, title: collection.title, amount: toNumber(collection.outstanding_balance), urgency: "today", daysInfo: "due today", kind: "collection" });
-  }
-  for (const payment of summary.dueTodayPayments) {
-    actionItems.push({ id: payment.id, title: payment.title, amount: toNumber(payment.amount), urgency: "today", daysInfo: "due today", kind: "bill" });
-  }
-  for (const expense of summary.dueTodayExpenses) {
-    actionItems.push({ id: expense.id, title: `${expense.category_name} - ${expense.employee_name}`, amount: toNumber(expense.amount), urgency: "today", daysInfo: "due today", kind: "expense" });
-  }
-
-  const billsDueTotal =
-    summary.dueTodayPayments.reduce((sum, payment) => sum + toNumber(payment.amount), 0) +
-    summary.overduePayments.reduce((sum, payment) => sum + toNumber(payment.amount), 0) +
-    summary.dueTodayExpenses.reduce((sum, expense) => sum + toNumber(expense.amount), 0) +
-    summary.overdueExpenses.reduce((sum, expense) => sum + toNumber(expense.amount), 0);
-  const billsDueCount =
-    summary.dueTodayPayments.length +
-    summary.overduePayments.length +
-    summary.dueTodayExpenses.length +
-    summary.overdueExpenses.length;
-  const totalTrackedAmount = summary.pendingCollections + summary.collectedThisMonth + billsDueTotal;
-  const chartSegments = [
-    {
-      color: "#2563eb",
-      helper: summary.overdueCollections.length > 0 ? `${summary.overdueCollections.length} overdue invoices` : "All current receivables",
-      label: "Receivables",
-      value: summary.pendingCollections,
-    },
-    {
-      color: "#059669",
-      helper: "Cash collected in the current month",
-      label: "Collected",
-      value: summary.collectedThisMonth,
-    },
-    {
-      color: "#d97706",
-      helper: billsDueCount > 0 ? `${billsDueCount} bills waiting` : "No bills due right now",
-      label: "Bills due",
-      value: billsDueTotal,
-    },
-  ];
-  const topMetrics = [
-    {
-      accent: "receivables",
-      helper: summary.overdueCollections.length > 0 ? `${summary.overdueCollections.length} overdue to follow up` : "Healthy collection pipeline",
-      icon: <CreditCard size={18} />,
-      label: "Receivables",
-      value: currency.format(summary.pendingCollections),
-    },
-    {
-      accent: "collected",
-      helper: "Cash in for this month",
-      icon: <CheckCircle2 size={18} />,
-      label: "Collected this month",
-      value: currency.format(summary.collectedThisMonth),
-    },
-    {
-      accent: "bills",
-      helper: billsDueCount > 0 ? `${billsDueCount} unpaid items` : "Nothing due right now",
-      icon: <Bell size={18} />,
-      label: "Bills due",
-      value: currency.format(billsDueTotal),
-    },
-    {
-      accent: "payroll",
-      helper: summary.currentPayrollItemCount > 0 ? `${summary.currentPayrollItemCount} payroll item${summary.currentPayrollItemCount === 1 ? "" : "s"} in cycle` : "No current payroll items",
-      icon: <Briefcase size={18} />,
-      label: "Pending payroll",
-      value: currency.format(summary.pendingPayroll),
-    },
-  ];
-  const miniStats = [
-    {
-      helper: "Workforce base",
-      icon: <Users size={16} />,
-      label: "Active employees",
-      value: String(summary.activeEmployeeCount),
-    },
-    {
-      helper: "In the current payroll cycle",
-      icon: <FileText size={16} />,
-      label: "Payroll items",
-      value: String(summary.currentPayrollItemCount),
-    },
-    {
-      helper: "Require attention",
-      icon: <CalendarClock size={16} />,
-      label: "Overdue collections",
-      value: String(summary.overdueCollections.length),
-    },
-    {
-      helper: "Total overdue value",
-      icon: <BadgeDollarSign size={16} />,
-      label: "Overdue amount",
-      value: currency.format(summary.overdueCollectionBalance),
-    },
-  ];
-  const agingValues = [
-    summary.collectionAging.current,
-    summary.collectionAging.days1To30,
-    summary.collectionAging.days31To60,
-    summary.collectionAging.days61To90,
-    summary.collectionAging.daysOver90,
-  ];
-  const agingTotal = agingValues.reduce((sum, value) => sum + value, 0);
-  const paidPayrollLabel = summary.paidPayroll > 0 ? currency.format(summary.paidPayroll) : "No paid payroll yet";
-  const dashboardHeadline = totalTrackedAmount > 0
-    ? `${currency.format(totalTrackedAmount)} is being tracked across receivables, collected cash, and due bills.`
-    : "No financial activity is being tracked on the dashboard yet.";
-  const snapshotCards: Array<{
-    accent: "bills" | "payroll" | "receivables";
-    helper: string;
-    icon: ReactNode;
-    title: string;
-    trendValues: number[];
-    value: string;
-  }> = [
-    {
-      accent: "receivables",
-      helper: `${summary.overdueCollections.length} overdue collection${summary.overdueCollections.length === 1 ? "" : "s"}`,
-      icon: <CreditCard size={16} />,
-      title: "Collection status",
-      trendValues: agingValues.map((value) => value || 0),
-      value: agingTotal > 0 && summary.collectionAging.current === agingTotal ? "All current" : "Needs review",
-    },
-    {
-      accent: "payroll",
-      helper: summary.pendingPayroll > 0 ? "Current payroll unpaid" : "All current payroll paid",
-      icon: <Briefcase size={16} />,
-      title: "Payroll progress",
-      trendValues: [
-        summary.paidPayroll || 0,
-        summary.pendingPayroll || 0,
-        summary.paidPayroll || 0,
-        summary.pendingPayroll || 0,
-      ],
-      value: paidPayrollLabel,
-    },
-    {
-      accent: "bills",
-      helper: billsDueCount > 0 ? `${billsDueCount} due bill${billsDueCount === 1 ? "" : "s"} today` : "No due bills today",
-      icon: <BadgeDollarSign size={16} />,
-      title: "Expense pressure",
-      trendValues: [billsDueTotal || 0, summary.pendingCollections || 0, billsDueTotal || 0, summary.collectedThisMonth || 0],
-      value: currency.format(billsDueTotal),
-    },
-  ];
-  const topEmployeeRows = useMemo(() => {
-    const employeeById = new Map(employees.map((employee) => [employee.id, employee]));
-    const totals = new Map<string, {
-      employeeId: string;
-      employeeName: string;
-      install: number;
-      repair: number;
-      napRehab: number;
-      totalTickets: number;
-      earnings: number;
-      profilePhotoUrl: string;
-    }>();
-
-    for (const entry of dailyTicketEntries) {
-      const existing = totals.get(entry.employee_id) ?? {
-        employeeId: entry.employee_id,
-        employeeName: entry.employee_name,
-        install: 0,
-        repair: 0,
-        napRehab: 0,
-        totalTickets: 0,
-        earnings: 0,
-        profilePhotoUrl: employeeById.get(entry.employee_id)?.profile_photo_url ?? "",
-      };
-      existing.install += entry.installation_tickets;
-      existing.repair += entry.repair_tickets;
-      existing.napRehab += toNumber(entry.nap_rehab_tickets);
-      existing.totalTickets += entry.installation_tickets + entry.repair_tickets + toNumber(entry.nap_rehab_tickets);
-      existing.earnings +=
-        entry.installation_tickets * entry.installation_rate +
-        entry.repair_tickets * entry.repair_rate +
-        toNumber(entry.nap_rehab_tickets) * toNumber(entry.nap_rehab_rate);
-      totals.set(entry.employee_id, existing);
-    }
-
-    return [...totals.values()]
-      .sort((left, right) => right.totalTickets - left.totalTickets || right.earnings - left.earnings || left.employeeName.localeCompare(right.employeeName))
-      .slice(0, 5);
-  }, [dailyTicketEntries, employees]);
-  const topSubcontractorRows = useMemo(() => {
-    const totals = new Map<string, {
-      subcontractorId: string;
-      subcontractorName: string;
-      install: number;
-      repair: number;
-      totalTickets: number;
-      earnings: number;
-    }>();
-
-    for (const entry of subconDailyTickets) {
-      const existing = totals.get(entry.subcontractor_id) ?? {
-        subcontractorId: entry.subcontractor_id,
-        subcontractorName: entry.subcon_name,
-        install: 0,
-        repair: 0,
-        totalTickets: 0,
-        earnings: 0,
-      };
-      existing.install += entry.install_tickets;
-      existing.repair += entry.repair_tickets;
-      existing.totalTickets += entry.install_tickets + entry.repair_tickets;
-      existing.earnings +=
-        entry.install_tickets * entry.installation_rate +
-        entry.repair_tickets * entry.repair_rate;
-      totals.set(entry.subcontractor_id, existing);
-    }
-
-    return [...totals.values()]
-      .sort((left, right) => right.totalTickets - left.totalTickets || right.earnings - left.earnings || left.subcontractorName.localeCompare(right.subcontractorName))
-      .slice(0, 5);
-  }, [subconDailyTickets]);
-
-  return (
-    <div className="page-stack dash dash-modern">
-      <PageHeader
-        eyebrow="Executive dashboard"
-        title={greeting}
-        text={dateStr}
-      />
-
-      <section className="dash-modern-kpis">
-        {topMetrics.map((metric) => (
-          <article className={`dash-modern-kpi ${metric.accent}`} key={metric.label}>
-            <div className={`dash-modern-kpi-icon ${metric.accent}`}>{metric.icon}</div>
-            <div className="dash-modern-kpi-text">
-              <span className="dash-modern-kpi-label">{metric.label}</span>
-              <strong className="dash-modern-kpi-value">{metric.value}</strong>
-              <span className="dash-modern-kpi-helper">{metric.helper}</span>
-            </div>
-          </article>
-        ))}
-      </section>
-
-      <section className="dash-modern-analytics-grid">
-        <article className="dash-modern-card dash-modern-chart-card">
-          <div className="dash-modern-card-header">
-            <div>
-              <span className="dash-modern-section-label">Collections mix</span>
-              <h2>Receivables vs cash vs bills</h2>
-            </div>
-            <span className="dash-modern-card-chip">Live summary</span>
-          </div>
-          <div className="dash-modern-chart-layout">
-            <DashboardDonutChart segments={chartSegments} total={totalTrackedAmount} />
-            <div className="dash-modern-chart-legend">
-              {chartSegments.map((segment) => {
-                const percent = totalTrackedAmount > 0 ? `${Math.round((segment.value / totalTrackedAmount) * 100)}%` : "0%";
-                return (
-                  <div className="dash-modern-legend-item" key={segment.label}>
-                    <span className="dash-modern-legend-dot" style={{ background: segment.color }} />
-                    <div className="dash-modern-legend-copy">
-                      <span>{segment.label}</span>
-                      <small>{segment.helper}</small>
-                    </div>
-                    <div className="dash-modern-legend-metric">
-                      <strong>{currency.format(segment.value)}</strong>
-                      <small>{percent}</small>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-          <div className="dash-modern-mini-stats">
-            {miniStats.map((stat) => (
-              <div className="dash-modern-mini-stat" key={stat.label}>
-                <div className="dash-modern-mini-stat-icon">{stat.icon}</div>
-                <div className="dash-modern-mini-stat-copy">
-                  <strong>{stat.value}</strong>
-                  <span>{stat.label}</span>
-                  <small>{stat.helper}</small>
-                </div>
-              </div>
-            ))}
-          </div>
-        </article>
-
-        <article className="dash-modern-card dash-modern-insights-card">
-          <div className="dash-modern-card-header">
-            <div>
-              <span className="dash-modern-section-label">Operational snapshot</span>
-              <h2>Key signals</h2>
-            </div>
-          </div>
-          <div className="dash-modern-insight-list">
-            {snapshotCards.map((card) => (
-              <div className="dash-modern-insight-item" key={card.title}>
-                <div className={`dash-modern-insight-icon ${card.accent}`}>{card.icon}</div>
-                <div className="dash-modern-insight-copy">
-                  <span>{card.title}</span>
-                  <strong>{card.value}</strong>
-                  <small>{card.helper}</small>
-                </div>
-                <DashboardSparkline accent={card.accent} values={card.trendValues} />
-              </div>
-            ))}
-          </div>
-        </article>
-      </section>
-
-      <section className="dash-modern-bottom-grid">
-        <article className="dash-modern-card dash-modern-top-employees">
-          <div className="dash-modern-card-header">
-            <div>
-              <span className="dash-modern-section-label">Leaderboard</span>
-              <h2>Top Employees</h2>
-            </div>
-            <span className="dash-modern-card-chip subtle">Closed tickets</span>
-          </div>
-          {topEmployeeRows.length === 0 ? (
-            <div className="dash-modern-reminders-empty">
-              <div className="dash-modern-reminders-empty-icon"><Users size={18} /></div>
-              <strong>No closed tickets yet</strong>
-              <span>Employee leaderboard will appear once tickets are recorded.</span>
-            </div>
-          ) : (
-            <>
-              <div className="dash-modern-top-table-wrap">
-                <table className="dash-modern-top-table">
-                  <thead>
-                    <tr>
-                      <th>Employee</th>
-                      <th className="num">Install</th>
-                      <th className="num">Repair</th>
-                      <th className="num">Total Tickets</th>
-                      <th className="num">Total Earnings</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {topEmployeeRows.map((row) => (
-                      <tr key={row.employeeId}>
-                        <td data-label="Employee">
-                          <div className="dash-modern-top-employee">
-                            <div className="dash-modern-top-avatar">
-                              {row.profilePhotoUrl ? <img alt="" src={row.profilePhotoUrl} /> : <span>{row.employeeName.split(" ").filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "E"}</span>}
-                            </div>
-                            <strong>{row.employeeName}</strong>
-                          </div>
-                        </td>
-                        <td className="num" data-label="Install">{row.install}</td>
-                        <td className="num" data-label="Repair">{row.repair}</td>
-                        <td className="num" data-label="Total Tickets">{row.totalTickets}</td>
-                        <td className="num" data-label="Total Earnings">{currency.format(row.earnings)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="dash-modern-top-footer">
-                <button className="text-button" onClick={onOpenLeaderboard} type="button">
-                  View full leaderboard
-                </button>
-                <button className="dash-modern-top-link" onClick={onOpenLeaderboard} type="button" aria-label="Open leaderboard">
-                  <ChevronRight size={16} />
-                </button>
-              </div>
-            </>
-          )}
-        </article>
-
-        <article className="dash-modern-card dash-modern-top-subcontractors">
-          <div className="dash-modern-card-header">
-            <div>
-              <span className="dash-modern-section-label">Partner leaderboard</span>
-              <h2>Top Subcontractors</h2>
-            </div>
-            <span className="dash-modern-card-chip subtle">Closed tickets</span>
-          </div>
-          {topSubcontractorRows.length === 0 ? (
-            <div className="dash-modern-reminders-empty">
-              <div className="dash-modern-reminders-empty-icon"><Wrench size={18} /></div>
-              <strong>No subcontractor tickets yet</strong>
-              <span>Subcontractor leaderboard will appear once tickets are recorded.</span>
-            </div>
-          ) : (
-            <>
-              <div className="dash-modern-top-table-wrap">
-                <table className="dash-modern-top-table">
-                  <thead>
-                    <tr>
-                      <th>Subcontractor</th>
-                      <th className="num">Install</th>
-                      <th className="num">Repair</th>
-                      <th className="num">Total Tickets</th>
-                      <th className="num">Total Earnings</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {topSubcontractorRows.map((row) => (
-                      <tr key={row.subcontractorId}>
-                        <td data-label="Subcontractor">
-                          <div className="dash-modern-top-employee">
-                            <div className="dash-modern-top-avatar dash-modern-top-avatar-subcon">
-                              <span>{row.subcontractorName.split(" ").filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "S"}</span>
-                            </div>
-                            <strong>{row.subcontractorName}</strong>
-                          </div>
-                        </td>
-                        <td className="num" data-label="Install">{row.install}</td>
-                        <td className="num" data-label="Repair">{row.repair}</td>
-                        <td className="num" data-label="Total Tickets">{row.totalTickets}</td>
-                        <td className="num" data-label="Total Earnings">{currency.format(row.earnings)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="dash-modern-top-footer">
-                <button className="text-button" onClick={onOpenSubcontractorLeaderboard} type="button">
-                  View subcontractor leaderboard
-                </button>
-                <button className="dash-modern-top-link" onClick={onOpenSubcontractorLeaderboard} type="button" aria-label="Open subcontractor leaderboard">
-                  <ChevronRight size={16} />
-                </button>
-              </div>
-            </>
-          )}
-        </article>
-      </section>
-    </div>
-  );
-}
-
-function DashboardSparkline({
-  accent,
-  values,
-}: {
-  accent: "bills" | "collected" | "payroll" | "receivables";
-  values: number[];
-}) {
-  const safeValues = values.length > 1 ? values : [0, 0, 0, 0];
-  const max = Math.max(...safeValues, 1);
-  const points = safeValues.map((value, index) => {
-    const x = (index / (safeValues.length - 1)) * 96;
-    const y = 36 - (value / max) * 28;
-    return `${x},${y}`;
-  }).join(" ");
-  const areaPoints = `0,36 ${points} 96,36`;
-
-  return (
-    <svg className={`dash-modern-sparkline ${accent}`} viewBox="0 0 96 36" aria-hidden="true">
-      <polygon className="dash-modern-sparkline-area" points={areaPoints} />
-      <polyline className="dash-modern-sparkline-line" points={points} />
-    </svg>
-  );
-}
-
-function DashboardAreaTrend({ values }: { values: number[] }) {
-  const safeValues = values.length > 1 ? values : [0, 0, 0, 0, 0];
-  const max = Math.max(...safeValues, 1);
-  const points = safeValues.map((value, index) => {
-    const x = (index / (safeValues.length - 1)) * 320;
-    const y = 120 - (value / max) * 92;
-    return `${x},${y}`;
-  }).join(" ");
-  const areaPoints = `0,120 ${points} 320,120`;
-
-  return (
-    <div className="dash-modern-area-chart" aria-hidden="true">
-      <svg viewBox="0 0 320 120">
-        <polygon className="dash-modern-area-fill" points={areaPoints} />
-        <polyline className="dash-modern-area-line" points={points} />
-      </svg>
-    </div>
-  );
-}
-
-function DashboardDonutChart({
-  segments,
-  total,
-}: {
-  segments: Array<{ color: string; label: string; value: number }>;
-  total: number;
-}) {
-  const radius = 72;
-  const circumference = 2 * Math.PI * radius;
-  let offset = 0;
-
-  return (
-    <div className="dash-modern-donut-wrap" role="img" aria-label="Collections mix chart">
-      <svg className="dash-modern-donut" viewBox="0 0 220 220">
-        <defs>
-          <filter id="dash-modern-donut-shadow" x="-20%" y="-20%" width="140%" height="140%">
-            <feDropShadow dx="0" dy="10" stdDeviation="10" floodColor="rgba(15, 23, 42, 0.14)" />
-          </filter>
-        </defs>
-        <circle className="dash-modern-donut-track" cx="110" cy="110" r={radius} />
-        {total > 0 ? segments.map((segment) => {
-          const segmentLength = (segment.value / total) * circumference;
-          const circle = (
-            <circle
-              key={segment.label}
-              className="dash-modern-donut-segment"
-              cx="110"
-              cy="110"
-              r={radius}
-              stroke={segment.color}
-              strokeDasharray={`${segmentLength} ${circumference - segmentLength}`}
-              strokeDashoffset={-offset}
-            />
-          );
-          offset += segmentLength;
-          return circle;
-        }) : null}
-        <circle className="dash-modern-donut-center-ring" cx="110" cy="110" r="48" filter="url(#dash-modern-donut-shadow)" />
-      </svg>
-      <div className="dash-modern-donut-center">
-        <span>{total > 0 ? "Tracked total" : "No data"}</span>
-        <strong>{total > 0 ? currency.format(total) : "Waiting for activity"}</strong>
-      </div>
-    </div>
-  );
-}
-
-function Dashboard({ summary }: { summary: DashboardSummary }) {
-  const now = new Date();
-  const hour = now.getHours();
-  const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
-  const dateStr = now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
-
-  const latestRun = summary.latestRun;
-  const latestRunDate = latestRun
-    ? new Date(`${latestRun.generated_date}T00:00:00`).toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" })
-    : "None";
-
-  const actionItems: Array<{ id: string; title: string; amount: number; urgency: "overdue" | "today"; daysInfo: string; kind: "collection" | "bill" | "expense" }> = [];
-  const actionKindLabels: Record<"collection" | "bill" | "expense", string> = {
-    collection: "Collection",
-    bill: "Bill",
-    expense: "Expense",
-  };
-
-  for (const c of summary.overdueCollections) {
-    const days = Math.max(1, Math.floor((now.getTime() - new Date(c.due_date).getTime()) / 86400000));
-    actionItems.push({ id: c.id, title: c.title, amount: toNumber(c.outstanding_balance), urgency: "overdue", daysInfo: `${days}d overdue`, kind: "collection" });
-  }
-  for (const p of summary.overduePayments) {
-    const days = Math.max(1, Math.floor((now.getTime() - new Date(p.due_date).getTime()) / 86400000));
-    actionItems.push({ id: p.id, title: p.title, amount: toNumber(p.amount), urgency: "overdue", daysInfo: `${days}d overdue`, kind: "bill" });
-  }
-  for (const e of summary.overdueExpenses) {
-    const referenceDate = expenseOverdueReferenceDate(e, todayKey());
-    const days = referenceDate ? Math.max(1, Math.floor((now.getTime() - new Date(`${referenceDate}T00:00:00`).getTime()) / 86400000)) : 1;
-    actionItems.push({ id: e.id, title: `${e.category_name} — ${e.employee_name}`, amount: toNumber(e.amount), urgency: "overdue", daysInfo: `${days}d overdue`, kind: "expense" });
-  }
-  for (const c of summary.dueTodayCollections) {
-    actionItems.push({ id: c.id, title: c.title, amount: toNumber(c.outstanding_balance), urgency: "today", daysInfo: "due today", kind: "collection" });
-  }
-  for (const p of summary.dueTodayPayments) {
-    actionItems.push({ id: p.id, title: p.title, amount: toNumber(p.amount), urgency: "today", daysInfo: "due today", kind: "bill" });
-  }
-  for (const e of summary.dueTodayExpenses) {
-    actionItems.push({ id: e.id, title: `${e.category_name} — ${e.employee_name}`, amount: toNumber(e.amount), urgency: "today", daysInfo: "due today", kind: "expense" });
-  }
-
-  const agingValues = [
-    summary.collectionAging.current,
-    summary.collectionAging.days1To30,
-    summary.collectionAging.days31To60,
-    summary.collectionAging.days61To90,
-    summary.collectionAging.daysOver90,
-  ];
-  const agingTotal = agingValues.reduce((s, v) => s + v, 0);
-  const agingBuckets = [
-    { label: "Current", value: summary.collectionAging.current, tone: "ag-current" },
-    { label: "1–30d", value: summary.collectionAging.days1To30, tone: "ag-warm" },
-    { label: "31–60d", value: summary.collectionAging.days31To60, tone: "ag-warm" },
-    { label: "61–90d", value: summary.collectionAging.days61To90, tone: "ag-hot" },
-    { label: "90d+", value: summary.collectionAging.daysOver90, tone: "ag-hot" },
-  ];
-
-  return (
-    <div className="page-stack dash">
-      <PageHeader
-        eyebrow="Dashboard"
-        title={greeting}
-        text={dateStr}
-      />
-
-      <section className="dash-pulse">
-        <div className="dash-pulse-card receivables">
-          <span className="dash-pulse-label">Receivables</span>
-          <strong className="dash-pulse-value">{currency.format(summary.pendingCollections)}</strong>
-          <span className="dash-pulse-sub">
-            {summary.overdueCollections.length > 0
-              ? `${summary.overdueCollections.length} overdue`
-              : "all current"}
-          </span>
-        </div>
-        <div className="dash-pulse-card collected">
-          <span className="dash-pulse-label">Collected</span>
-          <strong className="dash-pulse-value">{currency.format(summary.collectedThisMonth)}</strong>
-          <span className="dash-pulse-sub">this month</span>
-        </div>
-        <div className="dash-pulse-card bills">
-          <span className="dash-pulse-label">Bills due</span>
-          <strong className="dash-pulse-value">
-            {currency.format(
-              summary.dueTodayPayments.reduce((s, p) => s + toNumber(p.amount), 0) +
-              summary.overduePayments.reduce((s, p) => s + toNumber(p.amount), 0) +
-              summary.dueTodayExpenses.reduce((s, e) => s + toNumber(e.amount), 0) +
-              summary.overdueExpenses.reduce((s, e) => s + toNumber(e.amount), 0),
-            )}
-          </strong>
-          <span className="dash-pulse-sub">
-            {summary.dueTodayPayments.length + summary.overduePayments.length + summary.dueTodayExpenses.length + summary.overdueExpenses.length} pending
-          </span>
-        </div>
-      </section>
-
-      <section className="dash-actions">
-        <div className="dash-actions-header">
-          <h2>Needs attention</h2>
-          <span className="dash-actions-count">{actionItems.length}</span>
-        </div>
-        {actionItems.length === 0 ? (
-          <p className="dash-actions-empty">Nothing needs your attention right now.</p>
-        ) : (
-          <div className="dash-actions-list">
-            {actionItems.map((item) => (
-              <div className="dash-action-row" key={item.id}>
-                <span className={`dash-action-dot ${item.urgency}`} />
-                <div className="dash-action-info">
-                  <strong>{item.title}</strong>
-                  <span className="dash-action-meta">
-                    {actionKindLabels[item.kind]} · {item.daysInfo}
-                  </span>
-                </div>
-                <span className="dash-action-amount">{currency.format(item.amount)}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="dash-aging">
-        <h2 className="dash-aging-title">Collection aging</h2>
-        {agingTotal > 0 && (
-          <div className="dash-aging-bar">
-            {agingBuckets.map((b) =>
-              b.value > 0 ? (
-                <div
-                  className={`dash-aging-segment ${b.tone}`}
-                  key={b.label}
-                  style={{ flex: b.value / agingTotal }}
-                  title={`${b.label}: ${currency.format(b.value)}`}
-                />
-              ) : null,
-            )}
-          </div>
-        )}
-        <div className="dash-aging-legend">
-          {agingBuckets.map((b) => (
-            <div className="dash-aging-item" key={b.label}>
-              <span className={`dash-aging-swatch ${b.tone}`} />
-              <span className="dash-aging-bucket-label">{b.label}</span>
-              <strong>{currency.format(b.value)}</strong>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="dash-secondary">
-        <div className="dash-secondary-card">
-          <span className="dash-secondary-value">{summary.activeEmployeeCount}</span>
-          <span className="dash-secondary-label">Employees</span>
-        </div>
-        <div className="dash-secondary-card">
-          <span className="dash-secondary-value">{currency.format(summary.pendingPayroll)}</span>
-          <span className="dash-secondary-label">Pending payroll</span>
-        </div>
-        <div className="dash-secondary-card">
-          <span className="dash-secondary-value">{latestRunDate}</span>
-          <span className="dash-secondary-label">Last payroll</span>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function Metric({
-  helperText,
-  icon,
-  label,
-  tone,
-  value,
-}: {
-  helperText?: string;
-  icon: ReactNode;
-  label: string;
-  tone?: "danger" | "success" | "warning";
-  value: number | string;
-}) {
-  return (
-    <div className={`metric ${tone ?? ""}`}>
-      <div className="metric-icon">{icon}</div>
-      <p>{label}</p>
-      <strong>{value}</strong>
-      {helperText ? <span className="metric-helper">{helperText}</span> : null}
-    </div>
-  );
-}
 
 const compensationTickets = [
   { id: "TCK-1048", customer: "Santos Residence", type: "Repair", dateClosed: "2026-06-03", earnings: 200 },
@@ -2886,406 +2269,6 @@ function SummaryStat({ label, value }: { label: string; value: number | string }
   );
 }
 
-function PositionsView({
-  employees,
-  onChange,
-  onLocalPositionsChange,
-  onQueueOfflineMutation,
-  positions,
-  userId,
-}: {
-  employees: Employee[];
-  onChange: () => Promise<void>;
-  onLocalPositionsChange: (positions: Position[]) => void;
-  onQueueOfflineMutation: QueueOfflineMutation;
-  positions: Position[];
-  userId: string;
-}) {
-  const [editing, setEditing] = useState<Position | null>(null);
-  const [formOpen, setFormOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const rows = positions.filter((position) =>
-    `${position.name} ${position.department} ${position.pay_mode}`.toLowerCase().includes(query.toLowerCase())
-  );
-  const existingDepartments = Array.from(
-    new Set(positions.map((position) => position.department).filter((department) => department && department.trim())),
-  ).sort((a, b) => a.localeCompare(b));
-
-  async function savePosition(values: PositionFormValues) {
-    if (!supabase) return;
-    const needsTickets = values.pay_mode === "ticket" || values.pay_mode === "hybrid";
-    const categories = values.categories
-      .map((category, index) => ({
-        id: category.id ?? crypto.randomUUID(),
-        user_id: userId,
-        position_id: editing?.id ?? "",
-        name: category.name.trim(),
-        rate: toNumber(category.rate),
-        ticket_type: category.ticket_type,
-        display_order: index,
-        status: category.status,
-      }))
-      .filter((category) => category.name);
-    if (!values.name.trim()) {
-      NotificationService.showError("Position name is required.");
-      return;
-    }
-    if (needsTickets && categories.filter((category) => category.status === "active").length === 0) {
-      NotificationService.showError("Ticket and hybrid positions need at least one active ticket category.");
-      return;
-    }
-    const positionId = editing?.id ?? crypto.randomUUID();
-    const payload = {
-      id: positionId,
-      user_id: userId,
-      name: values.name.trim(),
-      department: values.department.trim(),
-      description: values.description.trim(),
-      status: values.status,
-      pay_mode: values.pay_mode,
-      monthly_base_salary: (values.pay_mode === "fixed" || values.pay_mode === "hybrid") ? toNumber(values.monthly_base_salary) : 0,
-      daily_rate: values.pay_mode === "daily" ? toNumber(values.daily_rate) : 0,
-    };
-    const categoryPayloads = categories.map((category) => ({ ...category, position_id: positionId }));
-    const removedCategories = editing?.categories.filter(
-      (existing) => !categoryPayloads.some((category) => category.id === existing.id),
-    ) ?? [];
-    const optimistic: Position = {
-      ...(editing ?? {} as Position),
-      ...payload,
-      created_at: editing?.created_at ?? new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-      categories: categoryPayloads.map((category) => ({
-        ...category,
-        created_at: editing?.categories.find((item) => item.id === category.id)?.created_at ?? new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })),
-    };
-
-    if (!navigator.onLine) {
-      onLocalPositionsChange(editing
-        ? positions.map((position) => position.id === positionId ? optimistic : position)
-        : [optimistic, ...positions]);
-      await onQueueOfflineMutation({
-        resource: "positions",
-        affectedResources: ["positions", "employees", "dailyTicketEntries", "payrollRuns"],
-        operation: "upsert",
-        table: "positions",
-        recordId: positionId,
-        payload,
-        options: { onConflict: "id" },
-      });
-      if (categoryPayloads.length > 0) {
-        await onQueueOfflineMutation({
-          resource: "positions",
-          affectedResources: ["positions"],
-          operation: "upsert",
-          table: "position_ticket_categories",
-          payload: categoryPayloads,
-          options: { onConflict: "id" },
-        });
-      }
-      for (const category of removedCategories) {
-        await onQueueOfflineMutation({
-          resource: "positions",
-          affectedResources: ["positions"],
-          operation: "update",
-          table: "position_ticket_categories",
-          recordId: category.id,
-          payload: { status: "archived" },
-        });
-      }
-      setFormOpen(false);
-      setEditing(null);
-      return;
-    }
-
-    const positionResult = await supabase.from("positions").upsert(payload, { onConflict: "id" });
-    if (positionResult.error) {
-      NotificationService.showError(friendlyError(positionResult.error));
-      return;
-    }
-    if (categoryPayloads.length > 0) {
-      const categoryResult = await supabase.from("position_ticket_categories").upsert(categoryPayloads, { onConflict: "id" });
-      if (categoryResult.error) {
-        NotificationService.showError(friendlyError(categoryResult.error));
-        return;
-      }
-    }
-    if (removedCategories.length > 0) {
-      const archiveResult = await supabase
-        .from("position_ticket_categories")
-        .update({ status: "archived" })
-        .in("id", removedCategories.map((category) => category.id));
-      if (archiveResult.error) {
-        NotificationService.showError(friendlyError(archiveResult.error));
-        return;
-      }
-    }
-    NotificationService.showSuccess("Position saved.");
-    setFormOpen(false);
-    setEditing(null);
-    await onChange();
-  }
-
-  async function toggleArchive(position: Position) {
-    if (!supabase) return;
-    const status = position.status === "active" ? "archived" : "active";
-    const assignedActiveEmployees = employees.filter(
-      (employee) => employee.position_id === position.id && employee.status === "active",
-    ).length;
-    if (status === "archived" && assignedActiveEmployees > 0) {
-      NotificationService.showError(`Reassign ${assignedActiveEmployees} active employee${assignedActiveEmployees === 1 ? "" : "s"} before archiving this position.`);
-      return;
-    }
-    const confirmed = await NotificationService.showConfirm({
-      title: status === "archived" ? "Archive position" : "Restore position",
-      message: status === "archived"
-        ? `Archive "${position.name}"? It will no longer be assignable to employees.`
-        : `Restore "${position.name}" to active status?`,
-    });
-    if (!confirmed) return;
-    const optimistic = positions.map((item) => item.id === position.id ? { ...item, status } as Position : item);
-    if (!navigator.onLine) {
-      onLocalPositionsChange(optimistic);
-      await onQueueOfflineMutation({
-        resource: "positions",
-        affectedResources: ["positions"],
-        operation: "update",
-        table: "positions",
-        recordId: position.id,
-        payload: { status },
-      });
-      return;
-    }
-    const { error } = await supabase.from("positions").update({ status }).eq("id", position.id);
-    if (error) {
-      NotificationService.showError(friendlyError(error));
-    } else {
-      NotificationService.showSuccess(`Position ${status}.`);
-    }
-    if (!error) await onChange();
-  }
-
-  async function handleDeletePosition(position: Position) {
-    const assignedCount = employees.filter((e) => e.position_id === position.id).length;
-    if (assignedCount > 0) {
-      NotificationService.showWarning(`${assignedCount} employee${assignedCount === 1 ? " is" : "s are"} still assigned — reassign before deleting.`);
-      return;
-    }
-    const confirmed = await NotificationService.showConfirm({
-      title: "Delete position",
-      message: `Are you sure you want to permanently delete "${position.name}"? This action cannot be undone.`,
-      danger: true,
-    });
-    if (!confirmed) return;
-    await deletePosition(position);
-  }
-
-  async function deletePosition(position: Position) {
-    if (!supabase) return;
-    const assignedEmployees = employees.filter((e) => e.position_id === position.id).length;
-    if (assignedEmployees > 0) {
-      NotificationService.showError(`Cannot delete "${position.name}" — ${assignedEmployees} employee${assignedEmployees === 1 ? " is" : "s are"} still assigned. Reassign them first.`);
-      return;
-    }
-    if (!navigator.onLine) {
-      onLocalPositionsChange(positions.filter((p) => p.id !== position.id));
-      await onQueueOfflineMutation({
-        resource: "positions",
-        affectedResources: ["positions", "employees", "dailyTicketEntries", "payrollRuns"],
-        operation: "delete",
-        table: "position_ticket_categories",
-        payload: { position_id: position.id },
-      });
-      await onQueueOfflineMutation({
-        resource: "positions",
-        affectedResources: ["positions", "employees", "dailyTicketEntries", "payrollRuns"],
-        operation: "delete",
-        table: "positions",
-        recordId: position.id,
-      });
-      return;
-    }
-    const catResult = await supabase.from("position_ticket_categories").delete().eq("position_id", position.id);
-    if (catResult.error) {
-      NotificationService.showError(friendlyError(catResult.error));
-      return;
-    }
-    const { error } = await supabase.from("positions").delete().eq("id", position.id);
-    if (error) {
-      NotificationService.showError(friendlyError(error));
-      return;
-    }
-    NotificationService.showSuccess(`"${position.name}" deleted.`);
-    await onChange();
-  }
-
-  return (
-    <div className="page-stack">
-      <PageHeader
-        action={<button className="primary-button compact" onClick={() => { setEditing(null); setFormOpen(true); }} type="button"><Plus size={16} /> Add position</button>}
-        eyebrow="Compensation setup"
-        title="Positions"
-        text="Define a position's base salary and ticket categories once, then assign it to employees."
-      />
-      <Toolbar query={query} setQuery={setQuery} />
-      <DataTable
-        empty="No positions yet. Create one before adding active employees."
-        headers={["Position", "Department", "Pay method", "Base salary", "Ticket categories", "Employees", "Status", "Actions"]}
-        rows={rows.map((position) => [
-          <RecordTitle key="name" title={position.name} notes={position.description || "No description"} />,
-          position.department || "Unassigned",
-          position.pay_mode === "fixed" ? "Fixed salary" : position.pay_mode === "ticket" ? "Per ticket" : position.pay_mode === "daily" ? "Daily wage" : "Base + ticket",
-          currency.format(toNumber(position.monthly_base_salary)),
-          position.categories.filter((category) => category.status === "active").map((category) => `${category.name} (${currency.format(toNumber(category.rate))})`).join(", ") || "None",
-          employees.filter((employee) => employee.position_id === position.id).length,
-          <StatusPill key="status" status={position.status} />,
-          <div className="row-actions" key="actions">
-            <button aria-label="Edit position" onClick={() => { setEditing(position); setFormOpen(true); }} title="Edit" type="button"><Pencil size={16} /></button>
-            <button aria-label={position.status === "active" ? "Archive position" : "Restore position"} onClick={() => toggleArchive(position)} title={position.status === "active" ? "Archive" : "Restore"} type="button"><History size={16} /></button>
-            <button aria-label="Delete position" className="delete-action" onClick={() => void handleDeletePosition(position)} title="Delete" type="button"><Trash2 size={16} /></button>
-          </div>,
-        ])}
-      />
-      {formOpen && <PositionForm existingDepartments={existingDepartments} initial={editing} onClose={() => { setFormOpen(false); setEditing(null); }} onSubmit={savePosition} />}
-    </div>
-  );
-}
-
-function PositionForm({
-  existingDepartments,
-  initial,
-  onClose,
-  onSubmit,
-}: {
-  existingDepartments: string[];
-  initial: Position | null;
-  onClose: () => void;
-  onSubmit: (values: PositionFormValues) => Promise<void>;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [showDepartmentPopup, setShowDepartmentPopup] = useState(false);
-  const [newDepartmentName, setNewDepartmentName] = useState("");
-  const [values, setValues] = useState<PositionFormValues>(initial ? {
-    name: initial.name,
-    department: initial.department,
-    description: initial.description,
-    status: initial.status,
-    pay_mode: initial.pay_mode,
-    monthly_base_salary: String(initial.monthly_base_salary),
-    daily_rate: String(initial.daily_rate ?? 0),
-    categories: initial.categories.map((category) => ({ id: category.id, name: category.name, rate: String(category.rate), ticket_type: category.ticket_type ?? "installation", status: category.status })),
-  } : {
-    name: "",
-    department: "",
-    description: "",
-    status: "active",
-    pay_mode: "fixed",
-    monthly_base_salary: "",
-    daily_rate: "",
-    categories: [],
-  });
-  const usesTickets = values.pay_mode === "ticket" || values.pay_mode === "hybrid";
-  const departmentOptions = Array.from(
-    new Set([...existingDepartments, ...(values.department.trim() ? [values.department.trim()] : [])]),
-  ).sort((a, b) => a.localeCompare(b));
-
-  return (
-    <Modal className="billing-form-modal position-form-modal" title={initial ? "Edit position" : "Add position"} onClose={onClose}>
-      <form className="billing-form-body" onSubmit={async (event) => { event.preventDefault(); setBusy(true); await onSubmit(values); setBusy(false); }}>
-        <div className="billing-form-fields position-form-fields">
-          <TextField label="Position name" value={values.name} onChange={(name) => setValues({ ...values, name })} required />
-          <label>
-            Department
-            <div className="department-field">
-              <select
-                value={values.department}
-                onChange={(event) => setValues({ ...values, department: event.target.value })}
-              >
-                <option value="">No department</option>
-                {departmentOptions.map((department) => (
-                  <option key={department} value={department}>{department}</option>
-                ))}
-              </select>
-              <button
-                aria-label="Add new department"
-                className="secondary-button compact"
-                onClick={() => { setNewDepartmentName(""); setShowDepartmentPopup(true); }}
-                type="button"
-              >
-                <Plus size={15} /> New
-              </button>
-            </div>
-          </label>
-          <label>
-            Pay method
-            <select value={values.pay_mode} onChange={(event) => setValues({ ...values, pay_mode: event.target.value as PositionFormValues["pay_mode"] })}>
-              <option value="fixed">Fixed salary</option>
-              <option value="ticket">Per closed ticket</option>
-              <option value="hybrid">Base salary + tickets</option>
-              <option value="daily">Daily wage</option>
-            </select>
-          </label>
-          {(values.pay_mode === "fixed" || values.pay_mode === "hybrid") && <MoneyInput label="Monthly base salary" value={values.monthly_base_salary} onChange={(monthly_base_salary) => setValues({ ...values, monthly_base_salary })} required />}
-          {values.pay_mode === "daily" && <MoneyInput label="Daily rate" value={values.daily_rate} onChange={(daily_rate) => setValues({ ...values, daily_rate })} required />}
-        </div>
-        <label>
-          Description
-          <textarea rows={3} value={values.description} onChange={(event) => setValues({ ...values, description: event.target.value })} />
-        </label>
-        {usesTickets && (
-          <section className="stack">
-            <div className="section-heading"><div><p className="eyebrow">Ticket compensation</p><h3>Closed-ticket categories</h3></div><button className="secondary-button compact" onClick={() => setValues({ ...values, categories: [...values.categories, { name: "", rate: "", ticket_type: "installation" as const, status: "active" }] })} type="button"><Plus size={15} /> Add category</button></div>
-            {values.categories.map((category, index) => (
-              <div className="inline-fields" key={category.id ?? index}>
-                <input aria-label="Category name" placeholder="Category name" value={category.name} onChange={(event) => setValues({ ...values, categories: values.categories.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item) })} />
-                <MoneyInput value={category.rate} placeholder="Rate" onChange={(rate) => setValues({ ...values, categories: values.categories.map((item, itemIndex) => itemIndex === index ? { ...item, rate } : item) })} />
-                <select aria-label="Ticket type" value={category.ticket_type} onChange={(event) => setValues({ ...values, categories: values.categories.map((item, itemIndex) => itemIndex === index ? { ...item, ticket_type: event.target.value as "installation" | "repair" | "nap_rehab" } : item) })}><option value="installation">Installation</option><option value="repair">Repair</option><option value="nap_rehab">Nap Rehab</option></select>
-                <select aria-label="Category status" value={category.status} onChange={(event) => setValues({ ...values, categories: values.categories.map((item, itemIndex) => itemIndex === index ? { ...item, status: event.target.value as PositionFormValues["categories"][number]["status"] } : item) })}><option value="active">Active</option><option value="archived">Archived</option></select>
-                <button aria-label="Remove category" onClick={() => setValues({ ...values, categories: values.categories.filter((_, itemIndex) => itemIndex !== index) })} type="button"><Trash2 size={16} /></button>
-              </div>
-            ))}
-          </section>
-        )}
-        <div className="form-actions">
-          <button className="billing-btn outline" onClick={onClose} type="button">Cancel</button>
-          <button className="billing-btn primary" disabled={busy} type="submit">{busy ? "Saving..." : initial ? "Save changes" : "Add position"}</button>
-        </div>
-      </form>
-      {showDepartmentPopup && (
-        <Modal title="New department" onClose={() => setShowDepartmentPopup(false)}>
-          <form
-            className="form-grid"
-            onSubmit={(event) => {
-              event.preventDefault();
-              const trimmed = newDepartmentName.trim();
-              if (!trimmed) return;
-              setValues((current) => ({ ...current, department: trimmed }));
-              setShowDepartmentPopup(false);
-            }}
-          >
-            <TextField
-              autoFocus
-              label="Department name"
-              value={newDepartmentName}
-              onChange={setNewDepartmentName}
-              required
-            />
-            <div className="form-actions full">
-              <button className="secondary-button" onClick={() => setShowDepartmentPopup(false)} type="button">
-                Cancel
-              </button>
-              <button className="primary-button compact" disabled={!newDepartmentName.trim()} type="submit">
-                Add department
-              </button>
-            </div>
-          </form>
-        </Modal>
-      )}
-    </Modal>
-  );
-}
 
 type DailyTicketDraft = {
   employee: Employee;
@@ -3333,6 +2316,11 @@ export function DailyTicketEntryView({
   const [calendarMonth, setCalendarMonth] = useState(() => Number(entryDate.split("-")[1]));
   const calendarRef = useRef<HTMLDivElement>(null);
   const [detailEmployee, setDetailEmployee] = useState<Employee | null>(null);
+  const ticketDetailDialog = useDialog({
+    label: `Ticket detail${detailEmployee ? `: ${detailEmployee.full_name}` : ""}`,
+    onClose: () => setDetailEmployee(null),
+    open: Boolean(detailEmployee),
+  });
   const [openMenuId, setOpenMenuId] = useState("");
   const menuRef = useRef<HTMLDivElement>(null);
   const employeeNumberMap = useMemo(() => {
@@ -4258,8 +3246,8 @@ export function DailyTicketEntryView({
         const cats = position?.categories.filter((c) => c.status === "active") ?? [];
         const totalGross = empEntries.reduce((sum, entry) => sum + entryBillableSnapshot(entry).gross, 0);
         return (
-          <div className="modal-backdrop" onClick={() => setDetailEmployee(null)}>
-            <div className="modal ticket-detail-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-backdrop" {...ticketDetailDialog.backdropProps}>
+            <div className="modal ticket-detail-modal" {...ticketDetailDialog.dialogProps}>
               <div className="modal-header">
                 <h2>{detailEmployee.full_name} — Ticket History</h2>
                 <button aria-label="Close" type="button" onClick={() => setDetailEmployee(null)}>
@@ -4331,6 +3319,7 @@ function SubconDailyTicketView({
   subcontractors: Subcontractor[];
   userId: string;
 }) {
+  const repos = useRepositories();
   const [entryDate, setEntryDate] = useState(todayKey());
   const [drafts, setDrafts] = useState<Record<string, { install: number; repair: number; napRehab: number; disputedInstall: number; disputedRepair: number; disputedNapRehab: number }>>({});
   const [busySubconId, setBusySubconId] = useState("");
@@ -4450,7 +3439,6 @@ function SubconDailyTicketView({
   }
 
   async function saveRow(subcontractor: Subcontractor) {
-    if (!supabase) return;
     setBusySubconId(subcontractor.id);
     const currentDraft = draftValuesFor(subcontractor.id);
     const payload = {
@@ -4485,7 +3473,7 @@ function SubconDailyTicketView({
       return;
     }
 
-    const result = await saveSubconDailyTicket(supabase, payload);
+    const result = await repos.subconDailyTickets.save(payload);
     if (result.error) {
       if (isOfflineLikeError(result.error)) {
         await onQueueOfflineMutation({
@@ -5748,1446 +4736,3 @@ function DailySummaryMetric({
   );
 }
 
-export function EmployeesView({
-  employees,
-  initialDetailsEmployeeId,
-  initialDetailsEmployeeNonce = 0,
-  mode = "list",
-  onChange,
-  onClearInitialDetailsEmployee,
-  onDetailsOpenChange,
-  onExitForm,
-  onLocalEmployeesChange,
-  onQueueOfflineMutation,
-  payrollRuns,
-  positions,
-  employeeAdvances,
-  salaryBonds,
-  userId,
-}: {
-  employees: Employee[];
-  initialDetailsEmployeeId?: string | null;
-  initialDetailsEmployeeNonce?: number;
-  mode?: "list" | "add";
-  onChange: () => Promise<void>;
-  onClearInitialDetailsEmployee?: () => void;
-  onDetailsOpenChange?: (open: boolean) => void;
-  onExitForm?: () => void;
-  onLocalEmployeesChange: (employees: Employee[]) => void;
-  onQueueOfflineMutation: QueueOfflineMutation;
-  payrollRuns: PayrollRunWithItems[];
-  positions: Position[];
-  employeeAdvances: EmployeeAdvance[];
-  salaryBonds: SalaryBond[];
-  userId: string;
-}) {
-  const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("active");
-  const [editing, setEditing] = useState<Employee | null>(null);
-  const [formOpen, setFormOpen] = useState(mode === "add");
-  const [detailsEmployee, setDetailsEmployee] = useState<Employee | null>(null);
-
-  useEffect(() => {
-    onDetailsOpenChange?.(Boolean(detailsEmployee));
-  }, [detailsEmployee, onDetailsOpenChange]);
-
-  useEffect(() => {
-    if (mode === "add") {
-      setEditing(null);
-      setFormOpen(true);
-    }
-  }, [mode]);
-
-  useEffect(() => {
-    if (!initialDetailsEmployeeId) return;
-    const employee = employees.find((item) => item.id === initialDetailsEmployeeId);
-    if (!employee) return;
-    setFormOpen(false);
-    setEditing(null);
-    setDetailsEmployee(employee);
-    onClearInitialDetailsEmployee?.();
-  }, [employees, initialDetailsEmployeeId, initialDetailsEmployeeNonce, onClearInitialDetailsEmployee]);
-
-  function closeForm() {
-    setEditing(null);
-    setFormOpen(false);
-    onExitForm?.();
-  }
-
-  const rows = employees.filter((employee) => {
-    const matchesQuery = `${employee.full_name} ${employee.role} ${employee.department} ${employee.email}`
-      .toLowerCase()
-      .includes(query.toLowerCase());
-    const matchesStatus = statusFilter === "all" || employee.status === statusFilter;
-    return matchesQuery && matchesStatus;
-  });
-  const totalEmployees = employees.length;
-  const activeEmployees = employees.filter((employee) => employee.status === "active").length;
-  const inactiveEmployees = employees.filter((employee) => employee.status === "inactive").length;
-  const employeesOnLeave = 0;
-  const employeeNumberMap = useMemo(() => {
-    const sorted = [...employees].sort((a, b) => a.created_at.localeCompare(b.created_at));
-    return new Map(sorted.map((e, i) => [e.id, String(i + 1).padStart(3, "0")]));
-  }, [employees]);
-  const employeeCodeFor = (employee: Employee) => `EMP-${employeeNumberMap.get(employee.id) ?? "000"}`;
-  const employeeInitialsFor = (employee: Employee) => employee.full_name
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0])
-    .join("")
-    .toUpperCase() || "E";
-  const formatHireDate = (employee: Employee) => {
-    if (!employee.hire_date) return "—";
-    const [y, m, d] = employee.hire_date.split("-").map(Number);
-    const abbr = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][m - 1];
-    return `${abbr} ${d}, ${y}`;
-  };
-
-  if (detailsEmployee) {
-    return (
-      <EmployeeDetailsView
-        employee={detailsEmployee}
-        onChange={onChange}
-        onBack={() => setDetailsEmployee(null)}
-        onEdit={(emp) => { setEditing(emp); setFormOpen(true); setDetailsEmployee(null); }}
-        onEmployeeUpdate={setDetailsEmployee}
-        onQueueOfflineMutation={onQueueOfflineMutation}
-        payrollRuns={payrollRuns}
-        positions={positions}
-        employeeAdvances={employeeAdvances}
-        salaryBonds={salaryBonds}
-        userId={userId}
-      />
-    );
-  }
-
-  if (formOpen) {
-    return (
-      <EmployeeForm
-        embedded
-        initial={editing}
-        onClose={closeForm}
-        onSubmit={saveEmployee}
-        positions={positions}
-      />
-    );
-  }
-
-  async function saveEmployee(values: EmployeeFormValues) {
-    if (!supabase) return;
-    const selectedPosition = positions.find((position) => position.id === values.position_id && position.status === "active");
-    if (!selectedPosition) {
-      NotificationService.showError("Select an active position before saving this employee.");
-      return;
-    }
-    for (const [field, label] of [["contact_number", "Contact number"], ["emergency_contact_number", "Emergency contact number"]] as const) {
-      const digits = values[field];
-      if (digits && digits.length !== 10) {
-        NotificationService.showError(`${label} must be a valid 10-digit Philippine mobile number.`);
-        return;
-      }
-    }
-    const payload = {
-      ...(editing ? {} : { id: crypto.randomUUID() }),
-      full_name: values.full_name.trim(),
-      role: selectedPosition.name,
-      position_id: selectedPosition.id,
-      department: selectedPosition.department,
-      contact_number: values.contact_number.trim(),
-      email: values.email.trim(),
-      address: values.address.trim(),
-      profile_photo_url: values.profile_photo_url,
-      hire_date: values.hire_date || null,
-      date_of_birth: values.date_of_birth || null,
-      status: values.status,
-      wage_category: values.wage_category,
-      monthly_salary: (selectedPosition.pay_mode === "fixed" || selectedPosition.pay_mode === "hybrid")
-        ? toNumber(selectedPosition.monthly_base_salary)
-        : 0,
-      sss_number: values.sss_number.trim(),
-      philhealth_number: values.philhealth_number.trim(),
-      pagibig_number: values.pagibig_number.trim(),
-      sss_deduction: toNumber(values.sss_deduction),
-      philhealth_deduction: toNumber(values.philhealth_deduction),
-      pagibig_deduction: toNumber(values.pagibig_deduction),
-      withholding_tax: toNumber(values.withholding_tax),
-      tin_number: values.tin_number.trim(),
-      gender: values.gender,
-      civil_status: values.civil_status,
-      emergency_contact_name: values.emergency_contact_name.trim(),
-      emergency_contact_number: values.emergency_contact_number.trim(),
-      emergency_contact_relation: values.emergency_contact_relation.trim(),
-      notes: values.notes.trim(),
-      user_id: userId,
-    };
-    const optimisticEmployee = {
-      ...(editing ?? {}),
-      ...payload,
-      id: editing?.id ?? payload.id,
-      created_at: editing?.created_at ?? new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    } as Employee;
-
-    if (!navigator.onLine) {
-      onLocalEmployeesChange(
-        editing
-          ? employees.map((employee) => employee.id === editing.id ? optimisticEmployee : employee)
-          : [optimisticEmployee, ...employees],
-      );
-      await onQueueOfflineMutation({
-        resource: "employees",
-        affectedResources: ["employees", "dashboardSummary"],
-        operation: editing ? "update" : "insert",
-        table: "employees",
-        recordId: editing?.id,
-        payload,
-      });
-      NotificationService.showSuccess("Employee saved locally. It will sync when online.");
-      closeForm();
-      return;
-    }
-
-    onLocalEmployeesChange(
-      editing
-        ? employees.map((employee) => employee.id === editing.id ? optimisticEmployee : employee)
-        : [optimisticEmployee, ...employees],
-    );
-
-    const result = editing
-      ? await supabase.from("employees").update(payload).eq("id", editing.id)
-      : await supabase.from("employees").insert(payload);
-
-    if (result.error) {
-      if (isOfflineLikeError(result.error)) {
-        await onQueueOfflineMutation({
-          resource: "employees",
-          affectedResources: ["employees", "dashboardSummary"],
-          operation: editing ? "update" : "insert",
-          table: "employees",
-          recordId: editing?.id,
-          payload,
-        });
-        closeForm();
-        return;
-      }
-      onLocalEmployeesChange(employees);
-      NotificationService.showError(friendlyError(result.error));
-      return;
-    }
-    NotificationService.showSuccess("Employee saved.");
-    closeForm();
-    await onChange();
-  }
-
-  return (
-    <div className="page-stack">
-      <PageHeader
-        action={
-          <button className="primary-button compact employee-add-button" onClick={() => { setEditing(null); setFormOpen(true); }} type="button">
-            <Plus size={16} />
-            Add employee
-          </button>
-        }
-        eyebrow="HR profiles"
-        title="Employees"
-        text="Maintain active staff profiles and ticket wage settings."
-      />
-      <section className="metric-grid employee-summary-grid">
-        <Metric helperText="All active employees" icon={<Users size={18} />} label="Total employees" value={totalEmployees} />
-        <Metric helperText="Current Active" icon={<UserRound size={18} />} label="Active employees" tone="success" value={activeEmployees} />
-        <Metric helperText="On Leave" icon={<CalendarClock size={18} />} label="On leave" tone="warning" value={employeesOnLeave} />
-        <Metric helperText="No Longer Active" icon={<BadgeInfo size={18} />} label="Inactive" tone="danger" value={inactiveEmployees} />
-      </section>
-      <section className="panel employee-list-panel">
-        <Toolbar query={query} setQuery={setQuery}>
-          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}>
-            <option value="all">All employees</option>
-            <option value="active">Active</option>
-            <option value="inactive">Inactive</option>
-          </select>
-        </Toolbar>
-        <DataTable
-          empty="No employees yet."
-          headers={["No.", "Employee ID", "Employee", "Department", "Position", "Date Hired", "Status"]}
-          onRowClick={(index) => setDetailsEmployee(rows[index])}
-          rows={rows.map((employee, index) => [
-            index + 1,
-            employeeCodeFor(employee),
-            <div className="employee-list-identity" key="title">
-              <div className="employee-list-avatar">
-                {employee.profile_photo_url ? <img alt="" src={employee.profile_photo_url} /> : <span>{employeeInitialsFor(employee)}</span>}
-              </div>
-              <RecordTitle title={employee.full_name} notes={employee.email || "No email"} />
-            </div>,
-            employee.department || "Unassigned",
-            employee.role || "Unassigned",
-            formatHireDate(employee),
-            <span className={employee.status === "active" ? "emp-status-pill active" : "emp-status-pill inactive"} key="status">
-              {employee.status === "active" ? "Active" : "Inactive"}
-            </span>,
-          ])}
-        />
-        <EmployeeMobileCardList
-          employeeCodeFor={employeeCodeFor}
-          employeeInitialsFor={employeeInitialsFor}
-          employees={rows}
-          formatHireDate={formatHireDate}
-          onOpenDetails={setDetailsEmployee}
-        />
-      </section>
-      {formOpen && (
-        <EmployeeForm
-          initial={editing}
-          onClose={closeForm}
-          onSubmit={saveEmployee}
-          positions={positions}
-        />
-      )}
-    </div>
-  );
-}
-
-function EmployeeMobileCardList({
-  employees,
-  employeeCodeFor,
-  employeeInitialsFor,
-  formatHireDate,
-  onOpenDetails,
-}: {
-  employees: Employee[];
-  employeeCodeFor: (employee: Employee) => string;
-  employeeInitialsFor: (employee: Employee) => string;
-  formatHireDate: (employee: Employee) => string;
-  onOpenDetails: (employee: Employee) => void;
-}) {
-  if (employees.length === 0) {
-    return (
-      <div className="emp-mobile-list">
-        <p className="emp-mobile-empty">No employees yet.</p>
-      </div>
-    );
-  }
-  return (
-    <div className="emp-mobile-list">
-      {employees.map((employee, index) => (
-        <div
-          className="emp-mobile-card"
-          key={employee.id}
-          onClick={() => onOpenDetails(employee)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              onOpenDetails(employee);
-            }
-          }}
-          role="button"
-          tabIndex={0}
-        >
-          <span className="emp-mobile-card-index">{index + 1}</span>
-          <div className="employee-list-avatar">
-            {employee.profile_photo_url
-              ? <img alt="" src={employee.profile_photo_url} />
-              : <span>{employeeInitialsFor(employee)}</span>}
-          </div>
-          <div className="emp-mobile-card-main">
-            <strong className="emp-mobile-card-name">{employee.full_name}</strong>
-            <span className="emp-mobile-card-email">{employee.email || "No email"}</span>
-            <div className="emp-mobile-card-badges">
-              <span className="emp-mobile-card-badge">{employee.department || "Unassigned"}</span>
-              <span className="emp-mobile-card-badge">{employee.role || "Unassigned"}</span>
-            </div>
-          </div>
-          <div className="emp-mobile-card-side">
-            <span className="emp-mobile-card-date">{formatHireDate(employee)}</span>
-            <span className={employee.status === "active" ? "emp-status-pill active" : "emp-status-pill inactive"}>
-              {employee.status === "active" ? "Active" : "Inactive"}
-            </span>
-          </div>
-          <ChevronRight className="emp-mobile-card-chevron" size={18} />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-export function EmployeeDetailsView({
-  employee,
-  onChange,
-  onBack,
-  onEdit,
-  onEmployeeUpdate,
-  onQueueOfflineMutation,
-  payrollRuns,
-  positions,
-  employeeAdvances,
-  salaryBonds,
-  userId,
-}: {
-  employee: Employee;
-  onChange: () => Promise<void>;
-  onBack: () => void;
-  onEdit: (employee: Employee) => void;
-  onEmployeeUpdate: (employee: Employee) => void;
-  onQueueOfflineMutation: QueueOfflineMutation;
-  payrollRuns: PayrollRunWithItems[];
-  positions: Position[];
-  employeeAdvances: EmployeeAdvance[];
-  salaryBonds: SalaryBond[];
-  userId: string;
-}) {
-  const [activeTab, setActiveTab] = useState<"information" | "payroll" | "tickets" | "employee-advances" | "salary-bond" | "payments" | "documents" | "government-deduction" | "attendance">("information");
-  const [currentEmployee, setCurrentEmployee] = useState(employee);
-  const [employeePayrollRuns, setEmployeePayrollRuns] = useState<PayrollRunWithItems[]>([]);
-  const [editingRate, setEditingRate] = useState<"installation" | "repair" | null>(null);
-  const [rateDrafts, setRateDrafts] = useState({ installation: "", repair: "" });
-  const [empAttendance, setEmpAttendance] = useState<AttendanceEntry[]>([]);
-  const [empTickets, setEmpTickets] = useState<DailyTicketEntry[]>([]);
-  const [empAttendanceLoading, setEmpAttendanceLoading] = useState(false);
-  const [empAttendancePage, setEmpAttendancePage] = useState(1);
-
-  useEffect(() => {
-    setCurrentEmployee(employee);
-  }, [employee]);
-
-  useEffect(() => {
-    setRateDrafts({
-      installation: String(toNumber(currentEmployee.installation_rate)),
-      repair: String(toNumber(currentEmployee.repair_rate)),
-    });
-  }, [currentEmployee]);
-
-  useEffect(() => {
-    if (!supabase) return;
-
-    loadEmployeePayrollRuns(supabase, currentEmployee.id).then((result) => {
-      if (result.error) {
-        NotificationService.showError(friendlyError(result.error));
-        return;
-      }
-      setEmployeePayrollRuns(result.data);
-    });
-  }, [currentEmployee.id]);
-
-  useEffect(() => {
-    if (activeTab !== "attendance" || !supabase) return;
-    setEmpAttendancePage(1);
-    setEmpAttendanceLoading(true);
-    const pos = positions.find((p) => p.id === currentEmployee.position_id);
-    const isTicket = pos?.pay_mode === "ticket" || pos?.pay_mode === "hybrid";
-    if (isTicket) {
-      supabase
-        .from("daily_ticket_entries")
-        .select("id,user_id,employee_id,employee_name,position_id,position_name,entry_date,installation_tickets,repair_tickets,disputed_install,disputed_repair,installation_rate,repair_rate,nap_rehab_tickets,nap_rehab_rate,created_at,updated_at,details:daily_ticket_entry_items(id,user_id,daily_ticket_entry_id,position_ticket_category_id,category_name,ticket_count,rate,created_at)")
-        .eq("employee_id", currentEmployee.id)
-        .order("entry_date", { ascending: false })
-        .limit(200)
-        .then(({ data, error }) => {
-          if (!error) setEmpTickets((data ?? []) as DailyTicketEntry[]);
-          setEmpAttendanceLoading(false);
-        });
-    } else {
-      supabase
-        .from("attendance_entries")
-        .select("id,user_id,employee_id,employee_name,position_id,position_name,entry_date,status,time_in,time_out,created_at,updated_at")
-        .eq("employee_id", currentEmployee.id)
-        .order("entry_date", { ascending: false })
-        .limit(200)
-        .then(({ data, error }) => {
-          if (!error) setEmpAttendance((data ?? []) as AttendanceEntry[]);
-          setEmpAttendanceLoading(false);
-        });
-    }
-  }, [activeTab, currentEmployee.id, currentEmployee.position_id]);
-
-  async function saveTicketRate(type: "installation" | "repair") {
-    if (!supabase) return;
-    const value = Math.max(0, toNumber(rateDrafts[type]));
-    const column = type === "installation" ? "installation_rate" : "repair_rate";
-    if (!navigator.onLine) {
-      const nextEmployee = { ...currentEmployee, [column]: value, updated_at: new Date().toISOString() };
-      setCurrentEmployee(nextEmployee);
-      onEmployeeUpdate(nextEmployee);
-      setEditingRate(null);
-      await onQueueOfflineMutation({
-        resource: "employees",
-        affectedResources: ["employees", "dashboardSummary"],
-        operation: "update",
-        table: "employees",
-        recordId: currentEmployee.id,
-        payload: { [column]: value },
-      });
-      return;
-    }
-    const { data, error } = await supabase
-      .from("employees")
-      .update({ [column]: value })
-      .eq("id", currentEmployee.id)
-      .select()
-      .single();
-
-    if (error) {
-      if (isOfflineLikeError(error)) {
-        const nextEmployee = { ...currentEmployee, [column]: value, updated_at: new Date().toISOString() };
-        setCurrentEmployee(nextEmployee);
-        onEmployeeUpdate(nextEmployee);
-        setEditingRate(null);
-        await onQueueOfflineMutation({
-          resource: "employees",
-          affectedResources: ["employees", "dashboardSummary"],
-          operation: "update",
-          table: "employees",
-          recordId: currentEmployee.id,
-          payload: { [column]: value },
-        });
-        return;
-      }
-      NotificationService.showError(friendlyError(error));
-      return;
-    }
-
-    const nextEmployee = data as Employee;
-    setCurrentEmployee(nextEmployee);
-    onEmployeeUpdate(nextEmployee);
-    setEditingRate(null);
-    NotificationService.showSuccess(`${type === "installation" ? "Installation" : "Repair"} ticket wage saved.`);
-    await onChange();
-  }
-
-
-  const detailPayrollRuns = employeePayrollRuns.length > 0 ? employeePayrollRuns : payrollRuns;
-  const history = detailPayrollRuns
-    .flatMap((run) =>
-      run.items
-        .filter((item) => item.employee_id === currentEmployee.id)
-        .map((item) => ({ item, run })),
-    )
-    .sort((a, b) => {
-      const yearDiff = b.run.period_year - a.run.period_year;
-      if (yearDiff !== 0) return yearDiff;
-      const monthDiff = b.run.period_month - a.run.period_month;
-      if (monthDiff !== 0) return monthDiff;
-      return b.run.pay_period.localeCompare(a.run.pay_period);
-    });
-  const totals = history.reduce(
-    (sum, row) => ({
-      gross: sum.gross + toNumber(row.item.gross_pay),
-      allowances: sum.allowances + toNumber(row.item.allowances),
-      deductions: sum.deductions + toNumber(row.item.deductions),
-      net: sum.net + toNumber(row.item.net_pay),
-      paid: sum.paid + (row.item.status === "paid" ? toNumber(row.item.net_pay) : 0),
-      pending: sum.pending + (row.item.status !== "paid" ? toNumber(row.item.net_pay) : 0),
-    }),
-    { gross: 0, allowances: 0, deductions: 0, net: 0, paid: 0, pending: 0 },
-  );
-  const ticketTotals = history.reduce(
-    (sum, row) => ({
-      installation: sum.installation + normalizeTicketCount(row.item.installation_tickets),
-      repair: sum.repair + normalizeTicketCount(row.item.repair_tickets),
-    }),
-    { installation: 0, repair: 0 },
-  );
-  const repairRate = toNumber(currentEmployee.repair_rate);
-  const installationRate = toNumber(currentEmployee.installation_rate);
-  const repairEarnings = ticketTotals.repair * repairRate;
-  const installationEarnings = ticketTotals.installation * installationRate;
-  const totalTicketEarnings = repairEarnings + installationEarnings;
-  const closedTickets = ticketTotals.repair + ticketTotals.installation;
-  const initials = currentEmployee.full_name
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0])
-    .join("")
-    .toUpperCase() || "E";
-  const currentPosition = positions.find((position) => position.id === currentEmployee.position_id);
-  const isTicketBased = currentPosition?.pay_mode === "ticket" || currentPosition?.pay_mode === "hybrid";
-  const employeeCode = `EMP-${currentEmployee.id.replace(/[^a-zA-Z0-9]/g, "").slice(0, 6).toUpperCase() || "000001"}`;
-  const payMethodLabel =
-    currentPosition?.pay_mode === "fixed"
-      ? "Fixed salary"
-      : currentPosition?.pay_mode === "hybrid"
-        ? "Base + tickets"
-        : currentPosition?.pay_mode === "daily"
-          ? "Daily wage"
-          : "Per ticket";
-  const tabs = [
-    { id: "information", icon: <Users size={16} />, label: "Personal Info" },
-    { id: "payroll", icon: <Briefcase size={16} />, label: "Salary History" },
-    ...(isTicketBased ? [{ id: "tickets" as const, icon: <BadgeDollarSign size={16} />, label: "Ticket Earnings" }] : []),
-    { id: "attendance", icon: <CalendarClock size={16} />, label: "Attendance" },
-    { id: "employee-advances", icon: <CreditCard size={16} />, label: "Employee Advances" },
-    { id: "salary-bond", icon: <Wallet size={16} />, label: "Salary Bond" },
-    { id: "documents", icon: <FileText size={16} />, label: "Documents" },
-    { id: "government-deduction", icon: <BadgeDollarSign size={16} />, label: "Government Deduction" },
-  ] as const;
-
-  return (
-    <div className="page-stack employee-details-page">
-      <div className="employee-details">
-        <header className="emp-header">
-          <button className="emp-back" onClick={onBack} type="button">
-            <ArrowLeft size={16} />
-          </button>
-          <div className="emp-identity">
-            <div className="emp-avatar-group">
-              <div className="emp-avatar">
-                {currentEmployee.profile_photo_url ? (
-                  <img alt={`${currentEmployee.full_name} profile`} src={currentEmployee.profile_photo_url} />
-                ) : (
-                  <span>{initials}</span>
-                )}
-              </div>
-            </div>
-            <div className="emp-name-group">
-              <strong className="emp-name">{currentEmployee.full_name}</strong>
-              <span className={currentEmployee.status === "active" ? "emp-status-pill active" : "emp-status-pill inactive"}>
-                {currentEmployee.status === "active" ? "Active" : "Inactive"}
-              </span>
-              <span className="emp-position-label">{currentEmployee.role || "Unassigned position"}</span>
-              <div className="emp-meta-row">
-                <div className="emp-meta-item">
-                  <span>Employee ID</span>
-                  <strong>{employeeCode}</strong>
-                </div>
-                <div className="emp-meta-item">
-                  <span>Date Hired</span>
-                  <strong>{currentEmployee.hire_date || "Not provided"}</strong>
-                </div>
-                <div className="emp-meta-item">
-                  <span>Department</span>
-                  <strong>{currentEmployee.department || "Unassigned"}</strong>
-                </div>
-                <div className="emp-meta-item">
-                  <span>Pay Method</span>
-                  <strong>{payMethodLabel}</strong>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div className="emp-header-actions">
-            <button className="primary-button compact" onClick={() => onEdit(currentEmployee)} type="button">
-              <Pencil size={14} />
-              Edit Employee
-            </button>
-          </div>
-        </header>
-
-        <nav className="emp-tabs" role="tablist" aria-label="Employee details sections">
-          {tabs.map((tab) => (
-            <button
-              aria-selected={activeTab === tab.id}
-              className={activeTab === tab.id ? "active" : ""}
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              role="tab"
-              type="button"
-            >
-              {tab.icon}
-              {tab.label}
-            </button>
-          ))}
-        </nav>
-
-        {activeTab === "information" && (
-          <section className="emp-content-card">
-            <div className="emp-panels">
-              <div className="emp-panel">
-                <div className="emp-panel-heading">
-                  <h3>Personal Information</h3>
-                </div>
-                <div className="emp-info-grid">
-                  <DetailItem icon={<Users size={15} />} label="Full Name" value={currentEmployee.full_name} />
-                  <DetailItem icon={<Mail size={15} />} label="Email" value={currentEmployee.email || "Not provided"} />
-                  <DetailItem icon={<Phone size={15} />} label="Contact Number" value={currentEmployee.contact_number ? formatPhoneNumber(currentEmployee.contact_number) : "Not provided"} />
-                  <DetailItem icon={<CalendarClock size={15} />} label="Date of Birth" value={currentEmployee.date_of_birth || "Not provided"} />
-                  <DetailItem icon={<Heart size={15} />} label="Civil Status" value={currentEmployee.civil_status ? currentEmployee.civil_status[0].toUpperCase() + currentEmployee.civil_status.slice(1) : "Not provided"} />
-                  <DetailItem icon={<MapPin size={15} />} label="Address" value={currentEmployee.address || "Not provided"} />
-                  <DetailItem icon={<Users size={15} />} label="Emergency Contact" value={currentEmployee.emergency_contact_name || "Not provided"} />
-                  <DetailItem icon={<Phone size={15} />} label="Emergency Number" value={currentEmployee.emergency_contact_number ? formatPhoneNumber(currentEmployee.emergency_contact_number) : "Not provided"} />
-                  <DetailItem icon={<Heart size={15} />} label="Relation" value={currentEmployee.emergency_contact_relation || "Not provided"} />
-                  <DetailItem icon={<FileText size={15} />} label="Notes" value={currentEmployee.notes || "No notes"} />
-                </div>
-              </div>
-
-              <div className="emp-panel">
-                <div className="emp-panel-heading">
-                  <h3>Employment Information</h3>
-                </div>
-                <div className="emp-info-grid">
-                  <DetailItem icon={<Briefcase size={15} />} label="Position" value={currentEmployee.role || "Unassigned"} />
-                  <DetailItem icon={<LayoutDashboard size={15} />} label="Department" value={currentEmployee.department || "Unassigned"} />
-                  <DetailItem icon={<CalendarClock size={15} />} label="Date Hired" value={currentEmployee.hire_date || "Not provided"} />
-                  <DetailItem icon={<BadgeInfo size={15} />} label="Employment Status" value={<StatusPill status={currentEmployee.status} />} />
-                  <DetailItem icon={<CreditCard size={15} />} label="Pay Method" value={payMethodLabel} />
-                  <DetailItem icon={<BadgeDollarSign size={15} />} label="Monthly Base" value={currency.format(toNumber(currentPosition?.monthly_base_salary))} />
-                  <DetailItem icon={<BadgeDollarSign size={15} />} label="Daily Rate" value={currency.format(toNumber(currentPosition?.daily_rate))} />
-                  <DetailItem icon={<Wrench size={15} />} label="Wage Category" value={currentEmployee.wage_category === "special_old" ? "Special Old" : "New"} />
-                </div>
-                <div className="emp-divider" />
-                <div className="emp-subsection">
-                  <h4>Government IDs</h4>
-                  <div className="emp-info-grid">
-                    <DetailItem icon={<BadgeInfo size={15} />} label="SSS Number" value={currentEmployee.sss_number || "Not provided"} />
-                    <DetailItem icon={<BadgeInfo size={15} />} label="PhilHealth Number" value={currentEmployee.philhealth_number || "Not provided"} />
-                    <DetailItem icon={<BadgeInfo size={15} />} label="Pag-IBIG Number" value={currentEmployee.pagibig_number || "Not provided"} />
-                    <DetailItem icon={<BadgeInfo size={15} />} label="TIN" value={currentEmployee.tin_number || "Not provided"} />
-                  </div>
-                </div>
-              </div>
-            </div>
-          </section>
-        )}
-
-        {activeTab === "payroll" && (
-          <section className="emp-content-card history-stack">
-            <div className="emp-summary-cards">
-              <div className="emp-summary-card">
-                <span>Total Gross</span>
-                <strong>{currency.format(totals.gross)}</strong>
-              </div>
-              <div className="emp-summary-card">
-                <span>Total Paid</span>
-                <strong>{currency.format(totals.paid)}</strong>
-              </div>
-              <div className="emp-summary-card">
-                <span>Pending Salary</span>
-                <strong>{currency.format(totals.pending)}</strong>
-              </div>
-            </div>
-            <h3>Salary History</h3>
-            <DataTable
-              empty="No payroll records for this employee yet."
-              headers={["Period", "Generated", "Gross", "Allowance", "Deduction", "Net", "Status"]}
-              rows={history.map(({ item, run }) => [
-                `${monthNames[run.period_month - 1]} ${run.period_year} - ${payPeriodLabel(run.pay_period)}`,
-                run.generated_date,
-                currency.format(toNumber(item.gross_pay)),
-                currency.format(toNumber(item.allowances)),
-                currency.format(toNumber(item.deductions)),
-                currency.format(toNumber(item.net_pay)),
-                <StatusPill key="status" status={item.status} />,
-              ])}
-            />
-          </section>
-        )}
-
-        {activeTab === "tickets" && (
-          <section className="emp-content-card history-stack">
-            <div className="ticket-section-heading">
-              <div>
-                <h3>{currentPosition?.name ?? "Unassigned position"} ticket compensation</h3>
-                <p>Rates are controlled by the assigned position. Employee-specific overrides are not used.</p>
-              </div>
-            </div>
-            <DataTable
-              empty="This position has no ticket categories."
-              headers={["Category", "Rate", "Status"]}
-              rows={(currentPosition?.categories ?? []).map((category) => [
-                category.name,
-                currency.format(toNumber(category.rate)),
-                <StatusPill key="status" status={category.status} />,
-              ])}
-            />
-            <h3>Payroll ticket history</h3>
-            <DataTable
-              empty="No ticket-based payroll records for this employee yet."
-              headers={["Period", "Category", "Closed", "Saved rate", "Earned"]}
-              rows={history.flatMap(({ item, run }) => (item.ticket_details ?? []).map((detail) => [
-                `${monthNames[run.period_month - 1]} ${run.period_year} - ${payPeriodLabel(run.pay_period)}`,
-                detail.category_name,
-                detail.ticket_count,
-                currency.format(toNumber(detail.rate)),
-                currency.format(toNumber(detail.amount)),
-              ]))}
-            />
-            <div className="detail-note">
-              <CheckCircle2 size={16} />
-              <p>Saved payroll rates are snapshots. Editing the position affects only future daily entries.</p>
-            </div>
-          </section>
-        )}
-
-        {activeTab === "employee-advances" && (
-          <EmployeeAdvancesFeature
-            employee={currentEmployee}
-            employeeAdvances={employeeAdvances}
-            onChange={onChange}
-            onQueueOfflineMutation={onQueueOfflineMutation}
-            userId={userId}
-          />
-        )}
-
-        {activeTab === "salary-bond" && (
-          <SalaryBondsFeature
-            employee={currentEmployee}
-            employees={[currentEmployee]}
-            onChange={onChange}
-            onQueueOfflineMutation={onQueueOfflineMutation}
-            salaryBonds={salaryBonds}
-            userId={userId}
-          />
-        )}
-
-
-        {activeTab === "documents" && (
-          <section className="emp-content-card">
-            <h3>Documents</h3>
-            <div className="emp-info-grid">
-              <DetailItem icon={<BadgeInfo size={15} />} label="SSS Number" value={currentEmployee.sss_number || "Not provided"} />
-              <DetailItem icon={<BadgeInfo size={15} />} label="PhilHealth Number" value={currentEmployee.philhealth_number || "Not provided"} />
-              <DetailItem icon={<BadgeInfo size={15} />} label="Pag-IBIG Number" value={currentEmployee.pagibig_number || "Not provided"} />
-              <DetailItem icon={<BadgeInfo size={15} />} label="TIN Number" value={currentEmployee.tin_number || "Not provided"} />
-            </div>
-          </section>
-        )}
-
-        {activeTab === "government-deduction" && (
-          <section className="emp-content-card">
-            <h3>Government Deduction</h3>
-            <div className="emp-info-grid">
-              <DetailItem icon={<BadgeDollarSign size={15} />} label="SSS" value={currency.format(toNumber(currentEmployee.sss_deduction))} />
-              <DetailItem icon={<BadgeDollarSign size={15} />} label="PhilHealth" value={currency.format(toNumber(currentEmployee.philhealth_deduction))} />
-              <DetailItem icon={<BadgeDollarSign size={15} />} label="Pag-IBIG" value={currency.format(toNumber(currentEmployee.pagibig_deduction))} />
-              <DetailItem icon={<BadgeDollarSign size={15} />} label="Withholding Tax" value={currency.format(toNumber(currentEmployee.withholding_tax))} />
-            </div>
-          </section>
-        )}
-
-        {activeTab === "attendance" && (() => {
-          const isTicket = currentPosition?.pay_mode === "ticket" || currentPosition?.pay_mode === "hybrid";
-          const dailyRate = toNumber(currentPosition?.daily_rate ?? 0);
-          const attendancePageSize = 10;
-          const attendanceTotal = isTicket ? empTickets.length : empAttendance.length;
-          const attendancePageCount = Math.max(1, Math.ceil(attendanceTotal / attendancePageSize));
-          const safeAttendancePage = Math.min(empAttendancePage, attendancePageCount);
-          const pageStart = (safeAttendancePage - 1) * attendancePageSize;
-          const pageEnd = Math.min(pageStart + attendancePageSize, attendanceTotal);
-          const paginatedTickets = empTickets.slice(pageStart, pageEnd);
-          const paginatedAttendance = empAttendance.slice(pageStart, pageEnd);
-          const attendanceFooter = attendanceTotal > attendancePageSize && (
-            <div className="attendance-footer emp-attendance-footer">
-              <span>
-                Showing {pageStart + 1} to {pageEnd} of {attendanceTotal} {isTicket ? "ticket" : "attendance"} records
-              </span>
-              <div>
-                <button type="button" disabled={safeAttendancePage === 1} onClick={() => setEmpAttendancePage((page) => Math.max(1, page - 1))}>{"<"}</button>
-                {Array.from({ length: attendancePageCount }, (_, index) => index + 1).map((page) => (
-                  <button
-                    className={page === safeAttendancePage ? "active" : undefined}
-                    key={page}
-                    onClick={() => setEmpAttendancePage(page)}
-                    type="button"
-                  >
-                    {page}
-                  </button>
-                ))}
-                <button type="button" disabled={safeAttendancePage === attendancePageCount} onClick={() => setEmpAttendancePage((page) => Math.min(attendancePageCount, page + 1))}>{">"}</button>
-              </div>
-            </div>
-          );
-          return (
-            <section className="emp-content-card">
-              <h3>Attendance &amp; Earnings History</h3>
-              {empAttendanceLoading ? (
-                <p className="muted">Loading…</p>
-              ) : isTicket ? (
-                empTickets.length === 0 ? (
-                  <p className="muted">No ticket entries recorded yet.</p>
-                ) : (
-                  <div className="table-wrap">
-                    <table className="emp-attendance-table">
-                      <thead>
-                        <tr>
-                          <th>Date</th>
-                          <th>Tickets</th>
-                          <th>Daily Earnings</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {paginatedTickets.map((entry) => {
-                          const totalTickets = entry.details && entry.details.length > 0
-                            ? entry.details.reduce((s, d) => s + (d.ticket_count ?? 0), 0)
-                            : normalizeTicketCount(entry.installation_tickets) + normalizeTicketCount(entry.repair_tickets) + normalizeTicketCount(entry.nap_rehab_tickets);
-                          const earnings = entry.details && entry.details.length > 0
-                            ? entry.details.reduce((s, d) => s + (d.ticket_count ?? 0) * toNumber(d.rate), 0)
-                            : normalizeTicketCount(entry.installation_tickets) * toNumber(entry.installation_rate) + normalizeTicketCount(entry.repair_tickets) * toNumber(entry.repair_rate) + normalizeTicketCount(entry.nap_rehab_tickets) * toNumber(entry.nap_rehab_rate);
-                          return (
-                            <tr key={entry.id}>
-                              <td data-label="Date">{new Date(`${entry.entry_date}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</td>
-                              <td data-label="Tickets">{totalTickets}</td>
-                              <td data-label="Daily Earnings"><strong>{currency.format(earnings)}</strong></td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                    {attendanceFooter}
-                  </div>
-                )
-              ) : (
-                empAttendance.length === 0 ? (
-                  <p className="muted">No attendance entries recorded yet.</p>
-                ) : (
-                  <div className="table-wrap">
-                    <table className="emp-attendance-table">
-                      <thead>
-                        <tr>
-                          <th>Date</th>
-                          <th>Time In</th>
-                          <th>Time Out</th>
-                          <th>Status</th>
-                          <th>Daily Earnings</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {paginatedAttendance.map((entry) => {
-                          const earnings = computeDailyEarnings(dailyRate, entry.status, entry.time_in ?? "08:00", entry.time_out ?? "17:00");
-                          return (
-                            <tr key={entry.id} className={entry.status === "absent" ? "emp-att-absent" : entry.status === "half_day" ? "emp-att-leave" : ""}>
-                              <td data-label="Date">{new Date(`${entry.entry_date}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</td>
-                              <td data-label="Time In">{entry.status === "absent" ? "—" : formatTime(entry.time_in ?? "08:00")}</td>
-                              <td data-label="Time Out">{entry.status === "absent" ? "—" : formatTime(entry.time_out ?? "17:00")}</td>
-                              <td data-label="Status">
-                                <span className={`att-history-badge ${entry.status}`}>
-                                  {entry.status === "present" ? "Present" : entry.status === "absent" ? "Absent" : "On Leave"}
-                                </span>
-                              </td>
-                              <td data-label="Daily Earnings"><strong>{entry.status === "absent" ? "—" : currency.format(earnings)}</strong></td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                    {attendanceFooter}
-                  </div>
-                )
-              )}
-            </section>
-          );
-        })()}
-      </div>
-    </div>
-  );
-}
-
-function TicketRateRow({
-  description,
-  draftValue,
-  editing,
-  icon,
-  onDraftChange,
-  onEdit,
-  onSave,
-  rate,
-  title,
-  tone,
-}: {
-  description: string;
-  draftValue: string;
-  editing: boolean;
-  icon: ReactNode;
-  onDraftChange: (value: string) => void;
-  onEdit: () => void;
-  onSave: () => void;
-  rate: number;
-  title: string;
-  tone: "blue" | "green";
-}) {
-  return (
-    <div className="ticket-rate-row">
-      <div className="ticket-rate-title">
-        <span className={`ticket-rate-icon ${tone}`}>{icon}</span>
-        <strong>{title}</strong>
-      </div>
-      <p>{description}</p>
-      <div className="ticket-rate-input">
-        <span>PHP</span>
-        {editing ? (
-          <input
-            aria-label={`${title} wage per closed ticket`}
-            min="0"
-            onChange={(event) => onDraftChange(event.target.value)}
-            step="0.01"
-            type="number"
-            value={draftValue}
-          />
-        ) : (
-          <strong>{rate.toFixed(2)}</strong>
-        )}
-      </div>
-      <StatusPill status="active" />
-      <div className="ticket-rate-actions">
-        <button
-          aria-label={editing ? `Save ${title}` : `Edit ${title}`}
-          onClick={editing ? onSave : onEdit}
-          title={editing ? `Save ${title}` : `Edit ${title}`}
-          type="button"
-        >
-          {editing ? <Save size={15} /> : <Pencil size={15} />}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function DetailItem({ icon, label, value }: { icon?: ReactNode; label: string; value: ReactNode }) {
-  return (
-    <div className="detail-item">
-      <span>
-        {icon && <i className="detail-item-icon" aria-hidden="true">{icon}</i>}
-        {label}
-      </span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-function EmployeeForm({
-  embedded = false,
-  initial,
-  onClose,
-  onSubmit,
-  positions,
-}: {
-  embedded?: boolean;
-  initial: Employee | null;
-  onClose: () => void;
-  onSubmit: (values: EmployeeFormValues) => Promise<void>;
-  positions: Position[];
-}) {
-  type FormTab = "personal" | "employment" | "documents" | "government-deduction";
-  const [activeTab, setActiveTab] = useState<FormTab>("personal");
-  const [values, setValues] = useState<EmployeeFormValues>(
-    initial
-      ? {
-          full_name: initial.full_name,
-          role: initial.role,
-          position_id: initial.position_id ?? "",
-          department: initial.department,
-          contact_number: initial.contact_number,
-          email: initial.email,
-          address: initial.address,
-          profile_photo_url: initial.profile_photo_url ?? "",
-          hire_date: initial.hire_date ?? "",
-          date_of_birth: initial.date_of_birth ?? "",
-          status: initial.status,
-          wage_category: initial.wage_category ?? "new",
-          gender: initial.gender ?? "",
-          civil_status: initial.civil_status ?? "",
-          monthly_salary: String(initial.monthly_salary),
-          sss_number: initial.sss_number,
-          philhealth_number: initial.philhealth_number,
-          pagibig_number: initial.pagibig_number,
-          sss_deduction: String(initial.sss_deduction ?? 0),
-          philhealth_deduction: String(initial.philhealth_deduction ?? 0),
-          pagibig_deduction: String(initial.pagibig_deduction ?? 0),
-          withholding_tax: String(initial.withholding_tax ?? 0),
-          tin_number: initial.tin_number,
-          emergency_contact_name: initial.emergency_contact_name ?? "",
-          emergency_contact_number: initial.emergency_contact_number ?? "",
-          emergency_contact_relation: initial.emergency_contact_relation ?? "",
-          notes: initial.notes,
-        }
-      : emptyEmployee,
-  );
-  const [busy, setBusy] = useState(false);
-  const [photoError, setPhotoError] = useState("");
-
-  function handlePhotoFile(file: File | null) {
-    if (!file) return;
-    const allowedTypes = ["image/png", "image/jpeg"];
-    if (!allowedTypes.includes(file.type)) {
-      setPhotoError("Upload a PNG or JPG image.");
-      return;
-    }
-    if (file.size > 2 * 1024 * 1024) {
-      setPhotoError("Profile photo must be 2MB or smaller.");
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      setValues((current) => ({ ...current, profile_photo_url: String(reader.result ?? "") }));
-      setPhotoError("");
-    };
-    reader.onerror = () => setPhotoError("Unable to read that image. Try another file.");
-    reader.readAsDataURL(file);
-  }
-
-  async function handleSubmit(event: FormEvent) {
-    event.preventDefault();
-    if (!values.full_name.trim()) return;
-    setBusy(true);
-    await onSubmit(values);
-    setBusy(false);
-  }
-
-  const selectedPosition = positions.find((p) => p.id === values.position_id);
-  const initials = values.full_name.trim().split(" ").filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
-  const completedFields = [
-    values.full_name,
-    values.position_id,
-    values.email,
-    values.contact_number,
-    values.hire_date,
-    values.sss_number,
-    values.philhealth_number,
-    values.pagibig_number,
-    values.sss_deduction,
-    values.philhealth_deduction,
-    values.pagibig_deduction,
-    values.withholding_tax,
-    values.tin_number,
-  ].filter(Boolean).length;
-  const totalFields = 13;
-
-  const tabs: { id: FormTab; icon: ReactNode; label: string }[] = [
-    { id: "personal", icon: <Users size={16} />, label: "Personal" },
-    { id: "employment", icon: <Briefcase size={16} />, label: "Employment" },
-    { id: "documents", icon: <FileText size={16} />, label: "Documents" },
-    { id: "government-deduction", icon: <BadgeDollarSign size={16} />, label: "Government Deduction" },
-  ];
-
-  const formContent = (
-    <form className="emp-form-wizard" onSubmit={handleSubmit}>
-      <div className="emp-form-body">
-        <div className="emp-form-main">
-          <div className="emp-form-tabs" role="tablist" aria-label="Employee form sections">
-            {tabs.map((tab) => (
-              <button
-                aria-selected={activeTab === tab.id}
-                className={activeTab === tab.id ? "active" : ""}
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                role="tab"
-                type="button"
-              >
-                {tab.icon}
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
-          {activeTab === "personal" && (
-            <div className="emp-form-section">
-              <div className="emp-form-group">
-                <h3>Basic Information</h3>
-                <div className="emp-basic-info-layout">
-                  <div className="emp-form-photo-hero">
-                    <label
-                      className={values.profile_photo_url ? "emp-photo-upload has-photo" : "emp-photo-upload"}
-                      onDragOver={(event) => event.preventDefault()}
-                      onDrop={(event) => {
-                        event.preventDefault();
-                        handlePhotoFile(event.dataTransfer.files[0] ?? null);
-                      }}
-                    >
-                      <input
-                        accept="image/png,image/jpeg"
-                        onChange={(event) => handlePhotoFile(event.target.files?.[0] ?? null)}
-                        type="file"
-                      />
-                      {values.profile_photo_url ? (
-                        <>
-                          <img alt="Preview" className="emp-photo-full" src={values.profile_photo_url} />
-                          <div className="emp-photo-full-overlay">
-                            <Upload size={16} />
-                            <span>Change photo</span>
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <div className="emp-photo-circle">
-                            <span className="emp-photo-placeholder">
-                              {initials || <Plus size={18} />}
-                            </span>
-                            <div className="emp-photo-overlay">
-                              <Upload size={14} />
-                            </div>
-                          </div>
-                          <div className="emp-photo-info">
-                            <p className="emp-photo-hint">Upload photo</p>
-                            <span className="emp-photo-subtext">PNG or JPG, up to 2MB</span>
-                          </div>
-                        </>
-                      )}
-                    </label>
-                    {photoError && <small className="emp-photo-error">{photoError}</small>}
-                  </div>
-                  <div className="emp-form-fields">
-                    <TextField label="Full name" value={values.full_name} onChange={(full_name) => setValues({ ...values, full_name })} required />
-                    <label>
-                      Gender
-                      <select value={values.gender} onChange={(event) => setValues({ ...values, gender: event.target.value })}>
-                        <option value="">Not specified</option>
-                        <option value="male">Male</option>
-                        <option value="female">Female</option>
-                        <option value="other">Other</option>
-                      </select>
-                    </label>
-                    <TextField label="Email address" type="email" value={values.email} onChange={(email) => setValues({ ...values, email })} />
-                    <TextField label="Contact number" type="tel" placeholder="+63 XXXX XXX XXXX" value={formatPhoneNumber(values.contact_number)} onChange={(v) => setValues({ ...values, contact_number: normalizePhoneDigits(v) })} />
-                  </div>
-                </div>
-                <div className="emp-form-fields">
-                  <TextField label="Date of birth" type="date" value={values.date_of_birth} onChange={(date_of_birth) => setValues({ ...values, date_of_birth })} />
-                  <label>
-                    Civil status
-                    <select value={values.civil_status} onChange={(event) => setValues({ ...values, civil_status: event.target.value })}>
-                      <option value="">Not specified</option>
-                      <option value="single">Single</option>
-                      <option value="married">Married</option>
-                      <option value="widowed">Widowed</option>
-                    </select>
-                  </label>
-                  <label className="full">
-                    Address
-                    <textarea rows={2} value={values.address} onChange={(event) => setValues({ ...values, address: event.target.value })} placeholder="Street, city, province" />
-                  </label>
-                </div>
-              </div>
-              <div className="emp-form-group">
-                <h3>Emergency Contact</h3>
-                <div className="emp-form-fields">
-                  <TextField label="Contact person" value={values.emergency_contact_name} onChange={(emergency_contact_name) => setValues({ ...values, emergency_contact_name })} />
-                  <TextField label="Contact number" type="tel" placeholder="+63 XXXX XXX XXXX" value={formatPhoneNumber(values.emergency_contact_number)} onChange={(v) => setValues({ ...values, emergency_contact_number: normalizePhoneDigits(v) })} />
-                  <TextField label="Relation (e.g., Spouse, Parent)" value={values.emergency_contact_relation} onChange={(emergency_contact_relation) => setValues({ ...values, emergency_contact_relation })} />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {activeTab === "employment" && (
-            <div className="emp-form-section">
-              <div className="emp-form-group">
-                <h3>Position & Department</h3>
-                <div className="emp-form-fields">
-                  <label>
-                    Position
-                    <select
-                      required
-                      value={values.position_id}
-                      onChange={(event) => {
-                        const position = positions.find((item) => item.id === event.target.value);
-                        const salary = (position?.pay_mode === "fixed" || position?.pay_mode === "hybrid")
-                          ? String(position.monthly_base_salary)
-                          : "0";
-                        setValues({
-                          ...values,
-                          position_id: event.target.value,
-                          role: position?.name ?? "",
-                          department: position?.department ?? "",
-                          monthly_salary: salary,
-                        });
-                      }}
-                    >
-                      <option value="">Select a position</option>
-                      {positions
-                        .filter((position) => position.status === "active" || position.id === initial?.position_id)
-                        .map((position) => (
-                          <option key={position.id} value={position.id}>
-                            {position.name}{position.status === "archived" ? " (Archived)" : ""}
-                          </option>
-                        ))}
-                    </select>
-                  </label>
-                  <TextField label="Department" value={values.department} onChange={() => undefined} />
-                </div>
-                {selectedPosition && (
-                  <div className="emp-position-badge">
-                    <Briefcase size={14} />
-                    <span>{selectedPosition.pay_mode === "fixed" ? "Fixed salary" : selectedPosition.pay_mode === "hybrid" ? "Base + ticket" : selectedPosition.pay_mode === "daily" ? "Daily wage" : "Per ticket"}</span>
-                    {selectedPosition.monthly_base_salary > 0 && (
-                      <>
-                        <span className="emp-position-sep" />
-                        <span>Base {currency.format(toNumber(selectedPosition.monthly_base_salary))}/mo</span>
-                      </>
-                    )}
-                  </div>
-                )}
-              </div>
-              <div className="emp-form-group">
-                <h3>Employment Status</h3>
-                <div className="emp-form-fields">
-                  <label>
-                    Status
-                    <select value={values.status} onChange={(event) => setValues({ ...values, status: event.target.value as EmployeeFormValues["status"] })}>
-                      <option value="active">Active</option>
-                      <option value="inactive">Inactive</option>
-                    </select>
-                  </label>
-                  <TextField label="Hire date" type="date" value={values.hire_date} onChange={(hire_date) => setValues({ ...values, hire_date })} />
-                </div>
-              </div>
-              <div className="emp-form-group">
-                <h3>Additional</h3>
-                <div className="emp-form-fields">
-                  <label className="full">
-                    Notes
-                    <textarea rows={3} value={values.notes} onChange={(event) => setValues({ ...values, notes: event.target.value })} placeholder="Any additional notes about this employee" />
-                  </label>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {activeTab === "documents" && (
-            <div className="emp-form-section">
-              <div className="emp-form-group">
-                <h3>Government IDs</h3>
-                <p className="emp-form-group-desc">Required for payroll compliance and statutory deductions.</p>
-                <div className="emp-form-fields">
-                  <TextField label="SSS number" value={values.sss_number} onChange={(sss_number) => setValues({ ...values, sss_number })} />
-                  <TextField label="PhilHealth number" value={values.philhealth_number} onChange={(philhealth_number) => setValues({ ...values, philhealth_number })} />
-                  <TextField label="Pag-IBIG number" value={values.pagibig_number} onChange={(pagibig_number) => setValues({ ...values, pagibig_number })} />
-                  <TextField label="TIN number" value={values.tin_number} onChange={(tin_number) => setValues({ ...values, tin_number })} />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {activeTab === "government-deduction" && (
-            <div className="emp-form-section">
-              <div className="emp-form-group">
-                <h3>Government Deduction</h3>
-                <p className="emp-form-group-desc">Per-payroll statutory deduction amounts.</p>
-                <div className="emp-form-fields">
-                  <MoneyInput label="SSS" value={values.sss_deduction} onChange={(sss_deduction) => setValues({ ...values, sss_deduction })} />
-                  <MoneyInput label="PhilHealth" value={values.philhealth_deduction} onChange={(philhealth_deduction) => setValues({ ...values, philhealth_deduction })} />
-                  <MoneyInput label="Pag-IBIG" value={values.pagibig_deduction} onChange={(pagibig_deduction) => setValues({ ...values, pagibig_deduction })} />
-                  <MoneyInput label="Withholding Tax" value={values.withholding_tax} onChange={(withholding_tax) => setValues({ ...values, withholding_tax })} />
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <aside className="emp-form-sidebar">
-          <div className="emp-form-preview">
-            <div className="emp-preview-avatar">
-              {values.profile_photo_url ? (
-                <img alt="Preview" src={values.profile_photo_url} />
-              ) : (
-                <span>{initials || "?"}</span>
-              )}
-            </div>
-            <strong className="emp-preview-name">{values.full_name || "Employee name"}</strong>
-            <span className="emp-preview-role">{selectedPosition?.name || "No position"}</span>
-            <StatusPill status={values.status} />
-          </div>
-
-          <div className="emp-form-progress">
-            <div className="emp-progress-header">
-              <span>Profile completion</span>
-              <strong>{Math.round((completedFields / totalFields) * 100)}%</strong>
-            </div>
-            <div className="emp-progress-bar">
-              <div className="emp-progress-fill" style={{ width: `${(completedFields / totalFields) * 100}%` }} />
-            </div>
-          </div>
-
-          <div className="emp-form-summary">
-            <div className="emp-summary-row">
-              <span>Position</span>
-              <strong>{selectedPosition?.name || "—"}</strong>
-            </div>
-            <div className="emp-summary-row">
-              <span>Department</span>
-              <strong>{values.department || "—"}</strong>
-            </div>
-            <div className="emp-summary-row">
-              <span>Email</span>
-              <strong>{values.email || "—"}</strong>
-            </div>
-            <div className="emp-summary-row">
-              <span>Phone</span>
-              <strong>{values.contact_number ? formatPhoneNumber(values.contact_number) : "—"}</strong>
-            </div>
-            <div className="emp-summary-row">
-              <span>Hire date</span>
-              <strong>{values.hire_date || "—"}</strong>
-            </div>
-          </div>
-
-          <div className="emp-form-actions-sticky">
-            <button className="secondary-button" onClick={onClose} type="button">Cancel</button>
-            <button className="primary-button" disabled={busy} type="submit">
-              {busy && <Spinner size="small" />}
-              {busy ? "Saving..." : initial ? "Save Changes" : "Add Employee"}
-            </button>
-          </div>
-        </aside>
-      </div>
-    </form>
-  );
-
-  if (embedded) {
-    return (
-      <div className="page-stack">
-        <header className="emp-form-header">
-          <div>
-            <button className="text-button" onClick={onClose} type="button">
-              <ArrowLeft size={16} />
-              Back to Employees
-            </button>
-            <h1>{initial ? "Edit Employee" : "Add New Employee"}</h1>
-            <p>{initial ? "Update this employee's information." : "Fill in the details to add a new team member."}</p>
-          </div>
-        </header>
-        {formContent}
-      </div>
-    );
-  }
-
-  return (
-    <Modal title={initial ? "Edit employee" : "Add employee"} onClose={onClose}>
-      <form className="form-grid" onSubmit={handleSubmit}>
-        <TextField label="Full name" value={values.full_name} onChange={(full_name) => setValues({ ...values, full_name })} required />
-        <label>
-          Position
-          <select
-            required
-            value={values.position_id}
-            onChange={(event) => {
-              const position = positions.find((item) => item.id === event.target.value);
-              setValues({ ...values, position_id: event.target.value, role: position?.name ?? "", department: position?.department ?? "" });
-            }}
-          >
-            <option value="">Select a position</option>
-            {positions.filter((p) => p.status === "active" || p.id === initial?.position_id).map((p) => (
-              <option key={p.id} value={p.id}>{p.name}{p.status === "archived" ? " (Archived)" : ""}</option>
-            ))}
-          </select>
-        </label>
-        <TextField label="Contact number" type="tel" placeholder="+63 XXXX XXX XXXX" value={formatPhoneNumber(values.contact_number)} onChange={(v) => setValues({ ...values, contact_number: normalizePhoneDigits(v) })} />
-        <TextField label="Email" type="email" value={values.email} onChange={(email) => setValues({ ...values, email })} />
-        <label>
-          Status
-          <select value={values.status} onChange={(event) => setValues({ ...values, status: event.target.value as EmployeeFormValues["status"] })}>
-            <option value="active">Active</option>
-            <option value="inactive">Inactive</option>
-          </select>
-        </label>
-        <TextField label="Hire date" type="date" value={values.hire_date} onChange={(hire_date) => setValues({ ...values, hire_date })} />
-        <TextField label="SSS number" value={values.sss_number} onChange={(sss_number) => setValues({ ...values, sss_number })} />
-        <TextField label="PhilHealth number" value={values.philhealth_number} onChange={(philhealth_number) => setValues({ ...values, philhealth_number })} />
-        <TextField label="Pag-IBIG number" value={values.pagibig_number} onChange={(pagibig_number) => setValues({ ...values, pagibig_number })} />
-        <MoneyInput label="SSS deduction" value={values.sss_deduction} onChange={(sss_deduction) => setValues({ ...values, sss_deduction })} />
-        <MoneyInput label="PhilHealth deduction" value={values.philhealth_deduction} onChange={(philhealth_deduction) => setValues({ ...values, philhealth_deduction })} />
-        <MoneyInput label="Pag-IBIG deduction" value={values.pagibig_deduction} onChange={(pagibig_deduction) => setValues({ ...values, pagibig_deduction })} />
-        <MoneyInput label="Withholding tax" value={values.withholding_tax} onChange={(withholding_tax) => setValues({ ...values, withholding_tax })} />
-        <TextField label="TIN number" value={values.tin_number} onChange={(tin_number) => setValues({ ...values, tin_number })} />
-        <label className="full">
-          Address
-          <textarea rows={2} value={values.address} onChange={(event) => setValues({ ...values, address: event.target.value })} />
-        </label>
-        <label className="full">
-          Notes
-          <textarea rows={2} value={values.notes} onChange={(event) => setValues({ ...values, notes: event.target.value })} />
-        </label>
-        <FormActions busy={busy} onClose={onClose} />
-      </form>
-    </Modal>
-  );
-}

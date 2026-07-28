@@ -116,6 +116,7 @@ button {
   align-items: center;
   display: flex;
   min-height: 100vh;
+  min-height: 100dvh;
   justify-content: center;
   padding: 24px;
 }
@@ -340,6 +341,11 @@ button {
 .auth-switch-button:hover,
 .auth-forgot-button:hover {
   color: #0f52d9;
+}
+
+.required-mark {
+  color: var(--color-danger);
+  font-weight: 600;
 }
 
 .sr-only {
@@ -7621,6 +7627,7 @@ td {
     box-shadow: var(--shadow-lg);
     gap: 16px;
     height: 100vh;
+    height: 100dvh;
     left: 0;
     max-width: min(340px, 86vw);
     padding: 18px;
@@ -11230,54 +11237,6 @@ td {
   }
 }
 
-.cbf-employee-disputes {
-  align-items: end;
-  background: #fffaf3;
-  border-radius: 12px;
-  display: grid;
-  gap: 12px;
-  grid-template-columns: minmax(180px, 1fr) repeat(3, minmax(92px, 120px));
-  margin-top: 16px;
-  padding: 14px 16px;
-}
-
-.cbf-employee-disputes > div {
-  display: grid;
-  gap: 3px;
-}
-
-.cbf-employee-disputes strong {
-  color: #7c2d12;
-  font-size: 0.88rem;
-}
-
-.cbf-employee-disputes > div span,
-.cbf-employee-disputes label > span {
-  color: #9a5a29;
-  font-size: 0.72rem;
-}
-
-.cbf-employee-disputes label {
-  display: grid;
-  gap: 5px;
-}
-
-.cbf-employee-disputes input {
-  background: #fff;
-  border: 1px solid #fed7aa;
-  border-radius: 8px;
-  color: #7c2d12;
-  min-height: 38px;
-  padding: 0 10px;
-  width: 100%;
-}
-
-.cbf-employee-disputes input:focus {
-  border-color: #f59e0b;
-  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.12);
-  outline: 0;
-}
-
 .ticket-rate-warning {
   color: #b45309;
   display: block;
@@ -11285,16 +11244,6 @@ td {
   font-weight: 700;
   margin-top: 3px;
   white-space: nowrap;
-}
-
-@media (max-width: 700px) {
-  .cbf-employee-disputes {
-    grid-template-columns: repeat(3, 1fr);
-  }
-
-  .cbf-employee-disputes > div {
-    grid-column: 1 / -1;
-  }
 }
 
 @media (max-width: 640px) {

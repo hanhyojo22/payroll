@@ -119,6 +119,22 @@ describe("position-based payroll", () => {
     expect(item.ticket_details[0]).toMatchObject({ category_name: "Repair", ticket_count: 3, rate: 250, amount: 750 });
   });
 
+  // payroll_run_items keeps its own pay_mode column so historical rows stay readable after a
+  // position changes. Stamping "ticket" on an employee who had no position makes a legacy
+  // rate-column payout indistinguishable from a real ticket position in payroll history.
+  it("stamps an employee with no position as legacy rather than ticket", () => {
+    const item = payrollItemPayloadForEmployee(employee, "run-1", "user-1", [ticketEntry]);
+    expect(item.pay_mode).toBe("legacy");
+    expect(item.base_pay).toBe(0);
+    expect(item.ticket_pay).toBe(750);
+    expect(item.gross_pay).toBe(750);
+  });
+
+  it("keeps stamping ticket when the employee actually holds a ticket position", () => {
+    const item = payrollItemPayloadForEmployee(employee, "run-1", "user-1", [ticketEntry], position("ticket"));
+    expect(item.pay_mode).toBe("ticket");
+  });
+
   it("combines half-month base pay and ticket earnings for hybrid positions", () => {
     const item = payrollItemPayloadForEmployee(employee, "run-1", "user-1", [ticketEntry], position("hybrid", 20_000));
     expect(item.base_pay).toBe(10_000);

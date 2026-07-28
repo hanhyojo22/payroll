@@ -77,49 +77,6 @@ export function countTicketsByType(
   );
 }
 
-export function computeBilling(
-  totalTickets: number,
-  disputedTickets: number,
-  billingRate: number,
-  collectionsPct: number,
-): {
-  billableTickets: number;
-  billingAmount: number;
-  collectionsAmount: number;
-  collectiblesAmount: number;
-} {
-  const billableTickets = Math.max(0, totalTickets - disputedTickets);
-  const billingAmount = billableTickets * billingRate;
-  const collectionsAmount = Math.round(billingAmount * collectionsPct / 100 * 100) / 100;
-  const collectiblesAmount = Math.round((billingAmount - collectionsAmount) * 100) / 100;
-  return { billableTickets, billingAmount, collectionsAmount, collectiblesAmount };
-}
-
-export function computeBillingByType(
-  installation: number,
-  repair: number,
-  disputedTickets: number,
-  installationRate: number,
-  repairRate: number,
-  collectionsPct: number,
-): {
-  totalTickets: number;
-  billableTickets: number;
-  billingAmount: number;
-  collectionsAmount: number;
-  collectiblesAmount: number;
-} {
-  const totalTickets = installation + repair;
-  const billableTickets = Math.max(0, totalTickets - disputedTickets);
-  const disputeRatio = totalTickets > 0 ? billableTickets / totalTickets : 0;
-  const billableInstallation = Math.round(installation * disputeRatio);
-  const billableRepair = billableTickets - billableInstallation;
-  const billingAmount = billableInstallation * installationRate + billableRepair * repairRate;
-  const collectionsAmount = Math.round(billingAmount * collectionsPct / 100 * 100) / 100;
-  const collectiblesAmount = Math.round((billingAmount - collectionsAmount) * 100) / 100;
-  return { totalTickets, billableTickets, billingAmount, collectionsAmount, collectiblesAmount };
-}
-
 export function computeSubconItem(
   installTickets: number,
   repairTickets: number,

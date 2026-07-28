@@ -5,6 +5,7 @@ import {
   markMutationFailed,
   type PendingMutation,
 } from "./offlineDb";
+import { isConnectivityFailure } from "../shared/utils/errors";
 
 type SyncResult = {
   failed: PendingMutation[];
@@ -12,14 +13,10 @@ type SyncResult = {
 };
 
 export function isOfflineLikeError(error: unknown) {
-  const message = `${(error as { message?: string })?.message ?? ""} ${(error as { details?: string })?.details ?? ""}`.toLowerCase();
-  return (
-    !navigator.onLine ||
-    message.includes("failed to fetch") ||
-    message.includes("network") ||
-    message.includes("request timed out") ||
-    message.includes("timeout")
-  );
+  if (!navigator.onLine) return true;
+  const typed = (error ?? {}) as { code?: string; message?: string; details?: string };
+  if (typed.code === "REQUEST_TIMEOUT") return true;
+  return isConnectivityFailure(typed);
 }
 
 async function applyMutation(supabase: SupabaseClient, mutation: PendingMutation) {
