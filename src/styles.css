@@ -116,6 +116,7 @@ button {
   align-items: center;
   display: flex;
   min-height: 100vh;
+  min-height: 100dvh;
   justify-content: center;
   padding: 24px;
 }
@@ -7626,6 +7627,7 @@ td {
     box-shadow: var(--shadow-lg);
     gap: 16px;
     height: 100vh;
+    height: 100dvh;
     left: 0;
     max-width: min(340px, 86vw);
     padding: 18px;
