@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Ban, CalendarClock, CheckCircle2, Eye, MoreVertical, Pencil, Plus, Receipt, Square, Tag, Trash2, X } from "lucide-react";
 import { isOfflineLikeError } from "../../lib/offlineSync";
 import { MoneyField } from "../../shared/components/MoneyField";
+import { RequiredMark } from "../../shared/components/FormLayout";
 import { PageHeader, RecordTitle, Toolbar } from "../../shared/components/PageLayout";
 import { StatusBadge } from "../../shared/components/StatusBadge";
 import { NotificationService } from "../../shared/notifications/NotificationService";
@@ -707,7 +708,7 @@ function ExpenseFormModal({
         >
           <div className={`billing-form-fields${categoryScope === "personal" ? " personal-expense-form-fields" : " company-expense-form-fields"}`}>
             <label>
-              {categoryScope === "personal" ? "What's this for?" : "Employee"}
+              {categoryScope === "personal" ? "What's this for?" : "Employee"}<RequiredMark />
               {categoryScope === "personal" ? (
                 <input
                   placeholder="e.g. Netflix subscription"
@@ -725,7 +726,7 @@ function ExpenseFormModal({
               )}
             </label>
             <label>
-              Category
+              Category<RequiredMark />
               {activeCategories.length === 0 ? (
                 <div className="expense-form-no-categories">
                   No {categoryScope} categories yet. Add one in Settings → Expense Categories first.
@@ -739,11 +740,11 @@ function ExpenseFormModal({
               )}
             </label>
             <label>
-              Amount
+              Amount<RequiredMark />
               <input inputMode="decimal" min="0" placeholder="0.00" step="0.01" type="number" value={values.amount} onChange={(event) => setValues((current) => ({ ...current, amount: event.target.value }))} required />
             </label>
             <label>
-              Date
+              Date<RequiredMark />
               <input type="date" value={values.expense_date} onChange={(event) => setValues((current) => ({ ...current, expense_date: event.target.value }))} required />
             </label>
             <label>
@@ -861,7 +862,7 @@ function InstallmentPaymentForm({
           <div className={`billing-form-fields${categoryScope === "personal" ? " personal-expense-form-fields" : " company-expense-form-fields"}`}>
             <MoneyField label="Amount" onChange={(amount) => setValues((current) => ({ ...current, amount }))} required value={values.amount} />
             <label>
-              Payment date
+              Payment date<RequiredMark />
               <input
                 max={todayKey()}
                 onChange={(event) => setValues((current) => ({ ...current, payment_date: event.target.value }))}

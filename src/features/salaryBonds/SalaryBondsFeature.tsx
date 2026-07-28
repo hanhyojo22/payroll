@@ -4,7 +4,7 @@ import { Archive, History, Pencil, Plus, RotateCcw, Wallet, X } from "lucide-rea
 import { validateSalaryBondWithdrawal } from "../../domain/salaryBonds";
 import { isOfflineLikeError } from "../../lib/offlineSync";
 import { DataTable } from "../../shared/components/DataTable";
-import { Modal } from "../../shared/components/FormLayout";
+import { Modal, RequiredMark } from "../../shared/components/FormLayout";
 import { MoneyField } from "../../shared/components/MoneyField";
 import { PageHeader } from "../../shared/components/PageLayout";
 import { StatusBadge } from "../../shared/components/StatusBadge";
@@ -239,7 +239,7 @@ export function SalaryBondsFeature({
                   </div>
                 ) : (
                   <label className="full">
-                    Employee
+                    Employee<RequiredMark />
                     <select disabled={Boolean(editingBond)} required value={bondForm.employee_id} onChange={(event) => setBondForm({ ...bondForm, employee_id: event.target.value })}>
                       <option value="">Select employee</option>
                       {employees.map((item) => (
@@ -248,10 +248,10 @@ export function SalaryBondsFeature({
                     </select>
                   </label>
                 )}
-                <MoneyField label="Target Amount *" onChange={(value) => setBondForm({ ...bondForm, target_amount: value })} required value={bondForm.target_amount} />
-                <MoneyField label="Deduction Per Payroll *" onChange={(value) => setBondForm({ ...bondForm, deduction_per_payroll: value })} required value={bondForm.deduction_per_payroll} />
+                <MoneyField label="Target Amount" onChange={(value) => setBondForm({ ...bondForm, target_amount: value })} required value={bondForm.target_amount} />
+                <MoneyField label="Deduction Per Payroll" onChange={(value) => setBondForm({ ...bondForm, deduction_per_payroll: value })} required value={bondForm.deduction_per_payroll} />
                 <label>
-                  Start Deduction
+                  Start Deduction<RequiredMark />
                   <input required type="date" value={bondForm.start_deduction} onChange={(event) => setBondForm({ ...bondForm, start_deduction: event.target.value })} />
                 </label>
                 <label className="full">
@@ -272,13 +272,13 @@ export function SalaryBondsFeature({
         <Modal onClose={() => setWithdrawingBond(null)} title={`Emergency withdrawal — ${withdrawingBond.employee_name}`}>
           <form className="form-grid" onSubmit={submitWithdrawal}>
             <p>Current balance: <strong>{currency.format(withdrawingBond.balance)}</strong></p>
-            <MoneyField label="Amount *" onChange={(value) => setWithdrawalForm({ ...withdrawalForm, amount: value })} required value={withdrawalForm.amount} />
+            <MoneyField label="Amount" onChange={(value) => setWithdrawalForm({ ...withdrawalForm, amount: value })} required value={withdrawalForm.amount} />
             <label>
-              Withdrawal Date <span>*</span>
+              Withdrawal Date<RequiredMark />
               <input required type="date" value={withdrawalForm.transaction_date} onChange={(event) => setWithdrawalForm({ ...withdrawalForm, transaction_date: event.target.value })} />
             </label>
             <label className="employee-advance-form-wide">
-              Reason <span>*</span>
+              Reason<RequiredMark />
               <textarea placeholder="e.g. medical emergency, requested by employee" required value={withdrawalForm.note} onChange={(event) => setWithdrawalForm({ ...withdrawalForm, note: event.target.value })} />
             </label>
             <div className="form-actions full">

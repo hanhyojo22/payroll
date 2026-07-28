@@ -342,6 +342,11 @@ button {
   color: #0f52d9;
 }
 
+.required-mark {
+  color: var(--color-danger);
+  font-weight: 600;
+}
+
 .sr-only {
   height: 1px;
   margin: -1px;

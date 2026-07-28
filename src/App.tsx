@@ -94,7 +94,7 @@ const PositionsView = lazy(() => import("./features/positions/PositionsFeature")
 const EmployeesView = lazy(() => import("./features/employees/EmployeesFeature"));
 import { DataTable } from "./shared/components/DataTable";
 import { PageHeader, RecordTitle, Toolbar } from "./shared/components/PageLayout";
-import { FormActions, Modal, PasswordField, RowActions, TextField } from "./shared/components/FormLayout";
+import { FormActions, Modal, PasswordField, RequiredMark, RowActions, TextField } from "./shared/components/FormLayout";
 import type { QueueOfflineMutation } from "./shared/types";
 import { currency, formatMoney, toNumber } from "./shared/utils/currency";
 import { addDays, currentMonth, currentYear, isBeforeToday, isToday, monthNames, todayKey } from "./shared/utils/dates";
@@ -558,7 +558,7 @@ function Login() {
                 <div className="auth-input-shell">
                   <span className="auth-input-icon" aria-hidden="true"><Mail size={16} /></span>
                   <label>
-                    Email Address
+                    Email Address<RequiredMark />
                     <input
                       autoComplete="email"
                       onChange={(event) => setEmail(event.target.value)}
@@ -606,7 +606,7 @@ function Login() {
             <div className="auth-input-shell">
               <span className="auth-input-icon" aria-hidden="true"><Mail size={16} /></span>
               <label>
-                Email Address
+                Email Address<RequiredMark />
                 <input
                   autoComplete="email"
                   className={credentialsInvalid ? "field-invalid" : undefined}

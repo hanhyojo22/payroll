@@ -19,7 +19,7 @@ import {
 import { deletePaymentReminderPayment, saveSubcontractor, updatePaymentReminderCompletion } from "../billing/billingRepository";
 import { supabase } from "../../supabase";
 import { DataTable } from "../../shared/components/DataTable";
-import { TextField } from "../../shared/components/FormLayout";
+import { RequiredMark, TextField } from "../../shared/components/FormLayout";
 import { MoneyField } from "../../shared/components/MoneyField";
 import { PageHeader, RecordTitle, Toolbar } from "../../shared/components/PageLayout";
 import { StatusBadge } from "../../shared/components/StatusBadge";
@@ -1241,10 +1241,10 @@ function SubcontractorDetailsView({
                   )}
                 </div>
                 <label>
-                  Date Granted *
+                  Date Granted<RequiredMark />
                   <input required type="date" value={advanceForm.date_granted} onChange={(event) => setAdvanceForm({ ...advanceForm, date_granted: event.target.value })} />
                 </label>
-                <MoneyField label="Amount *" onChange={(amountValue) => setAdvanceForm({ ...advanceForm, amount: amountValue })} required value={advanceForm.amount} />
+                <MoneyField label="Amount" onChange={(amountValue) => setAdvanceForm({ ...advanceForm, amount: amountValue })} required value={advanceForm.amount} />
                 <label>
                   Deduction Method
                   <select value={advanceForm.deduction_mode} onChange={(event) => setAdvanceForm({ ...advanceForm, deduction_mode: event.target.value as SubcontractorAdvance["deduction_mode"] })}>
@@ -1379,14 +1379,14 @@ function SubcontractorProfileModal({
         >
           <div className="billing-form-fields subcon-form-fields">
             <label>
-              Name
+              Name<RequiredMark />
               <input value={values.name} onChange={(event) => setValues((current) => ({ ...current, name: event.target.value }))} required />
             </label>
             <MoneyField label="Installation rate (PHP)" value={values.installation_rate} onChange={(value) => setValues((current) => ({ ...current, installation_rate: value }))} required />
             <MoneyField label="Repair rate (PHP)" value={values.repair_rate} onChange={(value) => setValues((current) => ({ ...current, repair_rate: value }))} required />
             <MoneyField label="Nap Rehab rate (PHP)" value={values.nap_rehab_rate} onChange={(value) => setValues((current) => ({ ...current, nap_rehab_rate: value }))} required />
             <label>
-              1st payout % (default 30)
+              1st payout % (default 30)<RequiredMark />
               <input max="100" min="0" type="number" value={values.payable_pct} onChange={(event) => setValues((current) => ({ ...current, payable_pct: event.target.value }))} required />
             </label>
             <label>
@@ -1458,7 +1458,7 @@ function PayoutPaymentForm({
           <div className="billing-form-fields company-expense-form-fields">
             <MoneyField label="Amount" onChange={(amount) => setValues((current) => ({ ...current, amount }))} required value={values.amount} />
             <label>
-              Payment date
+              Payment date<RequiredMark />
               <input
                 max={todayKey()}
                 onChange={(event) => setValues((current) => ({ ...current, payment_date: event.target.value }))}

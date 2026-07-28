@@ -11,6 +11,7 @@ import {
   type CollectionDeps,
 } from "./useCases";
 import { MoneyField } from "../../shared/components/MoneyField";
+import { RequiredMark } from "../../shared/components/FormLayout";
 import { PageHeader } from "../../shared/components/PageLayout";
 import type { QueueOfflineMutation } from "../../shared/types";
 import { NotificationService } from "../../shared/notifications/NotificationService";
@@ -742,7 +743,7 @@ function PaymentForm({ balance, onClose, onSubmit }: {
 }
 
 function Field({ label, onChange, ...props }: { label: string; onChange: (value: string) => void } & Omit<InputHTMLAttributes<HTMLInputElement>, "onChange">) {
-  return <label>{label}<input {...props} onChange={(e) => onChange(e.target.value)} /></label>;
+  return <label>{label}{props.required && <RequiredMark />}<input {...props} onChange={(e) => onChange(e.target.value)} /></label>;
 }
 
 function SummaryCard({ icon, label, tone, value }: { icon: ReactNode; label: string; tone?: "danger" | "success"; value: number }) {

@@ -17,6 +17,7 @@ import {
 import { isOfflineLikeError } from "../../lib/offlineSync";
 import { supabase } from "../../supabase";
 import { MoneyField } from "../../shared/components/MoneyField";
+import { RequiredMark } from "../../shared/components/FormLayout";
 import { ActionProgress, type ActionProgressState } from "../../shared/components/ActionProgress";
 import { PageHeader } from "../../shared/components/PageLayout";
 import { NotificationService } from "../../shared/notifications/NotificationService";
@@ -1963,7 +1964,7 @@ function BillingForm({
                 <section className="cbf-section cbf-section-card">
                   <div className="cbf-section-heading">
                     <p className="cbf-section-label">
-                      Billing Period
+                      Billing Period<RequiredMark />
                       {initial && <span className="cbf-section-sub">locked — delete and recreate to change</span>}
                     </p>
                   </div>
@@ -2575,7 +2576,7 @@ function BillingSettingsContent({
           <MoneyField label="Repair rate (PHP per ticket)" value={repairRate} onChange={setRepairRate} required />
           <MoneyField label="Nap Rehab rate (PHP per ticket)" value={napRehabRate} onChange={setNapRehabRate} required />
           <label>
-            Collections %
+            Collections %<RequiredMark />
             <input max="100" min="0" type="number" value={pct} onChange={(event) => setPct(event.target.value)} required />
           </label>
           <label className="full">

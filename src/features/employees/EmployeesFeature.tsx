@@ -27,7 +27,7 @@ import { supabase } from "../../supabase";
 import { loadEmployeePayrollRuns } from "../../app/resources";
 import { isOfflineLikeError } from "../../lib/offlineSync";
 import { DataTable } from "../../shared/components/DataTable";
-import { Modal, FormActions, TextField, PasswordField } from "../../shared/components/FormLayout";
+import { Modal, FormActions, TextField, PasswordField, RequiredMark } from "../../shared/components/FormLayout";
 import { MoneyField as MoneyInput } from "../../shared/components/MoneyField";
 import { StatusBadge as StatusPill } from "../../shared/components/StatusBadge";
 import { PageHeader, RecordTitle, Toolbar } from "../../shared/components/PageLayout";
@@ -1301,7 +1301,7 @@ function EmployeeForm({
                 <h3>Position & Department</h3>
                 <div className="emp-form-fields">
                   <label>
-                    Position
+                    Position<RequiredMark />
                     <select
                       required
                       value={values.position_id}
@@ -1482,7 +1482,7 @@ function EmployeeForm({
       <form className="form-grid" onSubmit={handleSubmit}>
         <TextField label="Full name" value={values.full_name} onChange={(full_name) => setValues({ ...values, full_name })} required />
         <label>
-          Position
+          Position<RequiredMark />
           <select
             required
             value={values.position_id}

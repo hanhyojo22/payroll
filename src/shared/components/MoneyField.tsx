@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { formatMoney } from "../utils/currency";
+import { RequiredMark } from "./FormLayout";
 
 export function MoneyField({
   disabled,
@@ -45,6 +46,7 @@ export function MoneyField({
   return (
     <label>
       {label}
+      {required && <RequiredMark />}
       {input}
     </label>
   );

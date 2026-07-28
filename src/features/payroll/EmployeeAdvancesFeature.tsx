@@ -4,6 +4,7 @@ import { CreditCard, Pencil, Save, X } from "lucide-react";
 import { isOfflineLikeError } from "../../lib/offlineSync";
 import { DataTable } from "../../shared/components/DataTable";
 import { MoneyField } from "../../shared/components/MoneyField";
+import { RequiredMark } from "../../shared/components/FormLayout";
 import { StatusBadge } from "../../shared/components/StatusBadge";
 import type { QueueOfflineMutation } from "../../shared/types";
 import { NotificationService } from "../../shared/notifications/NotificationService";
@@ -171,7 +172,7 @@ export function EmployeeAdvancesFeature({
             </div>
 
             <label>
-              Advance Type <span>*</span>
+              Advance Type<RequiredMark />
               <select value={advanceForm.advance_type} onChange={(event) => setAdvanceForm({ ...advanceForm, advance_type: event.target.value as EmployeeAdvanceType })}>
                 {advanceTypeOptions.map((option) => (
                   <option key={option} value={option}>{option}</option>
@@ -179,13 +180,13 @@ export function EmployeeAdvancesFeature({
               </select>
             </label>
             <label>
-              Date Granted <span>*</span>
+              Date Granted<RequiredMark />
               <input required type="date" value={advanceForm.date_granted} onChange={(event) => setAdvanceForm({ ...advanceForm, date_granted: event.target.value })} />
             </label>
             <MoneyField label="Amount *" onChange={(amountValue) => setAdvanceForm({ ...advanceForm, amount: amountValue, balance: amountValue })} required value={advanceForm.amount} />
             <MoneyField label="Deduction Per Payroll *" onChange={(value) => setAdvanceForm({ ...advanceForm, deduction_per_payroll: value })} required value={advanceForm.deduction_per_payroll} />
             <label>
-              Start Deduction <span>*</span>
+              Start Deduction<RequiredMark />
               <input required type="date" value={advanceForm.start_deduction} onChange={(event) => setAdvanceForm({ ...advanceForm, start_deduction: event.target.value })} />
               <small>The deduction will begin on this date.</small>
             </label>

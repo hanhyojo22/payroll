@@ -32,6 +32,22 @@ export function Modal({
   );
 }
 
+/**
+ * A bare "*" conveys nothing to a screen reader (no announced meaning), so every required
+ * field across the app was invisible-until-submit for required-ness to assistive tech even
+ * on the few forms that showed an asterisk visually. This pairs the visual mark with text a
+ * screen reader will actually announce, and is the one place that decides what "required"
+ * looks like -- TextField/MoneyField/PasswordField render it automatically.
+ */
+export function RequiredMark() {
+  return (
+    <>
+      <span aria-hidden="true" className="required-mark"> *</span>
+      <span className="sr-only"> (required)</span>
+    </>
+  );
+}
+
 export function FormActions({ busy, onClose }: { busy: boolean; onClose: () => void }) {
   return (
     <div className="form-actions full">
@@ -60,6 +76,7 @@ export function TextField({
   return (
     <label>
       {label}
+      {props.required && <RequiredMark />}
       <input
         {...props}
         onChange={(event) => onChange(event.target.value)}
@@ -83,6 +100,7 @@ export function PasswordField({
   return (
     <label>
       {label}
+      {props.required && <RequiredMark />}
       <div className="password-field">
         <input
           {...props}
