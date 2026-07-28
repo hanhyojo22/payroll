@@ -98,7 +98,7 @@ import { FormActions, Modal, PasswordField, RowActions, TextField } from "./shar
 import type { QueueOfflineMutation } from "./shared/types";
 import { currency, formatMoney, toNumber } from "./shared/utils/currency";
 import { addDays, currentMonth, currentYear, isBeforeToday, isToday, monthNames, todayKey } from "./shared/utils/dates";
-import { friendlyError } from "./shared/utils/errors";
+import { friendlyError, isConnectivityFailure, isInvalidCredentialsError } from "./shared/utils/errors";
 import type {
   AttendanceEntry,
   AttendanceStatus,
@@ -376,6 +376,11 @@ const emptyPayment: PaymentFormValues = {
 export function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [loadingSession, setLoadingSession] = useState(true);
+  // A password-recovery link logs the browser into a session scoped only to setting a new
+  // password. Routing that straight into Workspace (as onAuthStateChange's session update
+  // would otherwise do) would let a possibly-shared-computer recovery click land the visitor
+  // in the full app with the previous owner's data, before the new password is even set.
+  const [passwordRecovery, setPasswordRecovery] = useState(false);
 
   useEffect(() => {
     if (!supabase) {
@@ -390,7 +395,8 @@ export function App() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (event === "PASSWORD_RECOVERY") setPasswordRecovery(true);
       setSession(nextSession);
     });
 
@@ -408,6 +414,10 @@ export function App() {
 
   if (loadingSession) {
     return <FullPageMessage title="Loading workspace" text="Checking session..." />;
+  }
+
+  if (passwordRecovery && session) {
+    return <ResetPassword onDone={() => setPasswordRecovery(false)} />;
   }
 
   if (!session) {
@@ -438,18 +448,39 @@ function FullPageMessage({ title, text }: { title: string; text: string }) {
 function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in");
+  const [mode, setMode] = useState<"sign-in" | "sign-up" | "forgot-password">("sign-in");
+  const [resetEmailSent, setResetEmailSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [credentialsInvalid, setCredentialsInvalid] = useState(false);
-  const [rememberMe, setRememberMe] = useState(true);
-  const authRedirectTo = emailRedirectUrl ?? (typeof window !== "undefined" ? window.location.origin : undefined);
   const rememberedEmailKey = "jms-login-email";
+  // Defaults off for a fresh browser/first-time sign-in, which is the more privacy-conscious
+  // choice on a shared computer -- but if an email was already remembered from a prior
+  // session, keep the checkbox checked to match, so unchecking it reads as the deliberate
+  // "forget this" action it actually is rather than a spontaneous mismatch with the prefilled field.
+  const [rememberMe, setRememberMe] = useState(() =>
+    typeof window !== "undefined" && Boolean(window.localStorage.getItem(rememberedEmailKey)));
+  const authRedirectTo = emailRedirectUrl ?? (typeof window !== "undefined" ? window.location.origin : undefined);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const rememberedEmail = window.localStorage.getItem(rememberedEmailKey);
     if (rememberedEmail) setEmail(rememberedEmail);
   }, []);
+
+  async function handleForgotPassword(event: FormEvent) {
+    event.preventDefault();
+    if (!supabase) return;
+    setBusy(true);
+    const result = await supabase.auth.resetPasswordForEmail(email, { redirectTo: authRedirectTo });
+    setBusy(false);
+    // Neutral outcome regardless of whether the address is registered -- confirming or
+    // denying that would let this form be used to check who has an account here.
+    if (result.error && !isConnectivityFailure(result.error)) {
+      NotificationService.showError(friendlyError(result.error));
+      return;
+    }
+    setResetEmailSent(true);
+  }
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -470,10 +501,17 @@ function Login() {
           });
 
     if (result.error) {
-      NotificationService.showError(friendlyError(result.error));
-      if (mode === "sign-in") {
+      // The invalid-credentials case gets its own dedicated inline message and red field
+      // borders right where the user is looking, so it doesn't also need a toast repeating
+      // the same thing. Every other sign-in failure (network, timeout, unconfirmed email)
+      // has no such inline message, so it still needs the toast -- and previously always
+      // showing "Incorrect email or password" here mislabeled those as a wrong password.
+      if (mode === "sign-in" && isInvalidCredentialsError(result.error)) {
         setCredentialsInvalid(true);
         setPassword("");
+      } else {
+        NotificationService.showError(friendlyError(result.error));
+        if (mode === "sign-in") setPassword("");
       }
     } else if (mode === "sign-up" && !result.data.session) {
       NotificationService.showSuccess("Account created. Please confirm your email before signing in.");
@@ -488,6 +526,64 @@ function Login() {
       }
     }
     setBusy(false);
+  }
+
+  if (mode === "forgot-password") {
+    return (
+      <main className="center-screen login-screen">
+        <section className="auth-shell">
+          <section className="auth-panel">
+            <div className="auth-icon-badge" aria-hidden="true">
+              <KeyRound size={28} />
+            </div>
+            <div className="auth-panel-copy">
+              <p className="eyebrow">Payroll workspace</p>
+              <h1>Reset Password</h1>
+              <p>
+                {resetEmailSent
+                  ? "If an account exists for that email, a password reset link is on its way."
+                  : "Enter your email and we'll send you a link to set a new password."}
+              </p>
+            </div>
+            {resetEmailSent ? (
+              <button
+                className="primary-button auth-submit-button"
+                onClick={() => { setMode("sign-in"); setResetEmailSent(false); }}
+                type="button"
+              >
+                Back to sign in
+              </button>
+            ) : (
+              <form onSubmit={handleForgotPassword} className="stack auth-form-stack">
+                <div className="auth-input-shell">
+                  <span className="auth-input-icon" aria-hidden="true"><Mail size={16} /></span>
+                  <label>
+                    Email Address
+                    <input
+                      autoComplete="email"
+                      onChange={(event) => setEmail(event.target.value)}
+                      placeholder="Enter your email"
+                      required
+                      type="email"
+                      value={email}
+                    />
+                  </label>
+                </div>
+                <button className="primary-button auth-submit-button" disabled={busy} type="submit">
+                  {busy && <Spinner size="small" />}
+                  {busy ? "Please wait..." : "Send reset link"}
+                </button>
+                <p className="auth-footer-copy">
+                  <button className="text-button auth-switch-button" onClick={() => setMode("sign-in")} type="button">
+                    Back to sign in
+                  </button>
+                </p>
+              </form>
+            )}
+          </section>
+        </section>
+      </main>
+    );
   }
 
   return (
@@ -553,7 +649,7 @@ function Login() {
                 </label>
                 <button
                   className="text-button auth-forgot-button"
-                  onClick={() => NotificationService.showError("Please contact the administrator to reset your password.")}
+                  onClick={() => { setMode("forgot-password"); setCredentialsInvalid(false); }}
                   type="button"
                 >
                   Forgot password?
@@ -584,6 +680,91 @@ function Login() {
               {mode === "sign-in" ? "Create admin account" : "Sign in"}
             </button>
           </p>
+        </section>
+      </section>
+    </main>
+  );
+}
+
+/**
+ * Shown after clicking a password-recovery link. The recovery click already produced a valid
+ * (recovery-scoped) session, so this only asks for the new password -- there is no "current
+ * password" to verify, unlike ChangePasswordModal's voluntary change from inside the app.
+ */
+function ResetPassword({ onDone }: { onDone: () => void }) {
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (!supabase) return;
+    if (password.length < 6) {
+      NotificationService.showError("Password must be at least 6 characters.");
+      return;
+    }
+    if (password !== confirmPassword) {
+      NotificationService.showError("Passwords do not match.");
+      return;
+    }
+    setBusy(true);
+    const result = await supabase.auth.updateUser({ password });
+    if (result.error) {
+      setBusy(false);
+      NotificationService.showError(friendlyError(result.error));
+      return;
+    }
+    // The recovery-scoped session has done its job; sign out so the admin signs back in
+    // normally with the new password rather than staying in on the recovery token.
+    await supabase.auth.signOut();
+    setBusy(false);
+    NotificationService.showSuccess("Password updated. Please sign in with your new password.");
+    onDone();
+  }
+
+  return (
+    <main className="center-screen login-screen">
+      <section className="auth-shell">
+        <section className="auth-panel">
+          <div className="auth-icon-badge" aria-hidden="true">
+            <KeyRound size={28} />
+          </div>
+          <div className="auth-panel-copy">
+            <p className="eyebrow">Payroll workspace</p>
+            <h1>Set a New Password</h1>
+            <p>Choose a new password for your account.</p>
+          </div>
+          <form onSubmit={handleSubmit} className="stack auth-form-stack">
+            <div className="auth-input-shell auth-password-shell">
+              <span className="auth-input-icon" aria-hidden="true"><KeyRound size={16} /></span>
+              <PasswordField
+                autoComplete="new-password"
+                autoFocus
+                label="New Password"
+                minLength={6}
+                onChange={setPassword}
+                placeholder="Enter your new password"
+                required
+                value={password}
+              />
+            </div>
+            <div className="auth-input-shell auth-password-shell">
+              <span className="auth-input-icon" aria-hidden="true"><KeyRound size={16} /></span>
+              <PasswordField
+                autoComplete="new-password"
+                label="Confirm Password"
+                minLength={6}
+                onChange={setConfirmPassword}
+                placeholder="Re-enter your new password"
+                required
+                value={confirmPassword}
+              />
+            </div>
+            <button className="primary-button auth-submit-button" disabled={busy} type="submit">
+              {busy && <Spinner size="small" />}
+              {busy ? "Please wait..." : "Set new password"}
+            </button>
+          </form>
         </section>
       </section>
     </main>

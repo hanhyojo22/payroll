@@ -22,6 +22,14 @@ export const isConnectivityFailure = (error: { code?: string; message?: string; 
   return CONNECTIVITY_FAILURE_PHRASES.some((phrase) => text.includes(phrase));
 };
 
+// Whether the login form's dedicated "incorrect email or password" inline message and red
+// field borders apply. Anything else (network, timeout, unconfirmed email) needs its own
+// accurate toast instead of being mislabeled as a wrong password.
+export const isInvalidCredentialsError = (error: { code?: string; message?: string } | null | undefined) => {
+  if (error?.code === "REQUEST_TIMEOUT") return false;
+  return (error?.message ?? "").toLowerCase().includes("invalid login credentials");
+};
+
 export const friendlyError = (
   error: AppError | null | undefined,
   fallback = "Something went wrong. Please try again.",
@@ -63,6 +71,12 @@ export const friendlyError = (
   }
   if (message.includes("email not confirmed")) {
     return "Please confirm your email before signing in.";
+  }
+  // Supabase's own SMTP relay failed to send, not something a retry from this form fixes.
+  // Whether the account itself was created is genuinely ambiguous from here, so say so
+  // rather than implying the admin did something wrong.
+  if (message.includes("error sending confirmation email")) {
+    return "The confirmation email could not be sent. Your account may or may not have been created — try signing in, and if that fails, check your Supabase project's email/SMTP configuration before trying again.";
   }
   if (isConnectivityFailure(error) && error?.code !== "REQUEST_TIMEOUT") {
     return "Unable to connect. Check your internet connection and Supabase settings.";
