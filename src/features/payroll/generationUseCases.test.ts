@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { savePayrollRun, validatePayrollGeneration } from "./generationUseCases";
+import { addMissingEmployeesToRun, savePayrollRun, validatePayrollGeneration } from "./generationUseCases";
 import { fakePayrollRepository } from "../../testing/fakes";
 import type { QueueOfflineMutation } from "../../shared/types";
 import type { AttendanceEntry, Employee, PayrollRun, Position } from "../../types";
@@ -106,7 +106,7 @@ const bundle = () => ({
   salaryBondTransactionPayloads: [],
 });
 
-function deps({ online = true } = {}) {
+function deps({ online = true, confirmed = true } = {}) {
   const payroll = fakePayrollRepository();
   return {
     repos: { payroll },
@@ -114,12 +114,19 @@ function deps({ online = true } = {}) {
     notify: {
       success: vi.fn((_message: string) => {}),
       error: vi.fn((_message: string) => {}),
-      confirm: vi.fn(async () => true),
+      confirm: vi.fn(async (_options: { title: string; message: string; danger?: boolean }) => confirmed),
     },
     isOnline: () => online,
     reload: vi.fn(async () => {}),
   };
 }
+
+const itemsBundle = () => ({
+  itemPayloads: [{ id: "i2", employee_id: "e2" }],
+  detailPayloads: [],
+  employeeAdvanceUpdates: [],
+  salaryBondTransactionPayloads: [],
+});
 
 describe("savePayrollRun", () => {
   it("queues the whole bundle when offline", async () => {
@@ -191,5 +198,79 @@ describe("savePayrollRun", () => {
     expect(result.outcome).toBe("failed");
     expect(d.queue).not.toHaveBeenCalled();
     expect(d.notify.error).toHaveBeenCalled();
+  });
+});
+
+describe("addMissingEmployeesToRun", () => {
+  it("does nothing when there are no missing employees", async () => {
+    const d = deps();
+    const saveSpy = vi.spyOn(d.repos.payroll, "saveItemsBundle");
+
+    const outcome = await addMissingEmployeesToRun(d, { missingEmployeeCount: 0, bundle: itemsBundle() });
+
+    expect(outcome).toBe("failed");
+    expect(d.notify.confirm).not.toHaveBeenCalled();
+    expect(saveSpy).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the confirmation is declined", async () => {
+    const d = deps({ confirmed: false });
+    const saveSpy = vi.spyOn(d.repos.payroll, "saveItemsBundle");
+
+    const outcome = await addMissingEmployeesToRun(d, { missingEmployeeCount: 1, bundle: itemsBundle() });
+
+    expect(outcome).toBe("failed");
+    expect(d.queue).not.toHaveBeenCalled();
+    expect(saveSpy).not.toHaveBeenCalled();
+  });
+
+  it("queues the items bundle when offline", async () => {
+    const d = deps({ online: false });
+    const outcome = await addMissingEmployeesToRun(d, { missingEmployeeCount: 1, bundle: itemsBundle() });
+
+    expect(outcome).toBe("queued");
+    expect(d.queue).toHaveBeenCalledTimes(1);
+    expect(d.queue.mock.calls[0][0]).toMatchObject({
+      operation: "payroll_items_group", table: "payroll_run_items",
+    });
+  });
+
+  it("saves through the repository when online", async () => {
+    const d = deps();
+    const outcome = await addMissingEmployeesToRun(d, { missingEmployeeCount: 1, bundle: itemsBundle() });
+
+    expect(outcome).toBe("saved");
+    expect(d.notify.success).toHaveBeenCalled();
+    expect(d.queue).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the queue on a connectivity failure", async () => {
+    const d = deps();
+    d.repos.payroll.failNext({ message: "Failed to fetch" });
+
+    const outcome = await addMissingEmployeesToRun(d, { missingEmployeeCount: 1, bundle: itemsBundle() });
+
+    expect(outcome).toBe("queued");
+    expect(d.queue).toHaveBeenCalledTimes(1);
+    expect(d.notify.error).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a server error without queueing", async () => {
+    const d = deps();
+    d.repos.payroll.failNext({ code: "42501", message: "row-level security" });
+
+    const outcome = await addMissingEmployeesToRun(d, { missingEmployeeCount: 1, bundle: itemsBundle() });
+
+    expect(outcome).toBe("failed");
+    expect(d.queue).not.toHaveBeenCalled();
+    expect(d.notify.error).toHaveBeenCalled();
+  });
+
+  it("pluralizes the confirmation and success messages correctly", async () => {
+    const d = deps();
+    await addMissingEmployeesToRun(d, { missingEmployeeCount: 2, bundle: itemsBundle() });
+
+    expect(d.notify.confirm.mock.calls[0][0].message).toContain("2 missing employees");
+    expect(d.notify.success.mock.calls[0][0]).toContain("2 employees added");
   });
 });

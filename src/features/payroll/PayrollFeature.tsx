@@ -21,7 +21,7 @@ import {
   markAllItemsPaid,
   type DeductionDeps,
 } from "./deductionUseCases";
-import { savePayrollRun, validatePayrollGeneration } from "./generationUseCases";
+import { addMissingEmployeesToRun, savePayrollRun, validatePayrollGeneration } from "./generationUseCases";
 import { salaryBondDeductionsForEmployee, salaryBondHasDeductionForItem } from "../../domain/salaryBonds";
 import { netPay, normalizeTicketCount, ticketGrossPay } from "../../domain/tickets";
 import { isOfflineLikeError } from "../../lib/offlineSync";
@@ -708,11 +708,6 @@ export function PayrollFeature({
 
   async function addMissingEmployees() {
     if (!selectedRun || missingEmployees.length === 0) return;
-    const confirmed = await NotificationService.showConfirm({
-      title: "Add missing employees",
-      message: `Add ${missingEmployees.length} missing employee${missingEmployees.length === 1 ? "" : "s"} to this payroll run?`,
-    });
-    if (!confirmed) return;
     const resolvedPayrollSettings = await resolvePayrollSettings();
     if (!resolvedPayrollSettings) {
       return;
@@ -755,46 +750,25 @@ export function PayrollFeature({
       itemPayloads: savedItemPayloads,
       items: savedItems,
     } = createOfflinePayrollItems(itemPayloads);
-    if (!navigator.onLine) {
+
+    const outcome = await addMissingEmployeesToRun(
+      { repos, queue: onQueueOfflineMutation, notify: notificationServiceNotifier, isOnline: () => navigator.onLine, reload: onChange },
+      {
+        missingEmployeeCount: missingEmployees.length,
+        bundle: { itemPayloads: savedItemPayloads, detailPayloads, employeeAdvanceUpdates, salaryBondTransactionPayloads },
+      },
+    );
+
+    if (outcome === "failed") return;
+
+    if (outcome === "queued") {
       onLocalPayrollRunsChange(payrollRuns.map((run) =>
         run.id === selectedRun.id ? { ...run, items: [...run.items, ...savedItems] } : run,
       ));
-      await onQueueOfflineMutation({
-        resource: "payrollRuns",
-        affectedResources: ["payrollRuns", "payrollHistory", "employeeAdvances", "salaryBonds", "dashboardSummary"],
-        operation: "payroll_items_group",
-        table: "payroll_run_items",
-        payload: { itemPayloads: savedItemPayloads, detailPayloads, employeeAdvanceUpdates, salaryBondTransactionPayloads },
-      });
       await syncPayrollExpense(selectedRun, [...selectedRun.items, ...itemPayloads]);
       return;
     }
-    const { error } = await repos.payroll.saveItemsBundle({
-      itemPayloads: savedItemPayloads,
-      detailPayloads,
-      employeeAdvanceUpdates,
-      salaryBondTransactionPayloads,
-    });
-    if (error) {
-      if (isOfflineLikeError(error)) {
-        onLocalPayrollRunsChange(payrollRuns.map((run) =>
-          run.id === selectedRun.id ? { ...run, items: [...run.items, ...savedItems] } : run,
-        ));
-        await onQueueOfflineMutation({
-          resource: "payrollRuns",
-          affectedResources: ["payrollRuns", "payrollHistory", "employeeAdvances", "salaryBonds", "dashboardSummary"],
-          operation: "payroll_items_group",
-          table: "payroll_run_items",
-          payload: { itemPayloads: savedItemPayloads, detailPayloads, employeeAdvanceUpdates, salaryBondTransactionPayloads },
-        });
-        await syncPayrollExpense(selectedRun, [...selectedRun.items, ...itemPayloads]);
-        return;
-      }
-      NotificationService.showError(friendlyError(error));
-      return;
-    }
 
-    NotificationService.showSuccess(`${missingEmployees.length} employee${missingEmployees.length === 1 ? "" : "s"} added to payroll.`);
     await syncPayrollExpense(selectedRun, [...selectedRun.items, ...itemPayloads]);
     await onChange();
   }

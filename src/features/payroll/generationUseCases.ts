@@ -1,4 +1,4 @@
-import type { PayrollBundle, PayrollRepository } from "../../core/ports/payroll";
+import type { PayrollBundle, PayrollItemsBundle, PayrollRepository } from "../../core/ports/payroll";
 import type { Notifier } from "../../core/ports/notifier";
 import { attendanceTotalsForEmployee } from "../../domain/payroll";
 import { isConnectivityFailure, friendlyError } from "../../shared/utils/errors";
@@ -121,4 +121,59 @@ export async function savePayrollRun(
 
   deps.notify.error(friendlyError(result.error));
   return { outcome: "failed" };
+}
+
+export type SaveItemsBundleOutcome = "saved" | "queued" | "failed";
+
+/**
+ * Adds newly-hired employees to a payroll run that was already generated before they joined
+ * the team. Same bundle-write/offline-queue/connectivity-fallback shape as savePayrollRun,
+ * but against payroll_run_items rather than payroll_runs -- there is no unique-key collision
+ * to recover from here, since this patches an existing, already-known run rather than
+ * creating a new one.
+ *
+ * "Nothing to add" and "declined" both resolve to "failed": the caller's job either way is to
+ * skip the follow-up sync and reload, and any real error is already reported here via notify.
+ */
+export async function addMissingEmployeesToRun(
+  deps: SavePayrollRunDeps,
+  input: { missingEmployeeCount: number; bundle: PayrollItemsBundle },
+): Promise<SaveItemsBundleOutcome> {
+  const { missingEmployeeCount, bundle } = input;
+  if (missingEmployeeCount === 0) return "failed";
+
+  const confirmed = await deps.notify.confirm({
+    title: "Add missing employees",
+    message: `Add ${missingEmployeeCount} missing employee${missingEmployeeCount === 1 ? "" : "s"} to this payroll run?`,
+  });
+  if (!confirmed) return "failed";
+
+  const queueBundle = async () => {
+    await deps.queue({
+      resource: "payrollRuns",
+      affectedResources: [...AFFECTED],
+      operation: "payroll_items_group",
+      table: "payroll_run_items",
+      payload: bundle,
+    });
+  };
+
+  if (!deps.isOnline()) {
+    await queueBundle();
+    return "queued";
+  }
+
+  const result = await deps.repos.payroll.saveItemsBundle(bundle);
+  if (!result.error) {
+    deps.notify.success(`${missingEmployeeCount} employee${missingEmployeeCount === 1 ? "" : "s"} added to payroll.`);
+    return "saved";
+  }
+
+  if (isConnectivityFailure(result.error)) {
+    await queueBundle();
+    return "queued";
+  }
+
+  deps.notify.error(friendlyError(result.error));
+  return "failed";
 }
