@@ -28,12 +28,14 @@ import { collectionAgingBucket } from "../domain/collections";
 import { isExpenseOverdue, isExpensePeriodDueToday } from "../domain/expenses";
 import type { Repositories } from "../core/ports";
 import { supabaseCollectionRepository } from "../adapters/supabase/collectionRepository";
-import { fetchSubcontractors } from "../features/billing/billingRepository";
-import { fetchSubconDailyTickets } from "../features/billing/subconTicketRepository";
+import {
+  supabaseSubconDailyTicketRepository,
+  supabaseSubcontractorAdvanceRepository,
+  supabaseSubcontractorRepository,
+} from "../adapters/supabase/billingRepository";
 import { supabaseExpenseCategoryRepository, supabaseExpenseRepository } from "../adapters/supabase/expenseRepository";
 import { supabaseEmployeeAdvanceRepository, supabaseSalaryBondRepository } from "../adapters/supabase/salaryBondRepository";
 import { supabasePayrollRepository } from "../adapters/supabase/payrollRepository";
-import { fetchSubcontractorAdvances } from "../features/subcontractors/subcontractorAdvanceRepository";
 import { todayKey } from "../shared/utils/dates";
 
 type AppErrorLike = { message?: string; details?: string | null; code?: string };
@@ -390,8 +392,8 @@ export async function loadSalaryBonds(supabase: SupabaseClient) {
 
 export async function loadSubcontractorAdvances(supabase: SupabaseClient) {
   try {
-    const result = await withTimeout(fetchSubcontractorAdvances(supabase), "Subcontractor advances");
-    return { data: result.data, error: result.error, label: "Subcontractor advances" };
+    const result = await withTimeout(supabaseSubcontractorAdvanceRepository(supabase).list(), "Subcontractor advances");
+    return { data: result.data ?? [], error: result.error, label: "Subcontractor advances" };
   } catch (error) {
     return { data: [] as SubcontractorAdvance[], error: error as AppErrorLike, label: "Subcontractor advances" };
   }
@@ -590,11 +592,11 @@ export async function loadBillingSettings(supabase: SupabaseClient) {
 }
 
 export async function loadSubcontractors(supabase: SupabaseClient) {
-  const result = await fetchSubcontractors(supabase);
-  return { data: result.data, error: result.error, label: "Subcontractors" };
+  const result = await supabaseSubcontractorRepository(supabase).list();
+  return { data: result.data ?? [], error: result.error, label: "Subcontractors" };
 }
 
 export async function loadSubconDailyTickets(supabase: SupabaseClient) {
-  const result = await fetchSubconDailyTickets(supabase);
-  return { data: result.data as SubconDailyTicket[], error: result.error, label: "Subcon daily tickets" };
+  const result = await supabaseSubconDailyTicketRepository(supabase).list();
+  return { data: result.data ?? [], error: result.error, label: "Subcon daily tickets" };
 }

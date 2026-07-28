@@ -1,3 +1,11 @@
+import type {
+  BillingRecordRepository,
+  BillingSettingsRepository,
+  PaymentReminderRepository,
+  SubconDailyTicketRepository,
+  SubcontractorAdvanceRepository,
+  SubcontractorRepository,
+} from "./billing";
 import type { CollectionRepository } from "./collections";
 import type { ExpenseCategoryRepository, ExpenseRepository } from "./expenses";
 import type { PayrollRepository } from "./payroll";
@@ -14,8 +22,27 @@ export type Repositories = {
   payroll: PayrollRepository;
   salaryBonds: SalaryBondRepository;
   employeeAdvances: EmployeeAdvanceRepository;
+  billingSettings: BillingSettingsRepository;
+  billingRecords: BillingRecordRepository;
+  subcontractors: SubcontractorRepository;
+  subconDailyTickets: SubconDailyTicketRepository;
+  subcontractorAdvances: SubcontractorAdvanceRepository;
+  paymentReminders: PaymentReminderRepository;
 };
 
+export type {
+  BillingRecordRepository,
+  BillingSettingsPayload,
+  BillingSettingsRepository,
+  PaymentReminderPaymentPayload,
+  PaymentReminderRepository,
+  SubconDailyTicketPayload,
+  SubconDailyTicketRepository,
+  SubcontractorAdvancePayload,
+  SubcontractorAdvanceRepository,
+  SubcontractorPayload,
+  SubcontractorRepository,
+} from "./billing";
 export type { CollectionRepository, RecordCollectionPaymentInput, SaveCollectionInput } from "./collections";
 export type {
   ExpenseCategoryPayload,

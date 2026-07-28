@@ -1,5 +1,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Repositories } from "../../core/ports";
+import {
+  supabaseBillingRecordRepository,
+  supabaseBillingSettingsRepository,
+  supabasePaymentReminderRepository,
+  supabaseSubconDailyTicketRepository,
+  supabaseSubcontractorAdvanceRepository,
+  supabaseSubcontractorRepository,
+} from "./billingRepository";
 import { supabaseCollectionRepository } from "./collectionRepository";
 import { supabaseExpenseCategoryRepository, supabaseExpenseRepository } from "./expenseRepository";
 import { supabasePayrollRepository } from "./payrollRepository";
@@ -17,5 +25,11 @@ export function createSupabaseRepositories(supabase: SupabaseClient): Repositori
     payroll: supabasePayrollRepository(supabase),
     salaryBonds: supabaseSalaryBondRepository(supabase),
     employeeAdvances: supabaseEmployeeAdvanceRepository(supabase),
+    billingSettings: supabaseBillingSettingsRepository(supabase),
+    billingRecords: supabaseBillingRecordRepository(supabase),
+    subcontractors: supabaseSubcontractorRepository(supabase),
+    subconDailyTickets: supabaseSubconDailyTicketRepository(supabase),
+    subcontractorAdvances: supabaseSubcontractorAdvanceRepository(supabase),
+    paymentReminders: supabasePaymentReminderRepository(supabase),
   };
 }

@@ -39,14 +39,8 @@ import type {
   SubconDailyTicket,
   Subcontractor,
 } from "../../types";
-import {
-  deleteBillingRecord,
-  ensureBillingSettings,
-  recordPaymentReminderPayment,
-  saveBillingSettings,
-  updatePaymentReminderCompletion,
-} from "./billingRepository";
 import { useRepositories } from "../../app/RepositoriesProvider";
+import type { Repositories } from "../../core/ports";
 
 function collectionStatusForRecord(record: BillingRecord, collections: CollectionReminder[], collectionId: string | null): string {
   if (!collectionId) return "-";
@@ -109,10 +103,10 @@ export function BillingFeature({
 
   useEffect(() => {
     if (!supabase || settings) return;
-    void ensureBillingSettings(supabase, userId).then(({ data }) => {
+    void repos.billingSettings.ensure(userId).then(({ data }) => {
       if (data) setSettings(data);
     });
-  }, [settings, userId]);
+  }, [settings, userId, repos]);
 
   useEffect(() => {
     const found = expenseCategories.find((category) => category.type === "company" && category.name === SUBCONTRACTOR_PAYOUT_EXPENSE_CATEGORY_NAME);
@@ -712,15 +706,13 @@ export function BillingFeature({
   }
 
   async function removeBilling(record: BillingRecord) {
-    if (!supabase) return;
     const confirmed = await NotificationService.showConfirm({
       title: "Delete billing record",
       message: "Delete this billing record? This also removes its linked collections. This action cannot be undone.",
       danger: true,
     });
     if (!confirmed) return;
-    const result = await deleteBillingRecord(
-      supabase,
+    const result = await repos.billingRecords.delete(
       record.id,
       record.collection_id,
       record.collectibles_collection_id ?? null,
@@ -945,7 +937,7 @@ export function BillingFeature({
                                               View account
                                             </button>
                                             {itemPayments.filter((payment) => payment.status === "pending").map((payment) => (
-                                              <button key={payment.id} onClick={() => void markPayoutPaid(payment, userId, onChange)} type="button">
+                                              <button key={payment.id} onClick={() => void markPayoutPaid(payment, userId, repos, onChange)} type="button">
                                                 {payment.payout_leg === "remainder" ? "Mark 2nd paid" : "Mark paid"}
                                               </button>
                                             ))}
@@ -1165,16 +1157,16 @@ function billingPaidState(status: string): "paid" | "pending" {
 async function markPayoutPaid(
   payment: PaymentReminder,
   userId: string,
+  repos: Pick<Repositories, "paymentReminders">,
   onChange: () => Promise<void>,
 ) {
-  if (!supabase) return;
   const remainingBalance = paymentReminderRemainingBalance(payment, payment.payments);
   const confirmed = await NotificationService.showConfirm({
     title: "Mark payout as paid",
     message: `Record a full payment of ${currency.format(remainingBalance)} for ${payment.title}?`,
   });
   if (!confirmed) return;
-  const paymentResult = await recordPaymentReminderPayment(supabase, userId, payment.id, {
+  const paymentResult = await repos.paymentReminders.recordPayment(userId, payment.id, {
     amount: remainingBalance,
     payment_date: todayKey(),
     payment_method: "cash",
@@ -1185,7 +1177,7 @@ async function markPayoutPaid(
     NotificationService.showError((paymentResult.error as { message?: string }).message ?? "Failed to record the payment.");
     return;
   }
-  const completionResult = await updatePaymentReminderCompletion(supabase, payment.id, "paid");
+  const completionResult = await repos.paymentReminders.updateCompletion(payment.id, "paid");
   if (completionResult.error) {
     NotificationService.showError((completionResult.error as { message?: string }).message ?? "Payment recorded, but failed to mark the payout complete.");
     await onChange();
@@ -2478,17 +2470,18 @@ export function BillingSettingsManager({
   userId: string;
 }) {
   const [settings, setSettings] = useState<BillingSettings | null>(billingSettings);
+  const repos = useRepositories();
 
   useEffect(() => {
     setSettings(billingSettings);
   }, [billingSettings]);
 
   useEffect(() => {
-    if (!supabase || settings) return;
-    void ensureBillingSettings(supabase, userId).then(({ data }) => {
+    if (settings) return;
+    void repos.billingSettings.ensure(userId).then(({ data }) => {
       if (data) setSettings(data);
     });
-  }, [settings, userId]);
+  }, [settings, userId, repos]);
 
   async function updateSettings(payload: {
     installation_rate: number;
@@ -2497,8 +2490,7 @@ export function BillingSettingsManager({
     collections_pct: number;
     client_name: string;
   }) {
-    if (!supabase) return;
-    const result = await saveBillingSettings(supabase, userId, payload);
+    const result = await repos.billingSettings.save(userId, payload);
     if (result.error) {
       NotificationService.showError("Failed to save settings.");
       return;

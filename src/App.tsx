@@ -73,8 +73,6 @@ import {
 import { clearOfflineDataForUser, discardFailedMutations, getPendingMutations, queueMutation, readCachedResource, retryFailedMutations, writeCachedResource } from "./lib/offlineDb";
 import { flushPendingMutations, isOfflineLikeError } from "./lib/offlineSync";
 import { BillingFeature, BillingSettingsManager } from "./features/billing/BillingFeature";
-import { saveSubcontractor } from "./features/billing/billingRepository";
-import { saveSubconDailyTicket } from "./features/billing/subconTicketRepository";
 import { CollectionHistoryFeature, CollectionsFeature } from "./features/collections/CollectionsFeature";
 import { normalizeReceivable } from "./features/collections/mapping";
 import { ExpenseCategoriesManager, ExpensesFeature } from "./features/expenses/ExpensesFeature";
@@ -3321,6 +3319,7 @@ function SubconDailyTicketView({
   subcontractors: Subcontractor[];
   userId: string;
 }) {
+  const repos = useRepositories();
   const [entryDate, setEntryDate] = useState(todayKey());
   const [drafts, setDrafts] = useState<Record<string, { install: number; repair: number; napRehab: number; disputedInstall: number; disputedRepair: number; disputedNapRehab: number }>>({});
   const [busySubconId, setBusySubconId] = useState("");
@@ -3440,7 +3439,6 @@ function SubconDailyTicketView({
   }
 
   async function saveRow(subcontractor: Subcontractor) {
-    if (!supabase) return;
     setBusySubconId(subcontractor.id);
     const currentDraft = draftValuesFor(subcontractor.id);
     const payload = {
@@ -3475,7 +3473,7 @@ function SubconDailyTicketView({
       return;
     }
 
-    const result = await saveSubconDailyTicket(supabase, payload);
+    const result = await repos.subconDailyTickets.save(payload);
     if (result.error) {
       if (isOfflineLikeError(result.error)) {
         await onQueueOfflineMutation({

@@ -16,7 +16,6 @@ import {
   SUBCONTRACTOR_PAYOUT_EXPENSE_CATEGORY_NAME,
   validatePaymentReminderPayment,
 } from "../../domain/paymentReminders";
-import { deletePaymentReminderPayment, saveSubcontractor, updatePaymentReminderCompletion } from "../billing/billingRepository";
 import { supabase } from "../../supabase";
 import { DataTable } from "../../shared/components/DataTable";
 import { RequiredMark, TextField } from "../../shared/components/FormLayout";
@@ -154,7 +153,6 @@ export function SubcontractorsFeature({
   }, [summaries]);
 
   async function toggleArchive(subcontractor: Subcontractor) {
-    if (!supabase) return;
     const nextStatus = subcontractor.status === "active" ? "archived" : "active";
     const confirmed = await NotificationService.showConfirm({
       title: nextStatus === "archived" ? "Archive subcontractor" : "Restore subcontractor",
@@ -163,7 +161,7 @@ export function SubcontractorsFeature({
         : `Restore ${subcontractor.name} to active status?`,
     });
     if (!confirmed) return;
-    const result = await saveSubcontractor(supabase, userId, {
+    const result = await repos.subcontractors.save(userId, {
       id: subcontractor.id,
       name: subcontractor.name,
       installation_rate: subcontractor.installation_rate,
@@ -474,7 +472,6 @@ function SubcontractorDetailsView({
 
   async function saveAdvance(event: FormEvent) {
     event.preventDefault();
-    if (!supabase) return;
     const amount = Number(advanceForm.amount) || 0;
     const balance = editingAdvance ? Number(editingAdvance.balance) || 0 : amount;
     const deductionPerBilling = advanceForm.deduction_mode === "per_billing"
@@ -518,9 +515,7 @@ function SubcontractorDetailsView({
       return;
     }
 
-    const result = editingAdvance
-      ? await supabase.from("subcontractor_advances").update(payload).eq("id", editingAdvance.id)
-      : await supabase.from("subcontractor_advances").insert(payload);
+    const result = await repos.subcontractorAdvances.save(payload, editingAdvance?.id);
     setAdvanceBusy(false);
     if (result.error) {
       NotificationService.showError((result.error as { message?: string }).message ?? "Failed to save cash advance.");
@@ -631,7 +626,6 @@ function SubcontractorDetailsView({
   }
 
   async function handleDeletePayoutPayment(payment: PaymentReminder, paymentRecord: PaymentReminderPayment) {
-    if (!supabase) return;
     const confirmed = await NotificationService.showConfirm({
       message: "Delete this recorded payment?",
       danger: true,
@@ -682,7 +676,7 @@ function SubcontractorDetailsView({
       return;
     }
 
-    const deleteResult = await deletePaymentReminderPayment(supabase, paymentRecord.id);
+    const deleteResult = await repos.paymentReminders.deletePayment(paymentRecord.id);
     if (deleteResult.error) {
       NotificationService.showError((deleteResult.error as { message?: string }).message ?? "Failed to delete that payment.");
       return;
@@ -709,7 +703,7 @@ function SubcontractorDetailsView({
       }
     }
     if (shouldRevert) {
-      const completionResult = await updatePaymentReminderCompletion(supabase, payment.id, "pending");
+      const completionResult = await repos.paymentReminders.updateCompletion(payment.id, "pending");
       if (completionResult.error) {
         NotificationService.showError((completionResult.error as { message?: string }).message ?? "Deleted, but failed to revert the payout status.");
         await onChange();
@@ -1340,12 +1334,13 @@ function SubcontractorProfileModal({
   });
   const [busy, setBusy] = useState(false);
   const { backdropProps, dialogProps } = useDialog({ label: `${initial ? "Edit" : "Add"} subcontractor`, onClose });
+  const repos = useRepositories();
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if (!supabase || !values.name.trim()) return;
+    if (!values.name.trim()) return;
     setBusy(true);
-    const result = await saveSubcontractor(supabase, userId, {
+    const result = await repos.subcontractors.save(userId, {
       id: initial?.id,
       name: values.name.trim(),
       installation_rate: Number(values.installation_rate) || 0,

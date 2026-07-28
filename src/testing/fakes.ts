@@ -1,10 +1,18 @@
+import type {
+  BillingRecordRepository,
+  BillingSettingsRepository,
+  PaymentReminderRepository,
+  SubconDailyTicketRepository,
+  SubcontractorAdvanceRepository,
+  SubcontractorRepository,
+} from "../core/ports/billing";
 import type { CollectionRepository, RecordCollectionPaymentInput, SaveCollectionInput } from "../core/ports/collections";
 import type { ExpenseCategoryRepository, ExpenseRepository } from "../core/ports/expenses";
 import type { PayrollRepository } from "../core/ports/payroll";
 import type { EmployeeAdvanceRepository, SalaryBondRepository } from "../core/ports/salaryBonds";
 import { err, ok, type Result } from "../core/ports/result";
 import { withCollectionTotals } from "../domain/collections";
-import type { CollectionPayment, CollectionReminder, Expense, ExpenseCategory, PayrollHistoryRow, PayrollRunItem, PayrollRunWithItems, PayrollSettings, EmployeeAdvance, SalaryBond } from "../types";
+import type { BillingSettings, CollectionPayment, CollectionReminder, Expense, ExpenseCategory, PayrollHistoryRow, PayrollRunItem, PayrollRunWithItems, PayrollSettings, EmployeeAdvance, PaymentReminderPayment, SalaryBond, SubconDailyTicket, Subcontractor, SubcontractorAdvance } from "../types";
 import type { AppError } from "../shared/types";
 
 export type FakeCollectionRepository = CollectionRepository & {
@@ -576,6 +584,278 @@ export function fakeEmployeeAdvanceRepository(): FakeEmployeeAdvanceRepository {
         const update = updates.find((item) => item.id === row.id);
         return update ? { ...row, balance: update.balance, status: update.status } : row;
       });
+      return ok(undefined);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Billing and subcontractors
+// ---------------------------------------------------------------------------
+
+export type FakeBillingSettingsRepository = BillingSettingsRepository & {
+  failNext(error: AppError): void;
+  seed(settings: BillingSettings): void;
+};
+
+export function fakeBillingSettingsRepository(): FakeBillingSettingsRepository {
+  let current: BillingSettings | null = null;
+  let pendingFailure: AppError | null = null;
+
+  function takeFailure<T>(): Result<T> | null {
+    if (!pendingFailure) return null;
+    const failure = pendingFailure;
+    pendingFailure = null;
+    return err<T>(failure);
+  }
+
+  return {
+    failNext(error) {
+      pendingFailure = error;
+    },
+    seed(settings) {
+      current = settings;
+    },
+
+    async ensure(userId) {
+      const failure = takeFailure<BillingSettings>();
+      if (failure) return failure;
+      if (current) return ok(current);
+      const now = new Date().toISOString();
+      current = {
+        id: crypto.randomUUID(), user_id: userId, installation_rate: 0, repair_rate: 0,
+        nap_rehab_rate: 0, collections_pct: 70, client_name: "", created_at: now, updated_at: now,
+      };
+      return ok(current);
+    },
+
+    async save(userId, payload) {
+      const failure = takeFailure<void>();
+      if (failure) return failure;
+      const now = new Date().toISOString();
+      current = { ...(current ?? { id: crypto.randomUUID(), user_id: userId, created_at: now }), ...payload, user_id: userId, updated_at: now } as BillingSettings;
+      return ok(undefined);
+    },
+  };
+}
+
+export type FakeBillingRecordRepository = BillingRecordRepository & {
+  failNext(error: AppError): void;
+  deleted(): string[];
+};
+
+export function fakeBillingRecordRepository(): FakeBillingRecordRepository {
+  let deletedIds: string[] = [];
+  let pendingFailure: AppError | null = null;
+
+  function takeFailure<T>(): Result<T> | null {
+    if (!pendingFailure) return null;
+    const failure = pendingFailure;
+    pendingFailure = null;
+    return err<T>(failure);
+  }
+
+  return {
+    failNext(error) {
+      pendingFailure = error;
+    },
+    deleted() {
+      return deletedIds;
+    },
+
+    async delete(id) {
+      const failure = takeFailure<void>();
+      if (failure) return failure;
+      deletedIds = [...deletedIds, id];
+      return ok(undefined);
+    },
+  };
+}
+
+export type FakeSubcontractorRepository = SubcontractorRepository & {
+  failNext(error: AppError): void;
+  seed(subcontractors: Subcontractor[]): void;
+};
+
+export function fakeSubcontractorRepository(): FakeSubcontractorRepository {
+  let rows: Subcontractor[] = [];
+  let pendingFailure: AppError | null = null;
+
+  function takeFailure<T>(): Result<T> | null {
+    if (!pendingFailure) return null;
+    const failure = pendingFailure;
+    pendingFailure = null;
+    return err<T>(failure);
+  }
+
+  return {
+    failNext(error) {
+      pendingFailure = error;
+    },
+    seed(subcontractors) {
+      rows = [...subcontractors];
+    },
+
+    async list() {
+      return takeFailure<Subcontractor[]>() ?? ok(rows);
+    },
+
+    async save(userId, payload) {
+      const failure = takeFailure<void>();
+      if (failure) return failure;
+      const now = new Date().toISOString();
+      const existing = payload.id ? rows.find((row) => row.id === payload.id) : undefined;
+      const next: Subcontractor = {
+        ...payload,
+        id: payload.id ?? crypto.randomUUID(),
+        user_id: userId,
+        status: payload.status as Subcontractor["status"],
+        created_at: existing?.created_at ?? now,
+        updated_at: now,
+      };
+      rows = existing ? rows.map((row) => row.id === next.id ? next : row) : [...rows, next];
+      return ok(undefined);
+    },
+  };
+}
+
+export type FakeSubconDailyTicketRepository = SubconDailyTicketRepository & {
+  failNext(error: AppError): void;
+  seed(tickets: SubconDailyTicket[]): void;
+};
+
+export function fakeSubconDailyTicketRepository(): FakeSubconDailyTicketRepository {
+  let rows: SubconDailyTicket[] = [];
+  let pendingFailure: AppError | null = null;
+
+  function takeFailure<T>(): Result<T> | null {
+    if (!pendingFailure) return null;
+    const failure = pendingFailure;
+    pendingFailure = null;
+    return err<T>(failure);
+  }
+
+  return {
+    failNext(error) {
+      pendingFailure = error;
+    },
+    seed(tickets) {
+      rows = [...tickets];
+    },
+
+    async list() {
+      return takeFailure<SubconDailyTicket[]>() ?? ok(rows);
+    },
+
+    async save(payload) {
+      const failure = takeFailure<void>();
+      if (failure) return failure;
+      const now = new Date().toISOString();
+      const existing = rows.find((row) =>
+        row.user_id === payload.user_id && row.entry_date === payload.entry_date && row.subcontractor_id === payload.subcontractor_id);
+      const next: SubconDailyTicket = { ...payload, created_at: existing?.created_at ?? now, updated_at: now };
+      rows = existing ? rows.map((row) => row.id === existing.id ? next : row) : [...rows, next];
+      return ok(undefined);
+    },
+  };
+}
+
+export type FakeSubcontractorAdvanceRepository = SubcontractorAdvanceRepository & {
+  failNext(error: AppError): void;
+  seed(advances: SubcontractorAdvance[]): void;
+};
+
+export function fakeSubcontractorAdvanceRepository(): FakeSubcontractorAdvanceRepository {
+  let rows: SubcontractorAdvance[] = [];
+  let pendingFailure: AppError | null = null;
+
+  function takeFailure<T>(): Result<T> | null {
+    if (!pendingFailure) return null;
+    const failure = pendingFailure;
+    pendingFailure = null;
+    return err<T>(failure);
+  }
+
+  return {
+    failNext(error) {
+      pendingFailure = error;
+    },
+    seed(advances) {
+      rows = [...advances];
+    },
+
+    async list() {
+      return takeFailure<SubcontractorAdvance[]>() ?? ok(rows);
+    },
+
+    async save(payload, id) {
+      const failure = takeFailure<void>();
+      if (failure) return failure;
+      const now = new Date().toISOString();
+      const existing = id ? rows.find((row) => row.id === id) : undefined;
+      const next = {
+        ...payload,
+        id: id ?? crypto.randomUUID(),
+        created_at: existing?.created_at ?? now,
+        updated_at: now,
+      } as SubcontractorAdvance;
+      rows = existing ? rows.map((row) => row.id === next.id ? next : row) : [next, ...rows];
+      return ok(undefined);
+    },
+  };
+}
+
+export type FakePaymentReminderRepository = PaymentReminderRepository & {
+  failNext(error: AppError): void;
+  payments(): PaymentReminderPayment[];
+  completions(): Record<string, "pending" | "paid">;
+};
+
+export function fakePaymentReminderRepository(): FakePaymentReminderRepository {
+  let rows: PaymentReminderPayment[] = [];
+  let completionByReminderId: Record<string, "pending" | "paid"> = {};
+  let pendingFailure: AppError | null = null;
+
+  function takeFailure<T>(): Result<T> | null {
+    if (!pendingFailure) return null;
+    const failure = pendingFailure;
+    pendingFailure = null;
+    return err<T>(failure);
+  }
+
+  return {
+    failNext(error) {
+      pendingFailure = error;
+    },
+    payments() {
+      return rows;
+    },
+    completions() {
+      return completionByReminderId;
+    },
+
+    async recordPayment(userId, paymentReminderId, payload) {
+      const failure = takeFailure<PaymentReminderPayment>();
+      if (failure) return failure;
+      const created: PaymentReminderPayment = {
+        id: crypto.randomUUID(), user_id: userId, payment_reminder_id: paymentReminderId,
+        ...payload, created_at: new Date().toISOString(),
+      };
+      rows = [...rows, created];
+      return ok(created);
+    },
+
+    async deletePayment(paymentId) {
+      const failure = takeFailure<void>();
+      if (failure) return failure;
+      rows = rows.filter((row) => row.id !== paymentId);
+      return ok(undefined);
+    },
+
+    async updateCompletion(paymentReminderId, status) {
+      const failure = takeFailure<void>();
+      if (failure) return failure;
+      completionByReminderId = { ...completionByReminderId, [paymentReminderId]: status };
       return ok(undefined);
     },
   };
