@@ -11355,7 +11355,7 @@ td {
     overflow-x: visible;
   }
 
-  .billing-subcon-form-table {
+  .billing-subcon-form-scroll .billing-subcon-form-table {
     background: transparent;
     border: none;
     box-shadow: none;
