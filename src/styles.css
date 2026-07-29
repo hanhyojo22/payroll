@@ -10001,7 +10001,7 @@ td {
   text-align: center;
 }
 
-.billing-subcon-mobile-group-label {
+.billing-subcon-form-row .billing-subcon-mobile-group-label {
   display: none;
 }
 
@@ -11398,7 +11398,7 @@ td {
     font-size: 10.5px;
   }
 
-  .billing-subcon-mobile-group-label {
+  .billing-subcon-form-row .billing-subcon-mobile-group-label {
     color: var(--color-text-tertiary);
     display: block;
     font-size: 10px;
