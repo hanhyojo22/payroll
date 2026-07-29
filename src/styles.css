@@ -11463,6 +11463,20 @@ td {
   .billing-subcon-amount-payable::before {
     content: "Collectibles Amount";
   }
+
+  /* Billable Summary invoice table (New Billing): a little extra breathing
+     room at narrow phone widths so the Description column doesn't crowd
+     the numeric columns. Column layout is intentionally unchanged — this
+     is a real client-facing billing statement. */
+  .cbf-invoice-table thead th {
+    font-size: 10px;
+    padding: 8px 6px;
+  }
+
+  .cbf-invoice-table td {
+    font-size: 12px;
+    padding: 8px 6px;
+  }
 }
 
 .billing-settings-body {
