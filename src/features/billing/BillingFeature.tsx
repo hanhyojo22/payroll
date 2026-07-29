@@ -2274,10 +2274,12 @@ function BillingForm({
                             <span>Repair rate: {currency.format(Number(item.repair_rate) || 0)}</span>
                             <span>Nap Rehab rate: {currency.format(Number(item.nap_rehab_rate) || 0)}</span>
                           </div>
-                          <div className="billing-subcon-inline-values"><span>{item.install_tickets}</span></div>
-                          <div className="billing-subcon-inline-values"><span>{item.repair_tickets}</span></div>
-                          <div className="billing-subcon-inline-values"><span>{item.nap_rehab_tickets}</span></div>
-                          <div className="billing-subcon-dispute-cell">
+                          <span className="billing-subcon-mobile-group-label">Tickets</span>
+                          <div className="billing-subcon-inline-values" data-label="Ins"><span>{item.install_tickets}</span></div>
+                          <div className="billing-subcon-inline-values" data-label="Rep"><span>{item.repair_tickets}</span></div>
+                          <div className="billing-subcon-inline-values" data-label="NR"><span>{item.nap_rehab_tickets}</span></div>
+                          <span className="billing-subcon-mobile-group-label">Disputed</span>
+                          <div className="billing-subcon-dispute-cell" data-label="Ins">
                             <input
                               disabled={itemInstallTickets === 0}
                               max={itemInstallTickets}
@@ -2287,7 +2289,7 @@ function BillingForm({
                               onChange={(event) => updateSubconItem(index, { disputed_install: String(Math.max(0, Math.min(itemInstallTickets, Number(event.target.value) || 0))) })}
                             />
                           </div>
-                          <div className="billing-subcon-dispute-cell">
+                          <div className="billing-subcon-dispute-cell" data-label="Rep">
                             <input
                               disabled={itemRepairTickets === 0}
                               max={itemRepairTickets}
@@ -2297,7 +2299,7 @@ function BillingForm({
                               onChange={(event) => updateSubconItem(index, { disputed_repair: String(Math.max(0, Math.min(itemRepairTickets, Number(event.target.value) || 0))) })}
                             />
                           </div>
-                          <div className="billing-subcon-dispute-cell">
+                          <div className="billing-subcon-dispute-cell" data-label="NR">
                             <input
                               disabled={itemNapRehabTickets === 0}
                               max={itemNapRehabTickets}

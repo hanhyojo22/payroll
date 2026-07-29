@@ -10001,6 +10001,10 @@ td {
   text-align: center;
 }
 
+.billing-subcon-mobile-group-label {
+  display: none;
+}
+
 .subcon-details {
   background: transparent;
   display: grid;
@@ -11341,46 +11345,107 @@ td {
   .billing-employee-reference-table col.col-tot { width: 10%; }
   .billing-employee-reference-table col.col-gross { width: 24%; }
 
-  /* Subcontractor Tickets grid (New Billing): same goal as the employee
-     table above — every column visible at once, no horizontal scroll. */
+  /* Subcontractor Tickets (New Billing): each subcontractor becomes a
+     self-contained card on mobile instead of a row in the 9-column grid,
+     so nothing requires horizontal scrolling and the dispute inputs are
+     large enough to tap comfortably (44px, matching this wizard's other
+     number inputs). */
   .billing-subcon-form-scroll {
-    overflow-x: auto;
+    margin: 0;
+    overflow-x: visible;
   }
 
-  .billing-subcon-form-head,
-  .billing-subcon-form-row {
-    column-gap: 3px;
-    grid-template-columns: 1.5fr repeat(3, 0.55fr) repeat(3, 0.85fr) repeat(2, 1fr);
-    min-width: 720px;
-    padding: 8px 4px;
+  .billing-subcon-form-table {
+    background: transparent;
+    border: none;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
   }
 
   .billing-subcon-form-head {
-    font-size: 8px;
-  }
-
-  .billing-subcon-name-cell strong {
-    font-size: 10.5px;
-  }
-
-  .billing-subcon-name-cell span {
     display: none;
   }
 
-  .billing-subcon-inline-values span {
+  .billing-subcon-form-row {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border-light);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
+    column-gap: 8px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    min-width: 0;
+    padding: 14px;
+    row-gap: 10px;
+  }
+
+  .billing-subcon-form-row + .billing-subcon-form-row {
+    border-top: none;
+  }
+
+  .billing-subcon-name-cell,
+  .billing-subcon-amount {
+    grid-column: 1 / -1;
+  }
+
+  .billing-subcon-name-cell strong {
+    font-size: 13px;
+  }
+
+  .billing-subcon-name-cell span {
+    display: block;
     font-size: 10.5px;
   }
 
+  .billing-subcon-mobile-group-label {
+    color: var(--color-text-tertiary);
+    display: block;
+    font-size: 10px;
+    font-weight: 700;
+    grid-column: 1 / -1;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .billing-subcon-inline-values,
+  .billing-subcon-dispute-cell {
+    align-items: center;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .billing-subcon-inline-values::after,
+  .billing-subcon-dispute-cell::after {
+    color: var(--color-text-tertiary);
+    content: attr(data-label);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+
+  .billing-subcon-inline-values span {
+    font-size: 13px;
+  }
+
   .billing-subcon-dispute-cell input {
-    font-size: 10.5px;
-    min-height: 30px;
-    padding: 0 2px;
+    font-size: 13px;
+    min-height: 44px;
+    padding: 0 4px;
     text-align: center;
     width: 100%;
   }
 
+  .billing-subcon-amount {
+    align-items: center;
+    display: flex;
+    justify-content: space-between;
+    text-align: left;
+  }
+
   .billing-subcon-amount strong {
-    font-size: 10px;
+    font-size: 13px;
     overflow-wrap: anywhere;
   }
 
@@ -11388,8 +11453,16 @@ td {
     display: none;
   }
 
-  .billing-subcon-form-head .tbl-label-full { display: none; }
-  .billing-subcon-form-head .tbl-label-abbr { display: inline; }
+  .billing-subcon-amount::before {
+    color: var(--color-text-secondary);
+    content: "Net Amount";
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .billing-subcon-amount-payable::before {
+    content: "Collectibles Amount";
+  }
 }
 
 .billing-settings-body {
