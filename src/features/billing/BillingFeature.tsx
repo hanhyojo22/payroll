@@ -1854,7 +1854,7 @@ function BillingForm({
   const billingAmount = clientTotals.billingAmount;
   const collectionsAmount = clientTotals.collectionsAmount;
   const collectiblesAmount = clientTotals.collectiblesAmount;
-  const totalSubconNet = values.subcon_items.reduce((sum, item) => {
+  const subconGrandTotals = values.subcon_items.reduce((totals, item) => {
     const computed = computeSubconItem(
       Number(item.install_tickets) || 0,
       Number(item.repair_tickets) || 0,
@@ -1867,8 +1867,12 @@ function BillingForm({
       Number(item.disputed_nap_rehab) || 0,
       Number(item.nap_rehab_rate) || 0,
     );
-    return sum + computed.payableAmount;
-  }, 0);
+    return {
+      netAmount: totals.netAmount + computed.billingAmount,
+      payableAmount: totals.payableAmount + computed.payableAmount,
+    };
+  }, { netAmount: 0, payableAmount: 0 });
+  const totalSubconNet = subconGrandTotals.payableAmount;
 
   function updateSubconItem(index: number, patch: Partial<BillingFormValues["subcon_items"][number]>) {
     setValues((current) => ({
@@ -2323,6 +2327,13 @@ function BillingForm({
                   )}
                 </div>
                 </div>
+                {values.subcon_items.length > 0 && (
+                  <div className="cbf-invoice-note billing-subcon-totals">
+                    <span className="cbf-invoice-note-label">Subcontractor Totals</span>
+                    <div className="cbf-invoice-note-row"><span>Net Amount</span><span>{currency.format(subconGrandTotals.netAmount)}</span></div>
+                    <div className="cbf-invoice-note-row"><span>Collectibles Amount</span><span>{currency.format(subconGrandTotals.payableAmount)}</span></div>
+                  </div>
+                )}
               </section>
             </div>
           )}
