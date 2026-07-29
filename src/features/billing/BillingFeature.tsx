@@ -2366,30 +2366,30 @@ function BillingForm({
                   </thead>
                   <tbody>
                     <tr>
-                      <td className="cbf-invoice-desc">Installation Tickets</td>
-                      <td className="cbf-invoice-num">{billableInstall}</td>
-                      <td className="cbf-invoice-num">{currency.format(effectiveInstallationRate)}</td>
-                      <td className="cbf-invoice-num">{currency.format(billableInstall * effectiveInstallationRate)}</td>
+                      <td className="cbf-invoice-desc" data-label="Description">Installation Tickets</td>
+                      <td className="cbf-invoice-num" data-label="Quantity">{billableInstall}</td>
+                      <td className="cbf-invoice-num" data-label="Unit Price">{currency.format(effectiveInstallationRate)}</td>
+                      <td className="cbf-invoice-num" data-label="Total">{currency.format(billableInstall * effectiveInstallationRate)}</td>
                     </tr>
                     <tr>
-                      <td className="cbf-invoice-desc">Repair Tickets</td>
-                      <td className="cbf-invoice-num">{billableRepair}</td>
-                      <td className="cbf-invoice-num">{currency.format(effectiveRepairRate)}</td>
-                      <td className="cbf-invoice-num">{currency.format(billableRepair * effectiveRepairRate)}</td>
+                      <td className="cbf-invoice-desc" data-label="Description">Repair Tickets</td>
+                      <td className="cbf-invoice-num" data-label="Quantity">{billableRepair}</td>
+                      <td className="cbf-invoice-num" data-label="Unit Price">{currency.format(effectiveRepairRate)}</td>
+                      <td className="cbf-invoice-num" data-label="Total">{currency.format(billableRepair * effectiveRepairRate)}</td>
                     </tr>
                     <tr>
-                      <td className="cbf-invoice-desc">Nap Rehab Tickets</td>
-                      <td className="cbf-invoice-num">{billableNapRehab}</td>
-                      <td className="cbf-invoice-num">{currency.format(effectiveNapRehabRate)}</td>
-                      <td className="cbf-invoice-num">{currency.format(billableNapRehab * effectiveNapRehabRate)}</td>
+                      <td className="cbf-invoice-desc" data-label="Description">Nap Rehab Tickets</td>
+                      <td className="cbf-invoice-num" data-label="Quantity">{billableNapRehab}</td>
+                      <td className="cbf-invoice-num" data-label="Unit Price">{currency.format(effectiveNapRehabRate)}</td>
+                      <td className="cbf-invoice-num" data-label="Total">{currency.format(billableNapRehab * effectiveNapRehabRate)}</td>
                     </tr>
                     <tr className="cbf-invoice-subtotal-row">
                       <td colSpan={3}>Subtotal</td>
-                      <td className="cbf-invoice-num">{currency.format(billingAmount)}</td>
+                      <td className="cbf-invoice-num" data-label="Amount">{currency.format(billingAmount)}</td>
                     </tr>
                     <tr className="cbf-invoice-grand-row">
                       <td colSpan={3}>Total Amount Due</td>
-                      <td className="cbf-invoice-num">{currency.format(billingAmount)}</td>
+                      <td className="cbf-invoice-num" data-label="Amount">{currency.format(billingAmount)}</td>
                     </tr>
                   </tbody>
                 </table>

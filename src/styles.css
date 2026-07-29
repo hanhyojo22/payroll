@@ -11358,9 +11358,11 @@ td {
   .billing-subcon-form-table {
     background: transparent;
     border: none;
+    box-shadow: none;
     display: flex;
     flex-direction: column;
     gap: 10px;
+    overflow: visible;
   }
 
   .billing-subcon-form-head {
@@ -11378,10 +11380,6 @@ td {
     min-width: 0;
     padding: 14px;
     row-gap: 10px;
-  }
-
-  .billing-subcon-form-row + .billing-subcon-form-row {
-    border-top: none;
   }
 
   .billing-subcon-name-cell,
@@ -11476,6 +11474,10 @@ td {
   .cbf-invoice-table td {
     font-size: 12px;
     padding: 8px 6px;
+  }
+
+  .cbf-invoice-grand-row td {
+    font-size: 0.95rem;
   }
 }
 
