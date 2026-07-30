@@ -2814,14 +2814,6 @@ export function DailyTicketEntryView({
             <span className="subcon-ticket-stat-helper">Nap Rehab count for current billing period</span>
           </div>
         </div>
-        <div className="subcon-ticket-stat">
-          <div className="subcon-ticket-stat-icon"><Wrench size={20} /></div>
-          <div className="subcon-ticket-stat-text">
-            <span>Closed Nap Rehab Tickets</span>
-            <strong>{totalNapRehabForBillingPeriod}</strong>
-            <span className="subcon-ticket-stat-helper">Nap Rehab count for current billing period</span>
-          </div>
-        </div>
       </section>
       <div className="ticket-toolbar">
         <div className="att-cal-wrap" ref={calendarRef}>
