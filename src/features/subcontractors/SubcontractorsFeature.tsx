@@ -294,7 +294,7 @@ function SubcontractorsListView({
         )}
       />
 
-      <section className="metric-grid">
+      <section className="metric-grid subcon-metric-grid">
         <SubconMetric helperText={`${activeCount} active`} icon={<Users size={18} />} label="Subcontractors" value={listRows.length} />
         <SubconMetric icon={<WalletCards size={18} />} label="Net pending" tone="warning" value={currency.format(totals.pending)} />
         <SubconMetric icon={<CheckCircle2 size={18} />} label="Paid this month" tone="success" value={currency.format(totals.paidThisMonth)} />
@@ -909,7 +909,7 @@ function SubcontractorDetailsView({
           </div>
         </header>
 
-        <section className="metric-grid">
+        <section className="metric-grid subcon-metric-grid">
           <SubconMetric icon={<Ticket size={18} />} label="Tickets this period" value={String(displaySummary.ticketsThisPeriod)} />
           <SubconMetric icon={<WalletCards size={18} />} label="Net pending" tone="warning" value={currency.format(displaySummary.netPending)} />
           <SubconMetric icon={<CheckCircle2 size={18} />} label="Paid this month" tone="success" value={currency.format(displaySummary.paidThisMonth)} />

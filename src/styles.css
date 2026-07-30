@@ -10125,6 +10125,39 @@ td {
   color: var(--color-success-text);
 }
 
+@media (max-width: 760px) {
+  /* Two classes to outrank the later, equal-specificity `.metric-grid`
+     mobile rule (~640px block below), which would otherwise win by
+     source order and collapse this back to one column. */
+  .metric-grid.subcon-metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  /* At 2-per-row the icon-beside-value layout is too narrow and clips,
+     same issue employee-summary-grid had. Stack icon above text instead. */
+  .subcon-metric-grid .subcon-metric {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+    height: auto;
+    padding: 14px;
+  }
+
+  .subcon-metric-grid .subcon-metric-icon {
+    height: 36px;
+    width: 36px;
+  }
+
+  .subcon-metric-grid .subcon-metric-icon svg {
+    height: 16px;
+    width: 16px;
+  }
+
+  .subcon-metric-grid .subcon-metric strong {
+    font-size: var(--font-size-xl);
+  }
+}
+
 @media (max-width: 640px) {
   .subcon-metric {
     height: 80px;
