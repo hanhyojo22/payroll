@@ -8,6 +8,8 @@ import {
   CheckCircle2,
   ChevronRight,
   CreditCard,
+  Download,
+  Eye,
   FileText,
   Heart,
   LayoutDashboard,
@@ -16,6 +18,7 @@ import {
   Pencil,
   Phone,
   Plus,
+  Printer,
   Save,
   Upload,
   UserRound,
@@ -42,6 +45,7 @@ import { governmentDeductionForEmployee, payPeriodLabel } from "../../domain/pay
 import { salaryBondBalance } from "../../domain/salaryBonds";
 import { normalizeTicketCount } from "../../domain/tickets";
 import { EmployeeAdvancesFeature } from "../payroll/EmployeeAdvancesFeature";
+import { downloadPayslipPdf, openPayslipPrint, payrollPeriodLabel, payrollReference } from "../payroll/payslip";
 import { SalaryBondsFeature } from "../salaryBonds/SalaryBondsFeature";
 import type { QueueOfflineMutation } from "../../shared/types";
 import type {
@@ -51,6 +55,7 @@ import type {
   EmployeeAdvance,
   EmployeeFormValues,
   PayrollRunWithItems,
+  PayrollRunItem,
   Position,
   SalaryBond,
 } from "../../types";
@@ -482,9 +487,15 @@ export function EmployeeDetailsView({
   const [empTickets, setEmpTickets] = useState<DailyTicketEntry[]>([]);
   const [empAttendanceLoading, setEmpAttendanceLoading] = useState(false);
   const [empAttendancePage, setEmpAttendancePage] = useState(1);
+  const [payslipFrom, setPayslipFrom] = useState("");
+  const [payslipTo, setPayslipTo] = useState("");
+  const [selectedPayslipId, setSelectedPayslipId] = useState<string | null>(null);
 
   useEffect(() => {
     setCurrentEmployee(employee);
+    setPayslipFrom("");
+    setPayslipTo("");
+    setSelectedPayslipId(null);
   }, [employee]);
 
   useEffect(() => {
@@ -640,6 +651,45 @@ export function EmployeeDetailsView({
   const currentPosition = positions.find((position) => position.id === currentEmployee.position_id);
   const isTicketBased = currentPosition?.pay_mode === "ticket" || currentPosition?.pay_mode === "hybrid";
   const employeeCode = `EMP-${currentEmployee.id.replace(/[^a-zA-Z0-9]/g, "").slice(0, 6).toUpperCase() || "000001"}`;
+  const filteredPayslips = history.filter(({ item, run }) => {
+    const date = item.paid_date || run.generated_date;
+    return (!payslipFrom || date >= payslipFrom) && (!payslipTo || date <= payslipTo);
+  });
+  const selectedPayslip = filteredPayslips.find(({ item }) => item.id === selectedPayslipId)
+    ?? filteredPayslips[0]
+    ?? null;
+
+  function payslipInputFor({ item, run }: { item: PayrollRunItem; run: PayrollRunWithItems }) {
+    return {
+      department: currentEmployee.department || "Unassigned",
+      employeeCode,
+      governmentDeductions: {
+        pagibig: currentEmployee.pagibig_deduction,
+        philhealth: currentEmployee.philhealth_deduction,
+        sss: currentEmployee.sss_deduction,
+        withholdingTax: currentEmployee.withholding_tax,
+      },
+      hireDate: currentEmployee.hire_date,
+      item,
+      payrollNo: payrollReference(run, item.id),
+      run,
+    };
+  }
+
+  function printEmployeePayslip(record: { item: PayrollRunItem; run: PayrollRunWithItems }) {
+    if (!openPayslipPrint(payslipInputFor(record))) {
+      NotificationService.showError("Allow pop-ups to open the payslip print preview.");
+    }
+  }
+
+  async function downloadEmployeePayslip(record: { item: PayrollRunItem; run: PayrollRunWithItems }) {
+    try {
+      await downloadPayslipPdf(payslipInputFor(record));
+      NotificationService.showSuccess("Payslip PDF downloaded.");
+    } catch {
+      NotificationService.showError("Unable to download the payslip PDF.");
+    }
+  }
   const payMethodLabel =
     currentPosition?.pay_mode === "fixed"
       ? "Fixed salary"
@@ -650,7 +700,7 @@ export function EmployeeDetailsView({
           : "Per ticket";
   const tabs = [
     { id: "information", icon: <Users size={16} />, label: "Personal Info" },
-    { id: "payroll", icon: <Briefcase size={16} />, label: "Salary History" },
+    { id: "payroll", icon: <Briefcase size={16} />, label: "Salary & Payslips" },
     ...(isTicketBased ? [{ id: "tickets" as const, icon: <BadgeDollarSign size={16} />, label: "Ticket Earnings" }] : []),
     { id: "attendance", icon: <CalendarClock size={16} />, label: "Attendance" },
     { id: "employee-advances", icon: <CreditCard size={16} />, label: "Employee Advances" },
@@ -792,6 +842,90 @@ export function EmployeeDetailsView({
                 <strong>{currency.format(totals.pending)}</strong>
               </div>
             </div>
+
+            <section className="employee-payslips">
+              <div className="employee-payslips-heading">
+                <div>
+                  <span className="eyebrow">Employee documents</span>
+                  <h3>Payslips</h3>
+                  <p>Choose a payroll date range, preview a payslip, or download it as a PDF.</p>
+                </div>
+                <div className="employee-payslip-filters">
+                  <label>
+                    From
+                    <input max={payslipTo || undefined} onChange={(event) => { setPayslipFrom(event.target.value); setSelectedPayslipId(null); }} type="date" value={payslipFrom} />
+                  </label>
+                  <label>
+                    To
+                    <input min={payslipFrom || undefined} onChange={(event) => { setPayslipTo(event.target.value); setSelectedPayslipId(null); }} type="date" value={payslipTo} />
+                  </label>
+                  {(payslipFrom || payslipTo) && (
+                    <button className="secondary-button compact" onClick={() => { setPayslipFrom(""); setPayslipTo(""); setSelectedPayslipId(null); }} type="button">
+                      Clear dates
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {selectedPayslip ? (
+                <div className="employee-payslip-preview">
+                  <div className="employee-payslip-preview-head">
+                    <div>
+                      <span className="eyebrow">Selected payslip</span>
+                      <h4>{payrollPeriodLabel(selectedPayslip.run)}</h4>
+                      <p>{payrollReference(selectedPayslip.run, selectedPayslip.item.id)}</p>
+                    </div>
+                    <span className={selectedPayslip.item.status === "paid" ? "emp-status-pill active" : "emp-status-pill inactive"}>
+                      {selectedPayslip.item.status === "paid" ? "Paid" : "Pending"}
+                    </span>
+                  </div>
+                  <div className="employee-payslip-preview-grid">
+                    <div><span>Gross pay</span><strong>{currency.format(toNumber(selectedPayslip.item.gross_pay))}</strong></div>
+                    <div><span>Allowances</span><strong>{currency.format(toNumber(selectedPayslip.item.allowances))}</strong></div>
+                    <div><span>Deductions</span><strong className="negative">-{currency.format(toNumber(selectedPayslip.item.deductions))}</strong></div>
+                    <div className="net"><span>Net pay</span><strong>{currency.format(toNumber(selectedPayslip.item.net_pay))}</strong></div>
+                  </div>
+                  <div className="employee-payslip-preview-meta">
+                    <span>Generated: {selectedPayslip.run.generated_date}</span>
+                    <span>Paid: {selectedPayslip.item.paid_date || "Not yet paid"}</span>
+                    <span>Position: {selectedPayslip.item.position_name || "Unassigned"}</span>
+                  </div>
+                  {selectedPayslip.item.notes && <p className="employee-payslip-notes">{selectedPayslip.item.notes}</p>}
+                  <div className="employee-payslip-actions">
+                    <button className="secondary-button compact" onClick={() => printEmployeePayslip(selectedPayslip)} type="button">
+                      <Printer size={15} /> Print
+                    </button>
+                    <button className="primary-button compact" onClick={() => void downloadEmployeePayslip(selectedPayslip)} type="button">
+                      <Download size={15} /> Download PDF
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="employee-payslip-empty">No payslips match the selected dates.</div>
+              )}
+
+              <h4>Previous payslips</h4>
+              <DataTable
+                empty="No payslips match the selected dates."
+                headers={["Pay period", "Payroll date", "Reference", "Net pay", "Status", "Actions"]}
+                rows={filteredPayslips.map(({ item, run }) => [
+                  payrollPeriodLabel(run),
+                  item.paid_date || run.generated_date,
+                  payrollReference(run, item.id),
+                  <strong key="net">{currency.format(toNumber(item.net_pay))}</strong>,
+                  <StatusPill key="status" status={item.status} />,
+                  <div className="row-actions" key="actions">
+                    <button aria-label={`View payslip for ${payrollPeriodLabel(run)}`} onClick={() => setSelectedPayslipId(item.id)} title="View payslip" type="button">
+                      <Eye size={16} />
+                    </button>
+                    <button aria-label={`Download payslip for ${payrollPeriodLabel(run)}`} onClick={() => void downloadEmployeePayslip({ item, run })} title="Download payslip" type="button">
+                      <Download size={16} />
+                    </button>
+                  </div>,
+                ])}
+              />
+            </section>
+
             <h3>Salary History</h3>
             <DataTable
               empty="No payroll records for this employee yet."

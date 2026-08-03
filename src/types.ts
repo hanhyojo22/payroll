@@ -425,6 +425,8 @@ export type PayrollHistoryRow = {
   status: PayrollItemStatus;
   processedDate: string;
   searchText: string;
+  payrollRun: PayrollRun;
+  payrollItem: PayrollRunItem;
 };
 
 export type DailyTicketEntry = {

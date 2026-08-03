@@ -7031,6 +7031,176 @@ td {
   font-weight: 700;
 }
 
+.employee-payslips {
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-lg);
+  display: grid;
+  gap: 18px;
+  margin-bottom: 24px;
+  padding: 20px;
+}
+
+.employee-payslips-heading {
+  align-items: end;
+  display: flex;
+  gap: 20px;
+  justify-content: space-between;
+}
+
+.employee-payslips-heading h3,
+.employee-payslips h4 {
+  margin: 3px 0 0;
+}
+
+.employee-payslips-heading p,
+.employee-payslip-preview-head p {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  margin: 5px 0 0;
+}
+
+.employee-payslip-filters {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.employee-payslip-filters label {
+  color: var(--color-text-secondary);
+  display: grid;
+  font-size: 11px;
+  font-weight: 700;
+  gap: 5px;
+  text-transform: uppercase;
+}
+
+.employee-payslip-filters input {
+  min-width: 150px;
+}
+
+.employee-payslip-preview {
+  background: linear-gradient(135deg, rgba(239, 246, 255, 0.8), rgba(255, 255, 255, 0.98));
+  border: 1px solid rgba(147, 197, 253, 0.55);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+}
+
+.employee-payslip-preview-head,
+.employee-payslip-preview-meta,
+.employee-payslip-actions {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.employee-payslip-preview-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 18px;
+}
+
+.employee-payslip-preview-grid > div {
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: 5px;
+  padding: 13px;
+}
+
+.employee-payslip-preview-grid span,
+.employee-payslip-preview-meta {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.employee-payslip-preview-grid strong {
+  font-size: 16px;
+}
+
+.employee-payslip-preview-grid .net {
+  background: #eff8ff;
+  border-color: #84caff;
+}
+
+.employee-payslip-preview-grid .net strong {
+  color: var(--color-accent);
+  font-size: 19px;
+}
+
+.employee-payslip-preview-grid .negative {
+  color: var(--color-danger);
+}
+
+.employee-payslip-preview-meta {
+  border-top: 1px solid rgba(147, 197, 253, 0.45);
+  justify-content: flex-start;
+  margin-top: 16px;
+  padding-top: 13px;
+}
+
+.employee-payslip-notes {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 12px 0 0;
+}
+
+.employee-payslip-actions {
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+.employee-payslip-empty {
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  padding: 26px;
+  text-align: center;
+}
+
+@media (max-width: 760px) {
+  .employee-payslips-heading,
+  .employee-payslip-preview-meta {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .employee-payslip-filters,
+  .employee-payslip-filters label,
+  .employee-payslip-filters input,
+  .employee-payslip-filters button {
+    width: 100%;
+  }
+
+  .employee-payslip-preview-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .employee-payslip-actions button {
+    flex: 1;
+  }
+}
+
+@media (max-width: 480px) {
+  .employee-payslips,
+  .employee-payslip-preview {
+    padding: 14px;
+  }
+
+  .employee-payslip-preview-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .employee-payslip-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
 
 /* ── Ticket Wages ── */
 

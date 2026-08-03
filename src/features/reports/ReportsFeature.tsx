@@ -23,6 +23,7 @@ import {
 } from "../../domain/expenses";
 import { PageHeader } from "../../shared/components/PageLayout";
 import { NotificationService } from "../../shared/notifications/NotificationService";
+import { escapeCsvCell, neutralizeSpreadsheetFormula } from "../../shared/utils/spreadsheets";
 import { currency, formatMoney } from "../../shared/utils/currency";
 import { monthNames, todayKey } from "../../shared/utils/dates";
 import type {
@@ -1569,9 +1570,9 @@ function downloadCsv<Row extends object>(
   rows: Row[],
 ) {
   const csv = [
-    columns.map((column) => escapeCsv(column.label)).join(","),
+    columns.map((column) => escapeCsvCell(column.label)).join(","),
     ...rows.map((row) =>
-      columns.map((column) => escapeCsv(column.format ? column.format(row) : String((row as Record<string, unknown>)[column.key] ?? ""))).join(","),
+      columns.map((column) => escapeCsvCell(column.format ? column.format(row) : String((row as Record<string, unknown>)[column.key] ?? ""))).join(","),
     ),
   ].join("\n");
   downloadBlob(filename, "text/csv;charset=utf-8;", csv);
@@ -1592,7 +1593,7 @@ function downloadExcel<Row extends object>(
           .map(
             (row) =>
               `<tr>${columns
-                .map((column) => `<td>${escapeHtml(column.format ? column.format(row) : String((row as Record<string, unknown>)[column.key] ?? ""))}</td>`)
+                .map((column) => `<td>${escapeHtml(neutralizeSpreadsheetFormula(column.format ? column.format(row) : String((row as Record<string, unknown>)[column.key] ?? "")))}</td>`)
                 .join("")}</tr>`,
           )
           .join("")}
@@ -1820,10 +1821,6 @@ function downloadBlob(filename: string, mimeType: string, content: BlobPart) {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
-}
-
-function escapeCsv(value: string) {
-  return `"${value.replace(/"/g, "\"\"")}"`;
 }
 
 function escapeHtml(value: string) {

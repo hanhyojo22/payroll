@@ -8,6 +8,14 @@ import { monthNames } from "../shared/utils/dates";
 export const payPeriodLabel = (payPeriod: PayrollRun["pay_period"]) =>
   payPeriod === "first_half" ? "First half" : "Second half";
 
+export function payrollReference(
+  run: Pick<PayrollRun, "period_month" | "period_year" | "pay_period">,
+  itemId: string,
+) {
+  const cutoff = run.pay_period === "first_half" ? "1" : "2";
+  return `${run.period_year}-${String(run.period_month).padStart(2, "0")}-${cutoff}-${itemId.slice(0, 8).toUpperCase()}`;
+}
+
 export function governmentDeductionForEmployee(
   employee: Employee,
   payrollSettings: PayrollSettings | null,

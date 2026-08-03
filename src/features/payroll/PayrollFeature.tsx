@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { BadgeDollarSign, CalendarClock, CheckCircle2, Plus, Users, X } from "lucide-react";
+import { BadgeDollarSign, CalendarClock, CheckCircle2, Plus, Printer, Users, X } from "lucide-react";
 import { Spinner } from "../../shared/components/Spinner";
 import { ActionProgress, type ActionProgressState } from "../../shared/components/ActionProgress";
 import {
@@ -11,6 +11,7 @@ import {
   payrollItemPayloadForEmployee,
 } from "../../domain/payroll";
 import { payrollItemPayBasis } from "./payBasis";
+import { openPayslipPrint, payrollReference } from "./payslip";
 import { notificationServiceNotifier } from "../../adapters/notifications/notifier";
 import {
   updatePayrollItem as updatePayrollItemUseCase,
@@ -950,7 +951,7 @@ export function PayrollFeature({
       )}
 
       {selectedRun ? (
-        <PayrollItemsTable employees={employees} items={allItems} onUpdate={updateItem} />
+        <PayrollItemsTable employees={employees} items={allItems} onUpdate={updateItem} run={selectedRun} />
       ) : (
         <div className="panel">
           <p className="muted">No payroll has been generated yet.</p>
@@ -968,10 +969,12 @@ function PayrollItemsTable({
   employees,
   items,
   onUpdate,
+  run,
 }: {
   employees: Employee[];
   items: PayrollRunItem[];
   onUpdate: (item: PayrollRunItem, patch: Partial<PayrollRunItem>) => Promise<void>;
+  run: PayrollRun;
 }) {
   async function handleMarkPaid(item: PayrollRunItem) {
     const confirmed = await NotificationService.showConfirm({
@@ -1016,6 +1019,25 @@ function PayrollItemsTable({
   }, [employees]);
   const empCode = (id: string | null) => (id ? employeeCodeMap.get(id) ?? "-" : "-");
 
+  function handlePrintPayslip(item: PayrollRunItem) {
+    const employee = employees.find((entry) => entry.id === item.employee_id);
+    const opened = openPayslipPrint({
+      department: employee?.department || "Unassigned",
+      employeeCode: empCode(item.employee_id),
+      governmentDeductions: employee ? {
+        pagibig: employee.pagibig_deduction,
+        philhealth: employee.philhealth_deduction,
+        sss: employee.sss_deduction,
+        withholdingTax: employee.withholding_tax,
+      } : undefined,
+      hireDate: employee?.hire_date,
+      item,
+      payrollNo: payrollReference(run, item.id),
+      run,
+    });
+    if (!opened) NotificationService.showError("Allow pop-ups to open the payslip print preview.");
+  }
+
   const payBasis = payrollItemPayBasis;
 
   return (
@@ -1055,6 +1077,9 @@ function PayrollItemsTable({
             {item.status === "paid" ? "Paid" : "Pending"}
           </span>,
           <div className="row-actions" key="actions">
+            <button aria-label="Print payslip" onClick={() => handlePrintPayslip(item)} title="Print payslip" type="button">
+              <Printer size={16} />
+            </button>
             {item.status !== "paid" ? (
               <button aria-label="Mark paid" onClick={() => void handleMarkPaid(item)} title="Mark paid" type="button">
                 <CheckCircle2 size={16} />
@@ -1099,6 +1124,14 @@ function PayrollItemsTable({
               <span className={item.status === "paid" ? "emp-status-pill active" : "emp-status-pill inactive"}>
                 {item.status === "paid" ? "Paid" : "Pending"}
               </span>
+              <button
+                aria-label={`Print payslip for ${item.employee_name}`}
+                className="payroll-mobile-card-action"
+                onClick={() => handlePrintPayslip(item)}
+                type="button"
+              >
+                <Printer size={16} /> Payslip
+              </button>
               {item.status !== "paid" ? (
                 <button
                   aria-label={`Mark paid for ${item.employee_name}`}
@@ -1337,6 +1370,29 @@ export function PayrollHistoryFeature({ employees, rows, tabs }: { employees: Em
   }, [employees]);
   const empCode = (id: string | null) => (id ? employeeCodeMap.get(id) ?? "-" : "-");
 
+  function handlePrintPayslip(row: PayrollHistoryRow) {
+    if (!row.payrollItem || !row.payrollRun) {
+      NotificationService.showWarning("Refresh payroll history before printing this payslip.");
+      return;
+    }
+    const employee = employees.find((entry) => entry.id === row.employeeId);
+    const opened = openPayslipPrint({
+      department: row.department,
+      employeeCode: empCode(row.employeeId),
+      governmentDeductions: employee ? {
+        pagibig: employee.pagibig_deduction,
+        philhealth: employee.philhealth_deduction,
+        sss: employee.sss_deduction,
+        withholdingTax: employee.withholding_tax,
+      } : undefined,
+      hireDate: employee?.hire_date,
+      item: row.payrollItem,
+      payrollNo: row.payrollNo,
+      run: row.payrollRun,
+    });
+    if (!opened) NotificationService.showError("Allow pop-ups to open the payslip print preview.");
+  }
+
   const filteredRows = rows.filter((row) => {
     const matchesQuery = row.searchText.includes(query.trim().toLowerCase());
     const matchesMonth = monthFilter === "all" || String(row.periodMonth) === monthFilter;
@@ -1396,6 +1452,7 @@ export function PayrollHistoryFeature({ employees, rows, tabs }: { employees: Em
                 <th>Deductions</th>
                 <th>Net Pay</th>
                 <th>Date Processed</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -1415,6 +1472,13 @@ export function PayrollHistoryFeature({ employees, rows, tabs }: { employees: Em
                   <td data-label="Deductions">{row.deductions > 0 ? currency.format(row.deductions) : "-"}</td>
                   <td data-label="Net Pay"><strong>{currency.format(row.netPay)}</strong></td>
                   <td data-label="Date Processed">{row.processedDate}</td>
+                  <td data-label="Actions">
+                    <div className="row-actions">
+                      <button aria-label={`Print payslip for ${row.employeeName}`} onClick={() => handlePrintPayslip(row)} title="Print payslip" type="button">
+                        <Printer size={16} />
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -1443,6 +1507,17 @@ export function PayrollHistoryFeature({ employees, rows, tabs }: { employees: Em
                 {row.deductions > 0 && (
                   <span className="payroll-mobile-card-deduction">Deductions: -{currency.format(row.deductions)}</span>
                 )}
+              </div>
+              <div className="ticket-mobile-card-footer">
+                <span className="emp-status-pill active">Paid</span>
+                <button
+                  aria-label={`Print payslip for ${row.employeeName}`}
+                  className="payroll-mobile-card-action"
+                  onClick={() => handlePrintPayslip(row)}
+                  type="button"
+                >
+                  <Printer size={16} /> Payslip
+                </button>
               </div>
             </div>
           ))}

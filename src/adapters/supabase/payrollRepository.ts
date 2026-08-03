@@ -14,6 +14,7 @@ import type {
   PayrollRunWithItems,
   PayrollSettings,
 } from "../../types";
+import { payrollReference } from "../../domain/payroll";
 
 const PAYROLL_SETTINGS_SELECT = "id,user_id,government_deduction_enabled,government_deduction_cutoff,created_at,updated_at";
 const PAYROLL_ITEM_SELECT = "id,user_id,payroll_run_id,employee_id,employee_name,position_id,position_name,pay_mode,base_pay,ticket_pay,daily_rate,days_worked,total_working_days,installation_tickets,repair_tickets,installation_rate,repair_rate,nap_rehab_tickets,nap_rehab_rate,gross_pay,allowances,deductions,net_pay,status,paid_date,notes,created_at,updated_at,ticket_details:payroll_run_item_ticket_details(id,user_id,payroll_run_item_id,position_ticket_category_id,category_name,ticket_count,rate,amount,created_at)";
@@ -58,9 +59,13 @@ export function supabasePayrollRepository(supabase: SupabaseClient): PayrollRepo
       const raw = await supabase
         .from("payroll_run_items")
         .select(`
-          id, employee_id, employee_name, position_id, position_name, pay_mode,
-          base_pay, ticket_pay, gross_pay, deductions, net_pay, status, paid_date,
-          payroll_runs!inner(period_month,period_year,pay_period,generated_date),
+          id, user_id, payroll_run_id, employee_id, employee_name, position_id, position_name, pay_mode,
+          base_pay, ticket_pay, daily_rate, days_worked, total_working_days,
+          installation_tickets, repair_tickets, installation_rate, repair_rate,
+          nap_rehab_tickets, nap_rehab_rate, gross_pay, allowances, deductions, net_pay,
+          status, paid_date, notes, created_at, updated_at,
+          ticket_details:payroll_run_item_ticket_details(id,user_id,payroll_run_item_id,position_ticket_category_id,category_name,ticket_count,rate,amount,created_at),
+          payroll_runs!inner(id,user_id,period_month,period_year,pay_period,generated_date,notes,created_at,updated_at),
           employees(department)
         `)
         .eq("status", "paid")
@@ -69,17 +74,48 @@ export function supabasePayrollRepository(supabase: SupabaseClient): PayrollRepo
 
       if (raw.error) return err<PayrollHistoryRow[]>(raw.error as AppError);
 
-      const rows = ((raw.data ?? []) as any[]).map((item, index) => {
+      const rows = ((raw.data ?? []) as any[]).map((item) => {
         const run = Array.isArray(item.payroll_runs) ? item.payroll_runs[0] : item.payroll_runs;
         const employee = Array.isArray(item.employees) ? item.employees[0] : item.employees;
         const payPeriod = run
           ? `${run.period_month}/${run.period_year} - ${payPeriodLabel(run.pay_period)}`
           : "Unknown pay period";
         const payrollNo = run
-          ? `${run.period_year}-${String(run.period_month).padStart(2, "0")}-${run.pay_period === "first_half" ? "1" : "2"}-${String(from + index + 1).padStart(3, "0")}`
-          : `PAY-${String(from + index + 1).padStart(3, "0")}`;
+          ? payrollReference(run, item.id)
+          : `PAY-${item.id.slice(0, 8).toUpperCase()}`;
         const department = employee?.department || "Unassigned";
         const processedDate = item.paid_date || run?.generated_date || "";
+        const payrollItem = {
+          id: item.id,
+          user_id: item.user_id,
+          payroll_run_id: item.payroll_run_id,
+          employee_id: item.employee_id ?? null,
+          employee_name: item.employee_name,
+          position_id: item.position_id ?? null,
+          position_name: item.position_name,
+          pay_mode: item.pay_mode,
+          base_pay: item.base_pay,
+          ticket_pay: item.ticket_pay,
+          daily_rate: item.daily_rate,
+          days_worked: item.days_worked,
+          total_working_days: item.total_working_days,
+          ticket_details: item.ticket_details ?? [],
+          installation_tickets: item.installation_tickets,
+          repair_tickets: item.repair_tickets,
+          installation_rate: item.installation_rate,
+          repair_rate: item.repair_rate,
+          nap_rehab_tickets: item.nap_rehab_tickets,
+          nap_rehab_rate: item.nap_rehab_rate,
+          gross_pay: item.gross_pay,
+          allowances: item.allowances,
+          deductions: item.deductions,
+          net_pay: item.net_pay,
+          status: item.status,
+          paid_date: item.paid_date,
+          notes: item.notes,
+          created_at: item.created_at,
+          updated_at: item.updated_at,
+        } as PayrollRunItem;
 
         return {
           payrollNo,
@@ -96,6 +132,8 @@ export function supabasePayrollRepository(supabase: SupabaseClient): PayrollRepo
           status: item.status,
           processedDate,
           searchText: `${payrollNo} ${payPeriod} ${item.employee_name} ${department} ${item.status} ${processedDate}`.toLowerCase(),
+          payrollRun: run as PayrollRun,
+          payrollItem,
         } satisfies PayrollHistoryRow;
       });
 

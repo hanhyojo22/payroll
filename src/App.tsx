@@ -374,6 +374,7 @@ const emptyPayment: PaymentFormValues = {
 export function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [loadingSession, setLoadingSession] = useState(true);
+  const activeUserIdRef = useRef<string | null>(null);
   // A password-recovery link logs the browser into a session scoped only to setting a new
   // password. Routing that straight into Workspace (as onAuthStateChange's session update
   // would otherwise do) would let a possibly-shared-computer recovery click land the visitor
@@ -387,6 +388,7 @@ export function App() {
     }
 
     supabase.auth.getSession().then(({ data }) => {
+      activeUserIdRef.current = data.session?.user.id ?? null;
       setSession(data.session);
       setLoadingSession(false);
     });
@@ -394,7 +396,14 @@ export function App() {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      const previousUserId = activeUserIdRef.current;
+      const nextUserId = nextSession?.user.id ?? null;
+      if (previousUserId && previousUserId !== nextUserId) {
+        void clearOfflineDataForUser(previousUserId);
+      }
+      activeUserIdRef.current = nextUserId;
       if (event === "PASSWORD_RECOVERY") setPasswordRecovery(true);
+      if (event === "SIGNED_OUT") setPasswordRecovery(false);
       setSession(nextSession);
     });
 
@@ -446,7 +455,7 @@ function FullPageMessage({ title, text }: { title: string; text: string }) {
 function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [mode, setMode] = useState<"sign-in" | "sign-up" | "forgot-password">("sign-in");
+  const [mode, setMode] = useState<"sign-in" | "forgot-password">("sign-in");
   const [resetEmailSent, setResetEmailSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [credentialsInvalid, setCredentialsInvalid] = useState(false);
@@ -455,7 +464,7 @@ function Login() {
   // choice on a shared computer -- but if an email was already remembered from a prior
   // session, keep the checkbox checked to match, so unchecking it reads as the deliberate
   // "forget this" action it actually is rather than a spontaneous mismatch with the prefilled field.
-  const [rememberMe, setRememberMe] = useState(() =>
+  const [rememberEmail, setRememberEmail] = useState(() =>
     typeof window !== "undefined" && Boolean(window.localStorage.getItem(rememberedEmailKey)));
   const authRedirectTo = emailRedirectUrl ?? (typeof window !== "undefined" ? window.location.origin : undefined);
 
@@ -485,18 +494,7 @@ function Login() {
     if (!supabase) return;
     setBusy(true);
 
-    const result =
-      mode === "sign-in"
-        ? await supabase.auth.signInWithPassword({ email, password })
-        : await supabase.auth.signUp({
-            email,
-            password,
-            options: authRedirectTo
-              ? {
-                  emailRedirectTo: authRedirectTo,
-                }
-              : undefined,
-          });
+    const result = await supabase.auth.signInWithPassword({ email, password });
 
     if (result.error) {
       // The invalid-credentials case gets its own dedicated inline message and red field
@@ -504,20 +502,16 @@ function Login() {
       // the same thing. Every other sign-in failure (network, timeout, unconfirmed email)
       // has no such inline message, so it still needs the toast -- and previously always
       // showing "Incorrect email or password" here mislabeled those as a wrong password.
-      if (mode === "sign-in" && isInvalidCredentialsError(result.error)) {
+      if (isInvalidCredentialsError(result.error)) {
         setCredentialsInvalid(true);
         setPassword("");
       } else {
         NotificationService.showError(friendlyError(result.error));
-        if (mode === "sign-in") setPassword("");
+        setPassword("");
       }
-    } else if (mode === "sign-up" && !result.data.session) {
-      NotificationService.showSuccess("Account created. Please confirm your email before signing in.");
-      setPassword("");
-      setMode("sign-in");
     }
     if (!result.error && typeof window !== "undefined") {
-      if (rememberMe) {
+      if (rememberEmail) {
         window.localStorage.setItem(rememberedEmailKey, email);
       } else {
         window.localStorage.removeItem(rememberedEmailKey);
@@ -593,12 +587,8 @@ function Login() {
           </div>
           <div className="auth-panel-copy">
             <p className="eyebrow">Payroll workspace</p>
-            <h1>{mode === "sign-in" ? "Welcome Back" : "Create Admin Account"}</h1>
-            <p>
-              {mode === "sign-in"
-                ? "Sign in to your account to continue"
-                : "Create the first admin account to start managing payroll, billing, and payouts."}
-            </p>
+            <h1>Welcome Back</h1>
+            <p>Sign in to your account to continue</p>
           </div>
           <form onSubmit={handleSubmit} className="stack auth-form-stack">
             <div className="auth-input-shell">
@@ -622,7 +612,7 @@ function Login() {
             <div className="auth-input-shell auth-password-shell">
               <span className="auth-input-icon" aria-hidden="true"><KeyRound size={16} /></span>
               <PasswordField
-                autoComplete={mode === "sign-in" ? "current-password" : "new-password"}
+                autoComplete="current-password"
                 className={credentialsInvalid ? "field-invalid" : undefined}
                 label="Password"
                 minLength={6}
@@ -635,49 +625,31 @@ function Login() {
                 value={password}
               />
             </div>
-            {mode === "sign-in" ? (
-              <div className="auth-utility-row">
-                <label className="auth-checkbox">
-                  <input
-                    checked={rememberMe}
-                    onChange={(event) => setRememberMe(event.target.checked)}
-                    type="checkbox"
-                  />
-                  <span>Remember me</span>
-                </label>
-                <button
-                  className="text-button auth-forgot-button"
-                  onClick={() => { setMode("forgot-password"); setCredentialsInvalid(false); }}
-                  type="button"
-                >
-                  Forgot password?
-                </button>
-              </div>
-            ) : null}
+            <div className="auth-utility-row">
+              <label className="auth-checkbox">
+                <input
+                  checked={rememberEmail}
+                  onChange={(event) => setRememberEmail(event.target.checked)}
+                  type="checkbox"
+                />
+                <span>Remember email</span>
+              </label>
+              <button
+                className="text-button auth-forgot-button"
+                onClick={() => { setMode("forgot-password"); setCredentialsInvalid(false); }}
+                type="button"
+              >
+                Forgot password?
+              </button>
+            </div>
             {credentialsInvalid ? (
               <p className="auth-inline-error">Incorrect email or password. Please try again.</p>
             ) : null}
             <button className="primary-button auth-submit-button" disabled={busy} type="submit">
               {busy && <Spinner size="small" />}
-              {busy ? "Please wait..." : mode === "sign-in" ? "Sign in" : "Create admin"}
+              {busy ? "Please wait..." : "Sign in"}
             </button>
-            {mode === "sign-up" ? (
-              <p className="auth-helper-copy">A confirmation email will be sent to this address after registration.</p>
-            ) : null}
           </form>
-          <p className="auth-footer-copy">
-            {mode === "sign-in" ? "Need an account?" : "Already have an account?"}{" "}
-            <button
-              className="text-button auth-switch-button"
-              onClick={() => {
-                setMode(mode === "sign-in" ? "sign-up" : "sign-in");
-                setCredentialsInvalid(false);
-              }}
-              type="button"
-            >
-              {mode === "sign-in" ? "Create admin account" : "Sign in"}
-            </button>
-          </p>
         </section>
       </section>
     </main>

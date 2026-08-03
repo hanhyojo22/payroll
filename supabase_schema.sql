@@ -1,3 +1,53 @@
+-- Define this before any data migrations. On a schema rerun, ownership triggers from the
+-- previous run are already active and must recognize direct database-owner maintenance.
+create or replace function public.enforce_same_owner_references()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  argument_index integer;
+  parent_table text;
+  child_column text;
+  parent_id uuid;
+  parent_is_owned boolean;
+begin
+  if auth.uid() is null then
+    -- SECURITY DEFINER changes current_user to the function owner, while session_user stays
+    -- as the original connection role. They match for direct SQL Editor/owner maintenance,
+    -- but not for anonymous PostgREST requests (whose session user is authenticator).
+    if current_user <> session_user then
+      raise exception 'Authentication required.';
+    end if;
+  elsif new.user_id <> auth.uid() then
+    raise exception 'Record owner must match the authenticated user.';
+  end if;
+
+  for argument_index in 0..tg_nargs - 1 by 2
+  loop
+    parent_table := tg_argv[argument_index];
+    child_column := tg_argv[argument_index + 1];
+    parent_id := nullif(to_jsonb(new)->>child_column, '')::uuid;
+    if parent_id is null then continue; end if;
+
+    execute format(
+      'select exists (select 1 from public.%I where id = $1 and user_id = $2)',
+      parent_table
+    )
+    into parent_is_owned
+    using parent_id, new.user_id;
+
+    if not parent_is_owned then
+      raise exception 'Referenced % is not owned by the current user.', parent_table;
+    end if;
+  end loop;
+  return new;
+end;
+$$;
+
+revoke all on function public.enforce_same_owner_references() from public;
+
   create table if not exists public.payment_reminders (
     id uuid primary key default gen_random_uuid(),
     user_id uuid not null references auth.users(id) on delete cascade,
@@ -2821,53 +2871,57 @@ grant execute on function public.record_reminder_payment_bundle(jsonb, uuid, jso
 revoke all on function public.next_billing_number(uuid, integer) from public;
 
 -- Foreign keys prove that a parent exists, but not that it belongs to the same tenant.
--- This reusable trigger closes that cross-owner reference gap on all financial children.
-create or replace function public.enforce_same_owner_references()
-returns trigger
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  argument_index integer;
-  parent_table text;
-  child_column text;
-  parent_id uuid;
-  parent_is_owned boolean;
-begin
-  if auth.uid() is null or new.user_id <> auth.uid() then
-    raise exception 'Record owner must match the authenticated user.';
-  end if;
+-- The reusable trigger defined at the top closes that cross-owner reference gap.
+drop trigger if exists enforce_position_ticket_category_owners on public.position_ticket_categories;
+create trigger enforce_position_ticket_category_owners
+before insert or update on public.position_ticket_categories for each row
+execute function public.enforce_same_owner_references('positions', 'position_id');
 
-  for argument_index in 0..tg_nargs - 1 by 2
-  loop
-    parent_table := tg_argv[argument_index];
-    child_column := tg_argv[argument_index + 1];
-    parent_id := nullif(to_jsonb(new)->>child_column, '')::uuid;
-    if parent_id is null then continue; end if;
+drop trigger if exists enforce_expense_owners on public.expenses;
+create trigger enforce_expense_owners
+before insert or update on public.expenses for each row
+execute function public.enforce_same_owner_references(
+  'employees', 'employee_id',
+  'expense_categories', 'category_id',
+  'payroll_runs', 'payroll_run_id',
+  'payment_reminders', 'subcontractor_payment_reminder_id'
+);
 
-    execute format(
-      'select exists (select 1 from public.%I where id = $1 and user_id = $2)',
-      parent_table
-    )
-    into parent_is_owned
-    using parent_id, new.user_id;
+drop trigger if exists enforce_billing_record_owners on public.billing_records;
+create trigger enforce_billing_record_owners
+before insert or update on public.billing_records for each row
+execute function public.enforce_same_owner_references(
+  'collection_reminders', 'collection_id',
+  'collection_reminders', 'collectibles_collection_id'
+);
 
-    if not parent_is_owned then
-      raise exception 'Referenced % is not owned by the current user.', parent_table;
-    end if;
-  end loop;
-  return new;
-end;
-$$;
-
-revoke all on function public.enforce_same_owner_references() from public;
+drop trigger if exists enforce_subcontractor_advance_owners on public.subcontractor_advances;
+create trigger enforce_subcontractor_advance_owners
+before insert or update on public.subcontractor_advances for each row
+execute function public.enforce_same_owner_references('subcontractors', 'subcontractor_id');
 
 drop trigger if exists enforce_billing_subcon_item_owners on public.billing_subcon_items;
 create trigger enforce_billing_subcon_item_owners
 before insert or update on public.billing_subcon_items for each row
 execute function public.enforce_same_owner_references(
   'billing_records', 'billing_record_id', 'subcontractors', 'subcontractor_id'
+);
+
+drop trigger if exists enforce_payment_reminder_reference_owners on public.payment_reminders;
+create trigger enforce_payment_reminder_reference_owners
+before insert or update on public.payment_reminders for each row
+execute function public.enforce_same_owner_references(
+  'subcontractors', 'subcontractor_id',
+  'billing_subcon_items', 'billing_subcon_item_id'
+);
+
+drop trigger if exists enforce_subcontractor_payment_owners on public.subcontractor_payments;
+create trigger enforce_subcontractor_payment_owners
+before insert or update on public.subcontractor_payments for each row
+execute function public.enforce_same_owner_references(
+  'subcontractors', 'subcontractor_id',
+  'billing_records', 'billing_record_id',
+  'billing_subcon_items', 'billing_subcon_item_id'
 );
 
 drop trigger if exists enforce_subcon_daily_ticket_owners on public.subcon_daily_tickets;
