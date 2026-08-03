@@ -46,11 +46,12 @@ function ordinalDay(day: number) {
   return `${day}${ORDINAL_SUFFIXES[day % 10] ?? "th"}`;
 }
 
-type ExpenseStatusFilter = "all" | "active" | "overdue";
+type ExpenseStatusFilter = "all" | "active" | "paid" | "overdue";
 
 const STATUS_FILTER_OPTIONS: Array<{ value: ExpenseStatusFilter; label: string }> = [
   { value: "all", label: "All" },
   { value: "active", label: "Active" },
+  { value: "paid", label: "Paid" },
   { value: "overdue", label: "Overdue" },
 ];
 
@@ -109,13 +110,15 @@ export function ExpensesFeature({
     const query = searchQuery.trim().toLowerCase();
     const today = todayKey();
     return expenses.filter((expense) => {
-      if (expense.status === "paid") return false;
+      const displayStatus = expenseDisplayStatus(expense, expense.installment_payments);
       const isOverdue = isExpenseOverdue(expense, expense.installment_payments, today);
       const matchesStatus = statusFilter === "all"
         ? true
         : statusFilter === "active"
-          ? expense.status !== "cancelled"
-          : isOverdue;
+          ? displayStatus === "unpaid" || displayStatus === "partial"
+          : statusFilter === "paid"
+            ? displayStatus === "paid"
+            : isOverdue;
       const matchesQuery = !query
         || expense.employee_name.toLowerCase().includes(query)
         || expense.category_name.toLowerCase().includes(query)
